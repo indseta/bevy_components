@@ -1,7 +1,7 @@
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 
-from .system import redraw_viewports, sync_changed
+from .system import custom_type_changed, definition_renamed, field_changed, redraw_viewports, sync_changed
 
 COMPONENT_TYPES = [
     ("VISIBILITY_RANGE", "Visibility Range", "Fade the object in and out by camera distance, for levels of detail", "HIDE_OFF", 0),
@@ -12,6 +12,29 @@ COMPONENT_TYPES = [
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
 LAYER_COUNT = 32
+
+FIELD_TYPES = [
+    ("FLOAT", "Float", "Decimal number, read as f32"),
+    ("INT", "Integer", "Whole number, read as i32 or another integer type"),
+    ("BOOL", "Boolean", "On or off, read as bool"),
+    ("STRING", "String", "Text, read as String"),
+    ("VECTOR", "Vector", "Three numbers on Bevy's axes (Y up), read as Vec3"),
+    ("COLOR", "Color", "sRGB color with alpha, read as Bevy's Color"),
+]
+
+FIELD_LABELS = {identifier: name for identifier, name, _description in FIELD_TYPES}
+
+
+class BEVY_PG_field(bpy.types.PropertyGroup):
+    name: StringProperty(name="Name", description="Field name, as written in the Rust struct", update=field_changed)
+    identifier: StringProperty(name="Identifier", description="Links the field to its definition when it is renamed")
+    field_type: EnumProperty(name="Type", description="Kind of value the field holds", items=FIELD_TYPES, default="FLOAT", update=field_changed)
+    float_value: FloatProperty(name="Value", update=sync_changed)
+    int_value: IntProperty(name="Value", update=sync_changed)
+    bool_value: BoolProperty(name="Value", update=sync_changed)
+    string_value: StringProperty(name="Value", update=sync_changed)
+    vector_value: FloatVectorProperty(name="Value", size=3, subtype="XYZ", update=sync_changed)
+    color_value: FloatVectorProperty(name="Value", size=4, subtype="COLOR_GAMMA", default=(1.0, 1.0, 1.0, 1.0), min=0.0, max=1.0, update=sync_changed)
 
 
 class BEVY_PG_component(bpy.types.PropertyGroup):
@@ -49,12 +72,26 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     ], default="STATIC", update=sync_changed)
     rigid_body_use_mass: BoolProperty(name="Set Mass", description="Use a fixed total mass instead of one computed from the colliders' volume at 1 kg per cubic meter", default=False, update=sync_changed)
     rigid_body_mass: FloatProperty(name="Mass", description="Total mass of the body, including colliders on child objects", default=1.0, min=0.001, precision=3, unit="MASS", update=sync_changed)
-    custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health", default="my_game::MyComponent", update=sync_changed)
+    custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health. Pick a type defined in Properties > Scene to edit its fields instead of JSON", default="my_game::MyComponent", update=custom_type_changed)
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
+    use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")
+    fields: CollectionProperty(type=BEVY_PG_field)
 
 
 class BEVY_PG_object_data(bpy.types.PropertyGroup):
     components: CollectionProperty(type=BEVY_PG_component)
+
+
+class BEVY_PG_definition(bpy.types.PropertyGroup):
+    name: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health", update=definition_renamed)
+    linked_name: StringProperty(name="Linked Type Path", description="Type path that components on objects use, followed when the definition is renamed")
+    fields: CollectionProperty(type=BEVY_PG_field)
+    active_field: IntProperty(name="Active Field")
+
+
+class BEVY_PG_definitions(bpy.types.PropertyGroup):
+    definitions: CollectionProperty(type=BEVY_PG_definition)
+    active_index: IntProperty(name="Active Definition")
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):

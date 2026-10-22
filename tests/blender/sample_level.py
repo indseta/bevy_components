@@ -47,6 +47,8 @@ def clear_scene():
     for collection in (bpy.data.objects, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups):
         for block in list(collection):
             collection.remove(block)
+    if hasattr(bpy.context.scene, "bevy_component_definitions"):
+        bpy.context.scene.bevy_component_definitions.definitions.clear()
 
 
 def select(*objects):
@@ -72,13 +74,34 @@ def add_empty(name, location):
     return obj
 
 
-def add_component(obj, kind, **values):
+def add_component(obj, kind, type_path="", **values):
     select(obj)
-    if "FINISHED" not in bpy.ops.bevy_components.add(component_type=kind):
+    if "FINISHED" not in bpy.ops.bevy_components.add(component_type=kind, type_path=type_path):
         raise RuntimeError(f"Could not add {kind} to {obj.name}")
     item = obj.bevy_component_data.components[-1]
     for name, value in values.items():
         setattr(item, name, value)
+    return item
+
+
+def define_component(type_path, *fields):
+    bpy.ops.bevy_components.definition_add()
+    library = bpy.context.scene.bevy_component_definitions
+    definition = library.definitions[library.active_index]
+    definition.name = type_path
+    for name, kind, default in fields:
+        bpy.ops.bevy_components.field_add()
+        field = definition.fields[definition.active_field]
+        field.name = name
+        field.field_type = kind
+        setattr(field, f"{kind.lower()}_value", default)
+    return definition
+
+
+def set_fields(item, **values):
+    for field in item.fields:
+        if field.name in values:
+            setattr(field, f"{field.field_type.lower()}_value", values[field.name])
     return item
 
 
@@ -228,6 +251,8 @@ def apply_lod_preset(obj, preset):
 
 def build_sample_level():
     clear_scene()
+    define_component("my_game::Wave", ("count", "INT", 1), ("delay", "FLOAT", 1.0))
+    define_component("my_game::Pickup", ("item", "STRING", "coin"), ("amount", "INT", 1), ("respawn", "BOOL", False), ("weight", "FLOAT", 0.1), ("spin", "VECTOR", (0.0, 1.5, 0.0)), ("glow", "COLOR", (1.0, 0.8, 0.2, 1.0)))
     ground = add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=20)
     add_component(ground, "COLLIDER", collider_shape="TRIMESH")
     add_component(ground, "RIGID_BODY", rigid_body_kind="STATIC")
@@ -263,11 +288,12 @@ def build_sample_level():
 
     pickup_zone = add_empty("pickup_zone", (4, -4, 1))
     add_component(pickup_zone, "COLLIDER", collider_shape="SPHERE", collider_radius=1.5, collider_sensor=True)
+    set_fields(add_component(pickup_zone, "CUSTOM", type_path="my_game::Pickup"), amount=5, respawn=True)
 
     add_component(add_empty("player_spawn", (2, 3, 0)), "CUSTOM", custom_type="my_game::PlayerSpawn")
     enemy_spawn = add_empty("enemy_spawn", (-6, -6, 0))
     add_component(enemy_spawn, "CUSTOM", custom_type="my_game::EnemySpawn")
-    add_component(enemy_spawn, "CUSTOM", custom_type="my_game::Wave", custom_json=json.dumps({"count": 3, "delay": 1.5}))
+    set_fields(add_component(enemy_spawn, "CUSTOM", type_path="my_game::Wave"), count=3, delay=1.5)
 
     lamp = add_mesh(bpy.ops.mesh.primitive_cube_add, "lamp", size=0.5, location=(4, 4, 0.25))
     add_component(lamp, "CUSTOM", custom_type="my_game::Glow", custom_json=json.dumps({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"}))

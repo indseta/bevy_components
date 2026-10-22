@@ -4,7 +4,18 @@ use avian3d::prelude::*;
 use bevy::{camera::visibility::VisibilityRange, gltf::GltfExtras, prelude::*};
 use bevy_components_importer::BlenderCustomComponents;
 use common::*;
+use serde::Deserialize;
 use serde_json::{Value, json};
+
+#[derive(Deserialize, Debug, PartialEq)]
+struct Pickup {
+    item: String,
+    amount: i32,
+    respawn: bool,
+    weight: f32,
+    spin: Vec3,
+    glow: Color,
+}
 
 fn node(world: &mut World, name: &str) -> Entity {
     let mut nodes = world.query_filtered::<(Entity, &Name), Without<Mesh3d>>();
@@ -143,7 +154,7 @@ fn empties_keep_positions() {
 fn custom_components_keep_type_paths_and_data() {
     let mut app = load_level(LEVEL);
     let world = app.world_mut();
-    let expected = [("player_spawn", vec![("my_game::PlayerSpawn", json!({}))]), ("enemy_spawn", vec![("my_game::EnemySpawn", json!({})), ("my_game::Wave", json!({"count": 3, "delay": 1.5}))]), ("lamp", vec![("my_game::Glow", json!({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"})), ("my_game::Flicker", json!(0.25))])];
+    let expected = [("player_spawn", vec![("my_game::PlayerSpawn", json!({}))]), ("enemy_spawn", vec![("my_game::EnemySpawn", json!({})), ("my_game::Wave", json!({"count": 3, "delay": 1.5}))]), ("lamp", vec![("my_game::Glow", json!({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"})), ("my_game::Flicker", json!(0.25))]), ("pickup_zone", vec![("my_game::Pickup", json!({"item": "coin", "amount": 5, "respawn": true, "weight": 0.1, "spin": [0.0, 1.5, 0.0], "glow": {"Srgba": {"red": 1.0, "green": 0.8, "blue": 0.2, "alpha": 1.0}}}))])];
     for (name, components) in expected {
         let node = node(world, name);
         let custom = world.get::<BlenderCustomComponents>(node).unwrap_or_else(|| panic!("{name} has no custom components"));
@@ -153,6 +164,17 @@ fn custom_components_keep_type_paths_and_data() {
     }
     let crate_node = node(world, "crate");
     assert!(world.get::<BlenderCustomComponents>(crate_node).is_none());
+}
+
+#[test]
+fn custom_component_fields_deserialize_into_rust_types() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let node = node(world, "pickup_zone");
+    let custom = world.get::<BlenderCustomComponents>(node).expect("pickup_zone has custom components");
+    let data = custom.0.iter().find(|component| component.type_path == "my_game::Pickup").map(|component| component.data.clone()).expect("pickup_zone has a Pickup");
+    let pickup: Pickup = serde_json::from_value(data).expect("Pickup fields match the Rust struct");
+    assert_eq!(pickup, Pickup { item: "coin".to_string(), amount: 5, respawn: true, weight: 0.1, spin: Vec3::new(0.0, 1.5, 0.0), glow: Color::srgba(1.0, 0.8, 0.2, 1.0) });
 }
 
 #[test]

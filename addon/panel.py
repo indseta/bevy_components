@@ -3,9 +3,9 @@ import json
 import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
-from .metadata import validate_items
-from .operator import BEVY_OT_lod_preset, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
-from .property import COMPONENT_LABELS, LAYER_COUNT
+from .metadata import FIELD_VALUES, invalid_names, validate_items
+from .operator import BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
+from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .system import component_of, panel_body_drawn, panel_header_drawn
 
 
@@ -97,10 +97,25 @@ def _draw_rigid_body(layout, obj, index, item):
     mass.prop(item, "rigid_body_mass", text="")
 
 
+def _draw_fields(layout, item):
+    problems = invalid_names(field.name for field in item.fields)
+    for field in item.fields:
+        row = layout.row()
+        row.alert = field.name in problems
+        row.prop(field, FIELD_VALUES[field.field_type], text=field.name)
+    if not len(item.fields):
+        row = layout.row()
+        row.active = False
+        row.label(text="No fields")
+
+
 def _draw_custom(layout, obj, index, item):
+    if item.use_fields:
+        _draw_fields(layout, item)
+        return
     row = layout.row()
     row.alert = not item.custom_type.strip()
-    row.prop(item, "custom_type")
+    row.prop_search(item, "custom_type", bpy.context.scene.bevy_component_definitions, "definitions", results_are_suggestions=True)
     row = layout.row()
     row.alert = not _is_json(item.custom_json)
     row.prop(item, "custom_json")
@@ -174,6 +189,70 @@ class BEVY_PT_view_sidebar(bpy.types.Panel):
             self.layout.label(text="Select an object", icon="INFO")
             return
         draw_components(self.layout, context.object)
+
+
+class BEVY_UL_definitions(bpy.types.UIList):
+    bl_idname = "BEVY_UL_definitions"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index=0, flt_flag=0):
+        layout.alert = item.name in invalid_names(definition.name for definition in data.definitions)
+        layout.prop(item, "name", text="", emboss=False, icon=COMPONENT_LABELS["CUSTOM"][1])
+
+
+class BEVY_UL_fields(bpy.types.UIList):
+    bl_idname = "BEVY_UL_fields"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index=0, flt_flag=0):
+        split = layout.split(factor=0.6)
+        split.alert = item.name in invalid_names(field.name for field in data.fields)
+        split.prop(item, "name", text="", emboss=False)
+        row = split.row()
+        row.alignment = "RIGHT"
+        row.active = False
+        row.label(text=FIELD_LABELS[item.field_type])
+
+
+class BEVY_PT_scene_definitions(bpy.types.Panel):
+    bl_label = "Bevy Custom Components"
+    bl_idname = "BEVY_PT_scene_definitions"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "scene"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def draw(self, context):
+        layout = self.layout
+        library = context.scene.bevy_component_definitions
+        row = layout.row()
+        row.template_list(BEVY_UL_definitions.bl_idname, "", library, "definitions", library, "active_index", rows=3)
+        column = row.column(align=True)
+        column.operator(BEVY_OT_definition_add.bl_idname, text="", icon="ADD")
+        column.operator(BEVY_OT_definition_remove.bl_idname, text="", icon="REMOVE")
+        if not 0 <= library.active_index < len(library.definitions):
+            return
+        definition = library.definitions[library.active_index]
+        header, body = layout.panel("BEVY_definition_fields")
+        header.label(text="Fields")
+        if body is None:
+            return
+        row = body.row()
+        row.template_list(BEVY_UL_fields.bl_idname, "", definition, "fields", definition, "active_field", rows=4)
+        column = row.column(align=True)
+        column.operator(BEVY_OT_field_add.bl_idname, text="", icon="ADD")
+        column.operator(BEVY_OT_field_remove.bl_idname, text="", icon="REMOVE")
+        column.separator()
+        column.operator(BEVY_OT_field_move.bl_idname, text="", icon="TRIA_UP").direction = "UP"
+        column.operator(BEVY_OT_field_move.bl_idname, text="", icon="TRIA_DOWN").direction = "DOWN"
+        if not 0 <= definition.active_field < len(definition.fields):
+            return
+        field = definition.fields[definition.active_field]
+        body.use_property_split = True
+        body.use_property_decorate = False
+        body.prop(field, "field_type")
+        body.prop(field, FIELD_VALUES[field.field_type], text="Default")
 
 
 class BEVY_PT_overlay(bpy.types.Panel):

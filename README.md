@@ -51,6 +51,27 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits, and dynamic Rigid Bodies can set a total mass. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Bevy Components** panel in Properties is expanded, and resize handles show on the selected object.
 
+## Custom components
+
+A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, define its fields once:
+
+1. In **Properties > Scene > Bevy Custom Components**, press **+** and double-click the new entry to set the type path, such as `my_game::Health`.
+2. Add fields with a name, a type and a default. The default is used when the component is added to an object.
+3. The type now appears under **Add Component**. Objects that already have it as JSON switch to the fields and keep their values.
+
+**Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values.
+
+The fields export as the JSON object that serde reads into a struct with the same field names, so `serde_json::from_value` turns the data into your component:
+
+| Field | Rust type |
+| --- | --- |
+| Float | `f32` |
+| Integer | `i32` or another integer type |
+| Boolean | `bool` |
+| String | `String` |
+| Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
+| Color | `Color`, in sRGB |
+
 ## Texture compression
 
 The exporter can compress textures to KTX2 and embed them in the GLB, so the level stays one file but is smaller on disk and in GPU memory.

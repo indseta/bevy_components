@@ -1,11 +1,13 @@
+import json
 import mimetypes
 import tempfile
+import uuid
 from pathlib import Path
 
 import bpy
 from bpy.app.handlers import persistent
 
-from .metadata import EXTRAS_KEY, serialize_items
+from .metadata import EXTRAS_KEY, FIELD_VALUES, convert_value, field_data, serialize_items
 
 PANEL_EXPANDED = True
 PANEL_DRAWN_EXPANDED = True
@@ -85,7 +87,15 @@ def component_index(obj, item):
 
 def copy_component(source, destination):
     for field in source.bl_rna.properties:
-        if field.identifier in {"rna_type", "id_data"} or field.is_readonly:
+        if field.identifier in {"rna_type", "id_data"}:
+            continue
+        if field.type == "COLLECTION":
+            items = getattr(destination, field.identifier)
+            items.clear()
+            for item in getattr(source, field.identifier):
+                copy_component(item, items.add())
+            continue
+        if field.is_readonly:
             continue
         value = getattr(source, field.identifier)
         try:
@@ -99,6 +109,150 @@ def sync_changed(self, context):
     if isinstance(obj, bpy.types.Object):
         sync_object(obj)
         redraw_viewports()
+
+
+def new_identifier():
+    return uuid.uuid4().hex
+
+
+def find_definition(scene, type_path):
+    if scene is None or not type_path.strip() or not hasattr(scene, "bevy_component_definitions"):
+        return None
+    for definition in scene.bevy_component_definitions.definitions:
+        if definition.name == type_path:
+            return definition
+    return None
+
+
+def field_slot(field):
+    value = getattr(field, FIELD_VALUES[field.field_type])
+    return value if isinstance(value, (bool, int, float, str)) else tuple(value)
+
+
+def write_field(field, value):
+    setattr(field, FIELD_VALUES[field.field_type], value)
+
+
+def _field_layout(fields):
+    return [(field.identifier, field.name, field.field_type) for field in fields]
+
+
+def _json_object(text):
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _converted(kind, values, key):
+    return convert_value(kind, values[key]) if key in values else None
+
+
+def link_component(item, definition, keep_values=True):
+    if keep_values and item.use_fields and _field_layout(item.fields) == _field_layout(definition.fields):
+        return False
+    typed = keep_values and item.use_fields
+    by_identifier = {field.identifier: field_slot(field) for field in item.fields if field.identifier} if typed else {}
+    by_name = {field.name: field_slot(field) for field in item.fields} if typed else {}
+    leftovers = _json_object(item.custom_json) if keep_values else {}
+    values = []
+    for source in definition.fields:
+        default = field_slot(source)
+        kept = _converted(source.field_type, by_identifier, source.identifier)
+        loaded = _converted(source.field_type, leftovers, source.name)
+        renamed = _converted(source.field_type, by_name, source.name)
+        if kept is not None and kept != default:
+            values.append(kept)
+        elif loaded is not None:
+            values.append(loaded)
+            leftovers.pop(source.name)
+        elif renamed is not None and source.identifier not in by_identifier:
+            values.append(renamed)
+        else:
+            values.append(default)
+    item.fields.clear()
+    for source, value in zip(definition.fields, values):
+        field = item.fields.add()
+        field.identifier = source.identifier
+        field.name = source.name
+        field.field_type = source.field_type
+        write_field(field, value)
+    if keep_values and leftovers != _json_object(item.custom_json):
+        item.custom_json = json.dumps(leftovers, ensure_ascii=False)
+    item.use_fields = True
+    return True
+
+
+def unlink_component(item):
+    if not item.use_fields:
+        return False
+    data = field_data(item.fields)
+    leftovers = {name: value for name, value in _json_object(item.custom_json).items() if name not in data}
+    item.custom_json = json.dumps({**data, **leftovers}, ensure_ascii=False)
+    item.fields.clear()
+    item.use_fields = False
+    return True
+
+
+def custom_components(scene, type_path=None):
+    for obj in scene.objects:
+        if obj.library:
+            continue
+        for item in obj.bevy_component_data.components:
+            if item.component_type == "CUSTOM" and (type_path is None or item.custom_type == type_path):
+                yield obj, item
+
+
+def apply_definitions(scene):
+    changed = set()
+    for obj, item in list(custom_components(scene)):
+        definition = find_definition(scene, item.custom_type)
+        if definition is not None and link_component(item, definition):
+            changed.add(obj)
+    for obj in changed:
+        sync_object(obj)
+    redraw_viewports()
+
+
+def reset_fields(item, definition):
+    if definition is not None:
+        link_component(item, definition, keep_values=False)
+        return
+    for field in item.fields:
+        for slot in FIELD_VALUES.values():
+            field.property_unset(slot)
+
+
+def custom_type_changed(self, context):
+    if self.component_type == "CUSTOM":
+        definition = find_definition(getattr(context, "scene", None), self.custom_type)
+        if definition is not None:
+            link_component(self, definition)
+        else:
+            unlink_component(self)
+    sync_changed(self, context)
+
+
+def field_changed(self, context):
+    owner = self.id_data
+    if isinstance(owner, bpy.types.Scene):
+        apply_definitions(owner)
+    else:
+        sync_changed(self, context)
+
+
+def definition_renamed(self, context):
+    if not self.name.strip():
+        return
+    previous = self.linked_name
+    self.linked_name = self.name
+    scene = self.id_data
+    if previous and previous != self.name:
+        for _obj, item in list(custom_components(scene, previous)):
+            if item.use_fields:
+                item.custom_type = self.name
+    apply_definitions(scene)
 
 
 @persistent
@@ -128,6 +282,7 @@ class glTF2ExportUserExtension:
 
     def gather_scene_hook(self, gltf2_scene, _blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
+        _remove_extra(gltf2_scene, "bevy_component_definitions")
 
 
 def _remove_extra(gltf2_element, key):
