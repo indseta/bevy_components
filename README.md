@@ -55,8 +55,17 @@ Collider sizes are in Bevy coordinates (Y up). Viewport previews are editor-only
 ```sh
 python -m unittest discover -s tests
 python scripts/build_addon.py
-cargo check --manifest-path importer/Cargo.toml
+cargo test --manifest-path importer/Cargo.toml
 ```
+
+The Blender tests install the built addon into Blender's `bpy` module, build a sample level and export it. `bpy` only installs on the Python version its Blender ships with (3.11 for 4.2, 3.13 for 5.1 and later):
+
+```sh
+pip install bpy==4.2.23
+python -m unittest discover -s tests/blender
+```
+
+The importer tests load `importer/tests/assets/sample_level.glb`, which `python tests/blender/sample_level.py` regenerates. The Blender tests fail if it no longer matches a fresh export.
 
 `addon/` holds the Blender extension and `importer/` the Rust crate. When CI passes on `main`, a GitHub release with both downloads is published whenever the version changes. The addon and importer share one version, kept in `addon/blender_manifest.toml`, `addon/__init__.py` and `importer/Cargo.toml`, and a test checks they match.
 
