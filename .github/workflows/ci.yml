@@ -152,3 +152,26 @@ jobs:
                   else
                       gh release create "$tag" "dist/bevy_components_${VERSION//./_}.zip" "dist/bevy_components_importer_${VERSION//./_}.zip" --target "$GITHUB_SHA" --title "Bevy Components $VERSION" --notes "Download bevy_components_${VERSION//./_}.zip for the Blender addon and bevy_components_importer_${VERSION//./_}.zip for the Rust importer. See the README for installation."
                   fi
+    delete_merged_branches:
+        name: Delete merged branches
+        needs: [addon, blender, blender_texture_compression, importer]
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+            pull-requests: read
+        env:
+            GH_TOKEN: ${{ github.token }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+            - name: Delete branches already in the tested main commit
+              run: |
+                  open_heads=$(gh pr list --state open --limit 1000 --json headRefName --jq '.[].headRefName')
+                  for branch in $(git for-each-ref --merged "$GITHUB_SHA" --format='%(refname:lstrip=3)' refs/remotes/origin); do
+                      if [ "$branch" = main ] || [ "$branch" = HEAD ] || grep -qxF "$branch" <<< "$open_heads"; then
+                          continue
+                      fi
+                      git push origin --delete "$branch" || echo "Could not delete $branch"
+                  done
