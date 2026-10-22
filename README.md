@@ -61,6 +61,27 @@ Collider sizes are in Bevy coordinates (Y up). Viewport previews are editor-only
 - levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
 - Custom Component type paths that aren't Rust paths, or that repeat on one object
 
+## Custom components
+
+A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, define its fields once:
+
+1. In **Properties > Scene > Bevy Custom Components**, press **+** and double-click the new entry to set the type path, such as `my_game::Health`.
+2. Add fields with a name, a type and a default. The default is used when the component is added to an object.
+3. The type now appears under **Add Component**. Objects that already have it as JSON switch to the fields and keep their values.
+
+**Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values.
+
+The fields export as the JSON object that serde reads into a struct with the same field names, so `serde_json::from_value` turns the data into your component:
+
+| Field | Rust type |
+| --- | --- |
+| Float | `f32` |
+| Integer | `i32` or another integer type |
+| Boolean | `bool` |
+| String | `String` |
+| Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
+| Color | `Color`, in sRGB |
+
 ## Texture compression
 
 The exporter can compress textures to KTX2 and embed them in the GLB, so the level stays one file but is smaller on disk and in GPU memory.

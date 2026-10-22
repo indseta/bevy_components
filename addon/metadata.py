@@ -1,8 +1,113 @@
 import json
+import struct
 
 SCHEMA_VERSION = 1
 EXTRAS_KEY = "bevy_components"
 RANGE_TOLERANCE = 0.0001
+FIELD_VALUES = {
+    "FLOAT": "float_value",
+    "INT": "int_value",
+    "BOOL": "bool_value",
+    "STRING": "string_value",
+    "VECTOR": "vector_value",
+    "COLOR": "color_value",
+}
+COLOR_CHANNELS = ("red", "green", "blue", "alpha")
+INT_LIMIT = 2 ** 31
+
+
+def _single(value):
+    try:
+        return struct.unpack("f", struct.pack("f", value))[0]
+    except OverflowError:
+        return None
+
+
+def _float32(value):
+    single = _single(value)
+    if single is None:
+        return value
+    for digits in range(1, 10):
+        candidate = float(f"{single:.{digits}g}")
+        if _single(candidate) == single:
+            return candidate
+    return single
+
+
+def _number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and abs(value) < 1e38
+
+
+def _numbers(value, sizes):
+    return isinstance(value, (list, tuple)) and len(value) in sizes and all(_number(number) for number in value)
+
+
+def field_value(field):
+    kind = field.field_type
+    if kind == "FLOAT":
+        return _float32(field.float_value)
+    if kind == "INT":
+        return int(field.int_value)
+    if kind == "BOOL":
+        return bool(field.bool_value)
+    if kind == "STRING":
+        return str(field.string_value)
+    if kind == "VECTOR":
+        return [_float32(value) for value in field.vector_value]
+    if kind == "COLOR":
+        return {"Srgba": {channel: _float32(value) for channel, value in zip(COLOR_CHANNELS, field.color_value)}}
+    raise ValueError(f"Unsupported field type: {kind}")
+
+
+def field_data(fields):
+    return {field.name: field_value(field) for field in fields}
+
+
+def convert_value(kind, value):
+    if kind == "FLOAT":
+        return float(value) if _number(value) else None
+    if kind == "INT":
+        return int(round(value)) if _number(value) and -INT_LIMIT <= round(value) < INT_LIMIT else None
+    if kind == "BOOL":
+        return value if isinstance(value, bool) else None
+    if kind == "STRING":
+        return value if isinstance(value, str) else None
+    if kind == "VECTOR":
+        return tuple(float(number) for number in value) if _numbers(value, (3,)) else None
+    if kind == "COLOR":
+        if isinstance(value, dict) and list(value) == ["Srgba"] and isinstance(value["Srgba"], dict):
+            value = [value["Srgba"].get(channel, 1.0 if channel == "alpha" else None) for channel in COLOR_CHANNELS]
+        return tuple(float(number) for number in value) + (1.0,) * (4 - len(value)) if _numbers(value, (3, 4)) else None
+    return None
+
+
+def infer_field_type(value):
+    if isinstance(value, bool):
+        return "BOOL"
+    if isinstance(value, int):
+        return "INT" if convert_value("INT", value) is not None else None
+    if isinstance(value, float):
+        return "FLOAT" if _number(value) else None
+    if isinstance(value, str):
+        return "STRING"
+    for kind in ("VECTOR", "COLOR"):
+        if convert_value(kind, value) is not None:
+            return kind
+    return None
+
+
+def infer_fields(data):
+    if not isinstance(data, dict):
+        raise ValueError("Only a JSON object can be split into fields")
+    unsupported = [name for name, value in data.items() if infer_field_type(value) is None]
+    if unsupported:
+        raise ValueError(f"No field type fits {', '.join(unsupported)}")
+    return [(name, infer_field_type(value), convert_value(infer_field_type(value), value)) for name, value in data.items()]
+
+
+def invalid_names(names):
+    names = list(names)
+    return {name for name in names if not name.strip() or names.count(name) > 1}
 
 
 def serialize_component(item):
@@ -26,6 +131,8 @@ def serialize_component(item):
     if kind == "RIGID_BODY":
         return {"type": "rigid_body", "kind": item.rigid_body_kind.lower()}
     if kind == "CUSTOM":
+        if item.use_fields:
+            return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields)}
         try:
             value = json.loads(item.custom_json)
         except json.JSONDecodeError as error:
@@ -46,10 +153,14 @@ def component_errors(item):
     elif item.component_type == "CUSTOM":
         if not item.custom_type.strip():
             errors.append("Custom Component needs a Rust type path")
-        try:
-            json.loads(item.custom_json)
-        except json.JSONDecodeError:
-            errors.append("invalid JSON in Custom Component")
+        if item.use_fields:
+            if invalid_names(field.name for field in item.fields):
+                errors.append(f"{item.custom_type} needs a unique name for every field")
+        else:
+            try:
+                json.loads(item.custom_json)
+            except json.JSONDecodeError:
+                errors.append("invalid JSON in Custom Component")
     elif item.component_type == "COLLIDER":
         if item.collider_shape == "CUBOID" and any(value <= 0 for value in item.collider_size):
             errors.append("collider cuboid dimensions must be positive")

@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -8,9 +9,10 @@ from bpy_extras.io_utils import ExportHelper
 
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, EncoderError, check_encoder, encode
+from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
-from .system import copy_component, image_to_png, redraw_viewports, sync_object
+from .system import apply_definitions, copy_component, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import check_objects, count, describe, draw_issues, issue_summary
 
 TEXTURE_COMPRESSION = [
@@ -31,6 +33,37 @@ def _components(context, index):
     return context.object.bevy_component_data.components
 
 
+def _active_definition(context):
+    if context.scene is None:
+        return None
+    library = context.scene.bevy_component_definitions
+    if not 0 <= library.active_index < len(library.definitions):
+        return None
+    return library.definitions[library.active_index]
+
+
+def _active_field(context):
+    definition = _active_definition(context)
+    if definition is None or not 0 <= definition.active_field < len(definition.fields):
+        return None
+    return definition.fields[definition.active_field]
+
+
+def _unique(base, taken, separator):
+    name = base
+    number = 2
+    while name in taken:
+        name = f"{base}{separator}{number}"
+        number += 1
+    return name
+
+
+def _show_scene_properties(context):
+    areas = [context.area] if context.area and context.area.type == "PROPERTIES" else [area for area in context.screen.areas if area.type == "PROPERTIES"] if context.screen else []
+    for area in areas[:1]:
+        area.spaces.active.context = "SCENE"
+
+
 class BEVY_OT_add_component(bpy.types.Operator):
     bl_idname = "bevy_components.add"
     bl_label = "Add Component"
@@ -38,6 +71,7 @@ class BEVY_OT_add_component(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     component_type: EnumProperty(name="Component", items=COMPONENT_TYPES)
+    type_path: StringProperty(name="Type Path", description="Custom component type defined in Properties > Scene", options={"HIDDEN", "SKIP_SAVE"})
 
     @classmethod
     def poll(cls, context):
@@ -46,11 +80,17 @@ class BEVY_OT_add_component(bpy.types.Operator):
     def execute(self, context):
         obj = context.object
         items = obj.bevy_component_data.components
+        defined = self.component_type == "CUSTOM" and self.type_path
         if self.component_type != "CUSTOM" and any(existing.component_type == self.component_type for existing in items):
             self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} is already on {obj.name}")
             return {"CANCELLED"}
+        if defined and any(existing.component_type == "CUSTOM" and existing.custom_type == self.type_path for existing in items):
+            self.report({"WARNING"}, f"{self.type_path} is already on {obj.name}")
+            return {"CANCELLED"}
         item = items.add()
         item.component_type = self.component_type
+        if defined:
+            item.custom_type = self.type_path
         sync_object(obj)
         redraw_viewports()
         return {"FINISHED"}
@@ -153,9 +193,14 @@ class BEVY_OT_reset_component(bpy.types.Operator):
         if items is None:
             return {"CANCELLED"}
         item = items[self.index]
+        custom = item.component_type == "CUSTOM"
+        typed = custom and item.use_fields
+        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded"} | ({"custom_type"} if custom else set()) | ({"use_fields"} if typed else set())
         for field in item.bl_rna.properties:
-            if field.identifier not in {"rna_type", "name", "component_type", "enabled", "show_expanded"} and not field.is_readonly:
+            if field.identifier not in kept and field.type != "COLLECTION" and not field.is_readonly:
                 item.property_unset(field.identifier)
+        if typed:
+            reset_fields(item, find_definition(context.scene, item.custom_type))
         sync_object(context.object)
         redraw_viewports()
         return {"FINISHED"}
@@ -225,6 +270,161 @@ class BEVY_OT_lod_preset(bpy.types.Operator):
         item.fade_out_end = fade_out_end
         sync_object(context.object)
         redraw_viewports()
+        return {"FINISHED"}
+
+
+class BEVY_OT_define_fields(bpy.types.Operator):
+    bl_idname = "bevy_components.define_fields"
+    bl_label = "Define Fields"
+    bl_description = "Edit the fields of this custom component type in Properties > Scene, defining them from its data the first time"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(name="Index")
+
+    @classmethod
+    def poll(cls, context):
+        return _editable(context) and context.scene is not None
+
+    def execute(self, context):
+        items = _components(context, self.index)
+        if items is None or items[self.index].component_type != "CUSTOM":
+            return {"CANCELLED"}
+        item = items[self.index]
+        if not item.custom_type.strip():
+            self.report({"WARNING"}, "Give the component a type path first")
+            return {"CANCELLED"}
+        library = context.scene.bevy_component_definitions
+        definition = find_definition(context.scene, item.custom_type)
+        if definition is None:
+            if item.use_fields:
+                fields = [(field.identifier, field.name, field.field_type, field_slot(field)) for field in item.fields]
+            else:
+                try:
+                    fields = [("", name, kind, value) for name, kind, value in infer_fields(json.loads(item.custom_json))]
+                except (json.JSONDecodeError, ValueError) as error:
+                    self.report({"ERROR"}, f"Cannot define fields for {item.custom_type}: {error}")
+                    return {"CANCELLED"}
+            definition = library.definitions.add()
+            for identifier, name, kind, value in fields:
+                field = definition.fields.add()
+                field.identifier = identifier or new_identifier()
+                field.name = name
+                field.field_type = kind
+                write_field(field, value)
+            definition.name = item.custom_type
+        library.active_index = list(library.definitions).index(definition)
+        apply_definitions(context.scene)
+        _show_scene_properties(context)
+        return {"FINISHED"}
+
+
+class BEVY_OT_definition_add(bpy.types.Operator):
+    bl_idname = "bevy_components.definition_add"
+    bl_label = "Add Custom Component Type"
+    bl_description = "Define a custom component type and its fields, to add to objects from Add Component"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def execute(self, context):
+        library = context.scene.bevy_component_definitions
+        active = _active_definition(context)
+        crate = (active.name.rpartition("::")[0] if active is not None else "") or "my_game"
+        taken = {definition.name for definition in library.definitions} | {item.custom_type for _obj, item in custom_components(context.scene)}
+        definition = library.definitions.add()
+        definition.name = _unique(f"{crate}::MyComponent", taken, "")
+        library.active_index = len(library.definitions) - 1
+        return {"FINISHED"}
+
+
+class BEVY_OT_definition_remove(bpy.types.Operator):
+    bl_idname = "bevy_components.definition_remove"
+    bl_label = "Remove Custom Component Type"
+    bl_description = "Remove the definition. Objects keep the component, edited as JSON with the same values"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _active_definition(context) is not None
+
+    def execute(self, context):
+        scene = context.scene
+        library = scene.bevy_component_definitions
+        type_path = library.definitions[library.active_index].name
+        library.definitions.remove(library.active_index)
+        library.active_index = min(library.active_index, len(library.definitions) - 1)
+        if find_definition(scene, type_path) is None:
+            for obj, item in list(custom_components(scene, type_path)):
+                if unlink_component(item):
+                    sync_object(obj)
+        apply_definitions(scene)
+        return {"FINISHED"}
+
+
+class BEVY_OT_field_add(bpy.types.Operator):
+    bl_idname = "bevy_components.field_add"
+    bl_label = "Add Field"
+    bl_description = "Add a field to the custom component type and to every object that has it"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _active_definition(context) is not None
+
+    def execute(self, context):
+        definition = _active_definition(context)
+        taken = {field.name for field in definition.fields}
+        field = definition.fields.add()
+        field.identifier = new_identifier()
+        field.name = _unique("field", taken, "_")
+        definition.active_field = len(definition.fields) - 1
+        apply_definitions(context.scene)
+        return {"FINISHED"}
+
+
+class BEVY_OT_field_remove(bpy.types.Operator):
+    bl_idname = "bevy_components.field_remove"
+    bl_label = "Remove Field"
+    bl_description = "Remove the field from the custom component type and from every object that has it"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return _active_field(context) is not None
+
+    def execute(self, context):
+        definition = _active_definition(context)
+        definition.fields.remove(definition.active_field)
+        definition.active_field = min(definition.active_field, len(definition.fields) - 1)
+        apply_definitions(context.scene)
+        return {"FINISHED"}
+
+
+class BEVY_OT_field_move(bpy.types.Operator):
+    bl_idname = "bevy_components.field_move"
+    bl_label = "Move Field"
+    bl_description = "Change the field's place in the custom component type"
+    bl_options = {"REGISTER", "UNDO"}
+
+    direction: EnumProperty(name="Direction", items=[
+        ("UP", "Up", "Move the field up one place"),
+        ("DOWN", "Down", "Move the field down one place"),
+    ])
+
+    @classmethod
+    def poll(cls, context):
+        return _active_field(context) is not None
+
+    def execute(self, context):
+        definition = _active_definition(context)
+        target = definition.active_field + (-1 if self.direction == "UP" else 1)
+        if not 0 <= target < len(definition.fields):
+            return {"CANCELLED"}
+        definition.fields.move(definition.active_field, target)
+        definition.active_field = target
+        apply_definitions(context.scene)
         return {"FINISHED"}
 
 
