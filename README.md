@@ -83,7 +83,7 @@ The exporter can compress textures to KTX2 and embed them in the GLB, so the lev
    - **UASTC**: best quality, larger files. **Supercompression** shrinks them on disk.
    - **Automatic**: UASTC for normal maps, metallic-roughness, occlusion and textures set to Closest interpolation, ETC1S for other color textures.
 
-A 4K texture takes 10 to 25 seconds to encode, and Blender does not respond until the export is done. The exporter encodes up to four textures at once and caches the results in the add-on's user folder (up to 2 GB), so later exports only encode textures that changed. Leave compression Disabled while you iterate for the fastest exports.
+A 4K texture takes 10 to 25 seconds to encode. Blender stays usable meanwhile: the status bar shows how many textures are done, and its **X** button cancels the export and keeps the previous file. Exports started from a script still finish before the call returns. The exporter encodes up to four textures at once at a lower CPU priority and caches the results in the add-on's user folder (up to 2 GB), so later exports only encode textures that changed. Leave compression Disabled while you iterate for the fastest exports.
 
 Base color, normal, metallic-roughness, occlusion and emissive textures are converted with mipmaps and stored with the `KHR_texture_basisu` glTF extension. Samplers, UV maps, texture transforms, alpha modes and color spaces are kept, and a texture shared by several materials is stored once. Textures whose size is not a multiple of 4 pixels are scaled up to one, and the export warns when it does. Your Blender images are not changed.
 
@@ -116,6 +116,8 @@ The importer tests load `importer/tests/assets/sample_level.glb` and its compres
 The rendering test compares compressed and uncompressed levels on a real GPU and is skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
 
 `addon/` holds the Blender extension and `importer/` the Rust crate. When CI passes on `main`, a GitHub release with both downloads is published whenever the version changes. The addon and importer share one version, kept in `addon/blender_manifest.toml`, `addon/__init__.py` and `importer/Cargo.toml`, and a test checks they match.
+
+CI on pull requests and `main` runs only the Linux tests for the side that changed, plus the macOS and Windows texture compression tests when `addon/encoder.py` or `addon/compression.py` change. Every test on every platform runs when the version is not released yet, when the CI workflow changes, and when CI is started by hand from the Actions tab.
 
 ## License
 

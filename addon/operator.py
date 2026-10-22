@@ -8,11 +8,11 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
-from .encoder import HINT, EncoderError, check_encoder, encode
+from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields, validate_items
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .property import COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
-from .system import apply_definitions, components_for, copy_component, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .system import apply_definitions, components_for, copy_component, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 
 TEXTURE_COMPRESSION = [
     ("DISABLED", "Disabled", "Export ordinary embedded textures"),
@@ -20,6 +20,22 @@ TEXTURE_COMPRESSION = [
     ("UASTC", "UASTC", "Compress every texture as UASTC KTX2, for the best quality"),
     ("AUTOMATIC", "Automatic", "UASTC for normal maps, data textures such as metallic-roughness and pixel art with Closest sampling, ETC1S for other color textures"),
 ]
+PROGRESS_INTERVAL = 0.1
+
+_exports = {}
+
+
+def running_export():
+    return next(iter(_exports), None)
+
+
+def stop_exports():
+    for task, (timer, directory) in _exports.items():
+        task.cancel()
+        task.wait()
+        bpy.context.window_manager.event_timer_remove(timer)
+        directory.cleanup()
+    _exports.clear()
 
 
 def _editable(context):
@@ -499,6 +515,22 @@ class BEVY_OT_validate(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BEVY_OT_cancel_export(bpy.types.Operator):
+    bl_idname = "bevy_components.cancel_export"
+    bl_label = "Cancel Export"
+    bl_description = "Stop compressing textures and keep the previous file"
+
+    @classmethod
+    def poll(cls, context):
+        return running_export() is not None
+
+    def execute(self, context):
+        for task in _exports:
+            task.cancel()
+        redraw_status_bars()
+        return {"FINISHED"}
+
+
 class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
     bl_idname = "export_scene.bevy_components_glb"
     bl_label = "Bevy Level (.glb)"
@@ -516,6 +548,19 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
     etc1s_effort: IntProperty(name="ETC1S Effort", description="Higher encodes ETC1S textures more slowly with slightly better quality", default=2, min=0, max=6)
     uastc_quality: IntProperty(name="UASTC Quality", description="Higher encodes UASTC textures more slowly with better quality", default=2, min=0, max=4)
     uastc_zstd: IntProperty(name="UASTC Supercompression", description="Zstandard level that shrinks UASTC textures in the file, 0 turns it off", default=18, min=0, max=22)
+
+    _interactive = False
+    _directory = None
+    _level = None
+    _task = None
+    _shown = None
+
+    @classmethod
+    def poll(cls, context):
+        if running_export() is not None:
+            cls.poll_message_set("A Bevy level export is still compressing textures")
+            return False
+        return True
 
     def draw(self, context):
         layout = self.layout
@@ -543,6 +588,10 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             if self.texture_compression != "DISABLED":
                 draw_encoder_status(body, context)
 
+    def invoke(self, context, event):
+        self._interactive = True
+        return ExportHelper.invoke(self, context, event)
+
     def execute(self, context):
         if not hasattr(bpy.ops.export_scene, "gltf"):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
@@ -563,29 +612,58 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 return {"CANCELLED"}
         for obj in objects:
             sync_object(obj)
-        with tempfile.TemporaryDirectory(prefix="bevy_components_") as directory:
-            path = Path(directory) / "level.glb" if encoder else Path(self.filepath)
-            try:
-                result = bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, check_existing=False)
-            except Exception as error:
-                self.report({"ERROR"}, f"GLB export failed: {error}")
-                return {"CANCELLED"}
-            if "FINISHED" not in result:
-                return result
-            if encoder:
-                try:
-                    message = self._compress_textures(context, path, encoder, directory)
-                except (EncoderError, ValueError) as error:
-                    self.report({"ERROR"}, f"Texture compression failed: {error}")
-                    return {"CANCELLED"}
-                self.report({"INFO"}, f"Exported Bevy level with {message}: {self.filepath}")
-                return result
-        self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
+        if encoder is None:
+            result = self._export_gltf(Path(self.filepath))
+            if "FINISHED" in result:
+                self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
+            return result
+        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
+        result = self._compress(context, encoder)
+        if "RUNNING_MODAL" not in result:
+            self._release()
         return result
 
-    def _compress_textures(self, context, path, encoder, directory):
-        gltf, binary = read_glb(path.read_bytes())
-        jobs = plan_textures(gltf, binary, self.texture_compression, convert=image_to_png)
+    def modal(self, context, event):
+        if self._task.running:
+            if self._task.done != self._shown:
+                self._shown = self._task.done
+                redraw_status_bars()
+            return {"PASS_THROUGH"}
+        self._stop_background(context)
+        if self._task.cancelled:
+            self.report({"INFO"}, "Cancelled the Bevy level export")
+            result = {"CANCELLED"}
+        elif self._task.error is not None:
+            result = self._failed(self._task.error)
+        else:
+            result = self._finish(self._task.results)
+        self._release()
+        return result
+
+    def cancel(self, context):
+        self._task.cancel()
+        self._task.wait()
+        self._stop_background(context)
+        self._release()
+
+    def _export_gltf(self, path):
+        try:
+            return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, check_existing=False)
+        except Exception as error:
+            self.report({"ERROR"}, f"GLB export failed: {error}")
+            return {"CANCELLED"}
+
+    def _compress(self, context, encoder):
+        path = Path(self._directory.name) / "level.glb"
+        result = self._export_gltf(path)
+        if "FINISHED" not in result:
+            return result
+        try:
+            gltf, binary = read_glb(path.read_bytes())
+            jobs = plan_textures(gltf, binary, self.texture_compression, convert=image_to_png)
+        except ValueError as error:
+            return self._failed(error)
+        self._level = (gltf, binary, jobs)
         settings = {
             "etc1s_quality": self.etc1s_quality,
             "etc1s_effort": self.etc1s_effort,
@@ -593,22 +671,56 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             "uastc_zstd": self.uastc_zstd,
         }
         window_manager = context.window_manager
+        if self._interactive and context.window is not None:
+            self._task = BackgroundEncode(encoder, jobs, settings, self._directory.name, cache=texture_cache(), check=check_encoded)
+            _exports[self._task] = (window_manager.event_timer_add(PROGRESS_INTERVAL, window=context.window), self._directory)
+            window_manager.modal_handler_add(self)
+            redraw_status_bars()
+            return {"RUNNING_MODAL"}
         window_manager.progress_begin(0, max(len(jobs), 1))
         try:
-            encoded = encode(encoder, jobs, settings, directory, progress=window_manager.progress_update, cache=texture_cache(), check=check_encoded)
+            encoded = encode(encoder, jobs, settings, self._directory.name, progress=window_manager.progress_update, cache=texture_cache(), check=check_encoded)
+        except EncoderError as error:
+            return self._failed(error)
         finally:
             window_manager.progress_end()
+        return self._finish(encoded)
+
+    def _stop_background(self, context):
+        if self._task in _exports:
+            timer, _directory = _exports.pop(self._task)
+            context.window_manager.event_timer_remove(timer)
+        redraw_status_bars()
+
+    def _release(self):
+        self._directory.cleanup()
+        self._directory = None
+        self._level = None
+        self._task = None
+
+    def _failed(self, error):
+        self.report({"ERROR"}, f"Texture compression failed: {error}")
+        return {"CANCELLED"}
+
+    def _finish(self, encoded):
+        gltf, binary, jobs = self._level
         for job, data in zip(jobs, encoded):
             problem = check_encoded(job, data)
             if problem:
-                raise ValueError(problem)
+                return self._failed(problem)
         before = sum(len(data) for data in {job.image: job.data for job in jobs}.values())
         gltf, binary = embed_textures(gltf, binary, jobs, encoded)
         output = Path(self.filepath)
         staging = output.with_name(f".{output.name}.tmp")
-        staging.write_bytes(write_glb(gltf, binary))
-        os.replace(staging, output)
+        try:
+            staging.write_bytes(write_glb(gltf, binary))
+            os.replace(staging, output)
+        except OSError as error:
+            staging.unlink(missing_ok=True)
+            self.report({"ERROR"}, f"Could not write {output}: {error}")
+            return {"CANCELLED"}
         resized = sorted({job.name for job in jobs if job.resized})
         if resized:
             self.report({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need")
-        return f"{len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB)"
+        self.report({"INFO"}, f"Exported Bevy level with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {self.filepath}")
+        return {"FINISHED"}

@@ -270,12 +270,13 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Object, "bevy_component_data"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
+        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
+        self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.system.save_sync, bpy.app.handlers.save_pre)
         self.assertEqual(bpy.context.preferences.addons[addon.__name__].preferences.ktx_path, "")
 
@@ -630,6 +631,32 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         addon.menu.export_menu(panel, bpy.context)
         self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb"])
+
+    def test_status_bar_shows_running_exports(self):
+        header = FakePanel(self)
+        addon.menu.export_status(header, bpy.context)
+        self.assertEqual(header.layout.calls, [])
+        self.assertTrue(bpy.ops.export_scene.bevy_components_glb.poll())
+        self.assertFalse(bpy.ops.bevy_components.cancel_export.poll())
+        task = mock.Mock(done=3, total=8)
+        with mock.patch.dict(addon.operator._exports, {task: None}):
+            addon.menu.export_status(header, bpy.context)
+            self.assertFalse(bpy.ops.export_scene.bevy_components_glb.poll())
+            bpy.ops.bevy_components.cancel_export()
+        task.cancel.assert_called_once_with()
+        self.assertEqual([bound for name, bound, layout in header.layout.calls if name == "progress"], [{"factor": 0.375, "type": "BAR", "text": "Compressing textures 3/8"}])
+        self.assertEqual(header.layout.operators(), ["bevy_components.cancel_export"])
+        self.assertTrue(bpy.ops.export_scene.bevy_components_glb.poll())
+
+    def test_unregister_stops_running_exports(self):
+        task = mock.Mock()
+        directory = tempfile.TemporaryDirectory()
+        addon.operator._exports[task] = (bpy.context.window_manager.event_timer_add(60.0, window=bpy.context.window), directory)
+        addon.operator.stop_exports()
+        task.cancel.assert_called_once_with()
+        task.wait.assert_called_once_with()
+        self.assertFalse(Path(directory.name).exists())
+        self.assertEqual(addon.operator._exports, {})
 
     def test_export_dialog_texture_compression(self):
         properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
