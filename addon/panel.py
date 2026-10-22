@@ -1,114 +1,120 @@
+import json
+
 import bpy
 
+from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
 from .metadata import validate_items
-from .operator import BEVY_OT_export_glb
+from .operator import BEVY_OT_lod_preset, BEVY_OT_remove_component
+from .property import COMPONENT_LABELS
+from .system import component_of
 
 
-def draw_component_cards(layout, obj):
-    items = obj.bevy_component_data.components
+def _labeled_row(layout, text):
     row = layout.row(align=True)
-    row.label(text=f"{len(items)} component(s)")
-    row.operator("bevy_components.add", text="Add Component", icon="ADD")
-    if not items:
-        layout.label(text="Use Add Component to begin", icon="INFO")
-    for index, item in enumerate(items):
-        title, icon = {
-            "VISIBILITY_RANGE": ("Visibility Range", "HIDE_OFF"),
-            "COLLIDER": ("Collider", "MESH_ICOSPHERE"),
-            "RIGID_BODY": ("Rigid Body", "PHYSICS"),
-            "SPAWN_POINT": ("Spawn Point", "EMPTY_AXIS"),
-            "CUSTOM": (item.custom_type or "Custom Component", "FILE_SCRIPT"),
-        }[item.component_type]
-        card = layout.box()
-        header = card.row(align=True)
-        header.prop(item, "expanded", icon="TRIA_DOWN" if item.expanded else "TRIA_RIGHT", text="", emboss=False)
-        header.label(text=title, icon=icon)
-        button = header.operator("bevy_components.remove", icon="X", text="", emboss=False)
+    row.use_property_split = False
+    split = row.split(factor=0.4, align=True)
+    split.alignment = "RIGHT"
+    split.label(text=text)
+    return split.row(align=True)
+
+
+def _is_json(text):
+    try:
+        json.loads(text)
+    except json.JSONDecodeError:
+        return False
+    return True
+
+
+def _draw_visibility_range(layout, obj, index, item):
+    presets = _labeled_row(layout, "Preset")
+    for preset, text in (("NEAR", "LOD0"), ("MID", "LOD1"), ("FAR", "LOD2")):
+        button = presets.operator(BEVY_OT_lod_preset.bl_idname, text=text)
         button.index = index
-        if not item.expanded:
-            continue
-        column = card.column(align=True)
-        if item.component_type == "VISIBILITY_RANGE":
-            column.label(text="LOD presets (matched crossfades)")
-            preset_row = column.row(align=True)
-            for preset, name in (("NEAR", "LOD0"), ("MID", "LOD1"), ("FAR", "LOD2")):
-                button = preset_row.operator("bevy_components.lod_preset", text=name)
-                button.index = index
-                button.preset = preset
-            column.separator(factor=0.5)
-            column.label(text="Fade In (meters)")
-            row = column.row(align=True)
-            row.prop(item, "fade_in_start", text="Start")
-            row.prop(item, "fade_in_end", text="End")
-            column.label(text="Fade Out (meters)")
-            row = column.row(align=True)
-            row.prop(item, "fade_out_start", text="Start")
-            row.prop(item, "fade_out_end", text="End")
-            column.prop(item, "use_aabb")
-            if validate_items([item], obj.name):
-                column.label(text="Distances must be ordered", icon="ERROR")
-        elif item.component_type == "COLLIDER":
-            column.prop(item, "collider_shape")
-            if item.collider_shape == "CUBOID":
-                column.prop(item, "collider_size")
-                column.label(text="Bevy local axes: X, Y (up), Z", icon="INFO")
-            elif item.collider_shape == "SPHERE":
-                column.prop(item, "collider_radius")
-            elif item.collider_shape == "CAPSULE":
-                column.prop(item, "collider_radius")
-                column.prop(item, "collider_height")
-            else:
-                column.label(text="Derived from imported mesh geometry", icon="INFO")
-            column.prop(item, "collider_sensor")
-            if item.collider_shape == "TRIMESH":
-                column.label(text="Use only for static bodies", icon="INFO")
-        elif item.component_type == "RIGID_BODY":
-            column.prop(item, "rigid_body_kind")
-        elif item.component_type == "SPAWN_POINT":
-            column.prop(item, "spawn_tag")
-        elif item.component_type == "CUSTOM":
-            column.prop(item, "custom_type")
-            column.prop(item, "custom_json")
-            column.label(text="Custom data requires your game-side handler", icon="INFO")
-    if items:
-        layout.separator()
-        row = layout.row(align=True)
-        row.operator("bevy_components.copy_to_selected", text="Copy to Selected", icon="DUPLICATE")
-        row.operator("bevy_components.validate", text="Validate", icon="CHECKMARK")
-    layout.separator()
-    if hasattr(bpy.context, "scene") and bpy.context.scene:
-        preview = layout.box()
-        preview.label(text="3D Viewport Preview", icon="SHADING_WIRE")
-        preview.prop(bpy.context.scene.bevy_component_previews, "enabled")
-        preview.label(text="More controls: 3D View > N > Bevy")
-    layout.operator("export_scene.bevy_components_glb", text="Export Level (.glb)", icon="EXPORT")
+        button.preset = preset
+    invalid = bool(validate_items([item]))
+    column = layout.column(align=True)
+    column.alert = invalid
+    column.prop(item, "fade_in_start", text="Fade In Start")
+    column.prop(item, "fade_in_end", text="End")
+    column = layout.column(align=True)
+    column.alert = invalid
+    column.prop(item, "fade_out_start", text="Fade Out Start")
+    column.prop(item, "fade_out_end", text="End")
+    layout.prop(item, "use_aabb")
+    if invalid:
+        layout.label(text="Fade distances must increase from top to bottom", icon="ERROR")
 
 
-def draw_viewport_controls(layout, context):
-    if context.scene is None:
+def _draw_collider(layout, obj, index, item):
+    layout.prop(item, "collider_shape")
+    if item.collider_shape == "CUBOID":
+        column = layout.column(align=True)
+        column.prop(item, "collider_size", index=0, text="Size X")
+        column.prop(item, "collider_size", index=1, text="Y (Up)")
+        column.prop(item, "collider_size", index=2, text="Z")
+    elif item.collider_shape == "SPHERE":
+        layout.prop(item, "collider_radius")
+    elif item.collider_shape == "CAPSULE":
+        column = layout.column(align=True)
+        column.prop(item, "collider_radius")
+        column.prop(item, "collider_height")
+    layout.prop(item, "collider_sensor")
+    rigid_body = component_of(obj, "RIGID_BODY")
+    if item.collider_shape == "TRIMESH" and rigid_body is not None and rigid_body.rigid_body_kind != "STATIC":
+        layout.label(text="Triangle meshes work best on static bodies", icon="INFO")
+
+
+def _draw_rigid_body(layout, obj, index, item):
+    layout.prop(item, "rigid_body_kind")
+
+
+def _draw_spawn_point(layout, obj, index, item):
+    layout.prop(item, "spawn_tag")
+
+
+def _draw_custom(layout, obj, index, item):
+    row = layout.row()
+    row.alert = not item.custom_type.strip()
+    row.prop(item, "custom_type")
+    row = layout.row()
+    row.alert = not _is_json(item.custom_json)
+    row.prop(item, "custom_json")
+
+
+DRAWERS = {
+    "VISIBILITY_RANGE": _draw_visibility_range,
+    "COLLIDER": _draw_collider,
+    "RIGID_BODY": _draw_rigid_body,
+    "SPAWN_POINT": _draw_spawn_point,
+    "CUSTOM": _draw_custom,
+}
+
+
+def _draw_component(layout, obj, index, item):
+    text, icon = COMPONENT_LABELS[item.component_type]
+    header, body = layout.panel_prop(item, "show_expanded")
+    header.prop(item, "enabled", text="")
+    header.label(text=item.custom_type if item.component_type == "CUSTOM" and item.custom_type.strip() else text, icon=icon)
+    tools = header.row(align=True)
+    tools.emboss = "NONE"
+    tools.context_pointer_set("bevy_component", item)
+    tools.menu(BEVY_MT_component_context_menu.bl_idname, text="", icon="DOWNARROW_HLT")
+    tools.operator(BEVY_OT_remove_component.bl_idname, text="", icon="X").index = index
+    if body is None:
         return
-    settings = context.scene.bevy_component_previews
-    row = layout.row(align=True)
-    row.prop(settings, "enabled", toggle=True, icon="OVERLAY")
-    controls = layout.column(align=True)
-    controls.enabled = settings.enabled
-    controls.prop(settings, "scope", expand=True)
-    row = controls.row(align=True)
-    row.prop(settings, "colliders", toggle=True)
-    row.prop(settings, "visibility_ranges", text="LOD Ranges", toggle=True)
-    row.prop(settings, "spawn_points", text="Spawns", toggle=True)
-    row = controls.row(align=True)
-    row.prop(settings, "labels", toggle=True)
-    row.prop(settings, "xray", toggle=True)
-    controls.prop(settings, "edit_handles")
-    if settings.edit_handles:
-        controls.label(text="Drag colored arrows to resize colliders", icon="INFO")
-    if settings.scope == "ALL":
-        controls.prop(settings, "max_mesh_edges")
+    body.use_property_split = True
+    body.use_property_decorate = False
+    body.active = item.enabled
+    DRAWERS[item.component_type](body, obj, index, item)
 
 
-def export_menu(self, context):
-    self.layout.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Level (.glb)")
+def draw_components(layout, obj):
+    row = layout.row()
+    row.operator("wm.call_menu", text="Add Component", icon="ADD").name = BEVY_MT_component_add.bl_idname
+    row.menu(BEVY_MT_object_context_menu.bl_idname, text="", icon="DOWNARROW_HLT")
+    for index, item in enumerate(obj.bevy_component_data.components):
+        _draw_component(layout, obj, index, item)
 
 
 class BEVY_PT_object_properties(bpy.types.Panel):
@@ -123,7 +129,7 @@ class BEVY_PT_object_properties(bpy.types.Panel):
         return context.object is not None
 
     def draw(self, context):
-        draw_component_cards(self.layout, context.object)
+        draw_components(self.layout, context.object)
 
 
 class BEVY_PT_view_sidebar(bpy.types.Panel):
@@ -134,20 +140,39 @@ class BEVY_PT_view_sidebar(bpy.types.Panel):
     bl_category = "Bevy"
 
     def draw(self, context):
-        obj = context.object
-        if obj is None:
+        if context.object is None:
             self.layout.label(text="Select an object", icon="INFO")
             return
-        draw_component_cards(self.layout, obj)
+        draw_components(self.layout, context.object)
 
 
-class BEVY_PT_viewport_previews(bpy.types.Panel):
-    bl_label = "Viewport Previews"
-    bl_idname = "BEVY_PT_viewport_previews"
+class BEVY_PT_overlay(bpy.types.Panel):
+    bl_label = "Bevy Components"
+    bl_idname = "BEVY_PT_overlay"
     bl_space_type = "VIEW_3D"
-    bl_region_type = "UI"
-    bl_category = "Bevy"
-    bl_order = 1
+    bl_region_type = "HEADER"
+    bl_parent_id = "VIEW3D_PT_overlay"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def draw_header(self, context):
+        self.layout.active = context.space_data.overlay.show_overlays
+        self.layout.prop(context.scene.bevy_component_previews, "enabled", text=self.bl_label)
 
     def draw(self, context):
-        draw_viewport_controls(self.layout, context)
+        layout = self.layout
+        settings = context.scene.bevy_component_previews
+        layout.active = context.space_data.overlay.show_overlays and settings.enabled
+        layout.row().prop(settings, "scope", expand=True)
+        split = layout.split()
+        column = split.column()
+        column.prop(settings, "colliders")
+        column.prop(settings, "visibility_ranges")
+        column.prop(settings, "spawn_points")
+        column = split.column()
+        column.prop(settings, "labels")
+        column.prop(settings, "xray")
+        column.prop(settings, "edit_handles")
+        layout.prop(settings, "max_mesh_edges")

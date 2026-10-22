@@ -9,7 +9,7 @@ Requires Blender 4.2+, Bevy 0.20 and Avian 0.8.
 1. Download `bevy_components_<version>.zip` from the [latest release](https://github.com/indseta/bevy_components/releases/latest).
 2. In Blender, open **Edit > Preferences > Get Extensions**, then **Install from Disk...** and pick the ZIP.
 3. Enable **Bevy Components** if it isn't enabled already.
-4. Find it under **Object Properties > Bevy Components** or **3D Viewport > N > Bevy**.
+4. Find it under **Properties > Object > Bevy Components** or **3D Viewport > N > Bevy**.
 
 ## Install the importer
 
@@ -44,11 +44,12 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 ## Usage
 
-1. Select an object, press **Add Component** and pick Visibility Range, Collider, Rigid Body, Spawn Point or Custom.
-2. Export with **File > Export > Bevy Level (.glb)** or the **Export Level** button.
-3. Put the GLB in your game's `assets/` folder.
+1. Select an object, press **Add Component** and pick a component, or start typing to search.
+2. Each component works like a modifier: collapse it, untick it to leave it out of the export, or use its dropdown to duplicate, copy to selected, reset or reorder it.
+3. Export with **File > Export > Bevy Level (.glb)**, or from the dropdown next to **Add Component**.
+4. Put the GLB in your game's `assets/` folder.
 
-Collider sizes are in Bevy coordinates (Y up). Viewport previews are editor-only and are not exported.
+Collider sizes are in Bevy coordinates (Y up). Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header.
 
 ## Development
 
