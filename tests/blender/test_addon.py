@@ -811,6 +811,10 @@ class TestTextureCompression(unittest.TestCase):
         build_sample_level()
         cls.images = _image_state()
         cls.directory = tempfile.TemporaryDirectory()
+        cls.cache = Path(cls.directory.name) / "texture_cache"
+        cls.cache.mkdir()
+        cls.cache_patch = mock.patch.object(addon.operator, "texture_cache", return_value=cls.cache)
+        cls.cache_patch.start()
         cls.exports = {}
         for mode in ("DISABLED", "ETC1S", "UASTC", "AUTOMATIC"):
             path = Path(cls.directory.name) / f"level_{mode.lower()}.glb"
@@ -820,6 +824,7 @@ class TestTextureCompression(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        cls.cache_patch.stop()
         cls.directory.cleanup()
 
     def test_compression_is_off_by_default(self):
@@ -895,6 +900,24 @@ class TestTextureCompression(unittest.TestCase):
             fresh, fresh_binary = self.compressed[mode]
             self.assertEqual(_node_summary(gltf), _node_summary(fresh), f"{path.name} is out of date, run tests/blender/sample_level.py to regenerate it")
             self.assertEqual(_sorted_texture_summary(gltf, binary), _sorted_texture_summary(fresh, fresh_binary), f"{path.name} is out of date, run tests/blender/sample_level.py to regenerate it")
+
+
+    def test_reexports_reuse_cached_textures(self):
+        self.assertTrue(any(self.cache.glob("*.ktx2")))
+        path = Path(self.directory.name) / "level_again.glb"
+        with mock.patch.object(addon.encoder, "_run", side_effect=AssertionError("textures were encoded again")):
+            export_sample_level(path, texture_compression="AUTOMATIC")
+        self.assertEqual(addon.compression.read_glb(path.read_bytes()), self.exports["AUTOMATIC"])
+
+    def test_texture_cache_is_in_the_extension_user_folder(self):
+        self.cache_patch.stop()
+        try:
+            cache = Path(addon.preferences.texture_cache())
+        finally:
+            self.cache_patch.start()
+        self.assertTrue(cache.is_dir())
+        self.assertEqual(cache.name, "texture_cache")
+        self.assertEqual(cache.parent.name, "bevy_components")
 
 
 class TestTextureCompressionErrors(unittest.TestCase):

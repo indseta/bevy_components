@@ -1,7 +1,10 @@
 import importlib.util
+import os
 import pathlib
 import subprocess
 import tempfile
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -111,11 +114,14 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(command, ["ktx", "create", "--format", "R8G8B8_UNORM", "--assign-tf", "linear", "--assign-primaries", "none", "--encode", "uastc", "--uastc-quality", "2", "in.png", "out.ktx2"])
 
 
+def _fake_run(command):
+    pathlib.Path(command[-1]).write_bytes(pathlib.Path(command[-2]).read_bytes() + b" ktx2")
+    return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+
 class TestEncode(unittest.TestCase):
     def test_encodes_and_cleans_up(self):
-        def run(command):
-            pathlib.Path(command[-1]).write_bytes(pathlib.Path(command[-2]).read_bytes() + b" ktx2")
-            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        run = _fake_run
         progress = []
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=run):
             results = encoder.encode("ktx", [_job(data=b"first"), _job(data=b"second", mime_type="image/jpeg")], SETTINGS, directory, progress=progress.append)
@@ -129,10 +135,91 @@ class TestEncode(unittest.TestCase):
             with self.assertRaisesRegex(encoder.EncoderError, "could not encode wood: error: unsupported input"):
                 encoder.encode("ktx", [_job()], SETTINGS, directory)
 
+    def test_encodes_textures_side_by_side(self):
+        barrier = threading.Barrier(2, timeout=5)
+
+        def run(command):
+            barrier.wait()
+            return _fake_run(command)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=run), mock.patch.object(encoder.os, "cpu_count", return_value=8):
+            results = encoder.encode("ktx", [_job(data=b"first"), _job(data=b"second")], SETTINGS, directory)
+        self.assertEqual(results, [b"first ktx2", b"second ktx2"])
+
+    def test_workers_leave_cores_and_memory_for_each_encoder(self):
+        with mock.patch.object(encoder.os, "cpu_count", return_value=16):
+            self.assertEqual([encoder.workers([_job()] * count) for count in (0, 1, 3, 10)], [1, 1, 3, 4])
+            self.assertEqual(encoder.workers([_job(width=4096, height=4096)] * 10), 4)
+            self.assertEqual(encoder.workers([_job()] * 9 + [_job(width=8192, height=4096)]), 2)
+            self.assertEqual(encoder.workers([_job()] * 9 + [_job(width=8192, height=8192)]), 1)
+        with mock.patch.object(encoder.os, "cpu_count", return_value=None):
+            self.assertEqual(encoder.workers([_job()] * 10), 1)
+
+    def test_failures_stop_the_remaining_textures(self):
+        calls = []
+
+        def run(command):
+            calls.append(command)
+            time.sleep(0.05)
+            return subprocess.CompletedProcess(command, 1, stdout="", stderr="error: broken")
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=run), mock.patch.object(encoder.os, "cpu_count", return_value=2):
+            with self.assertRaisesRegex(encoder.EncoderError, "could not encode wood: error: broken"):
+                encoder.encode("ktx", [_job(data=bytes([index])) for index in range(5)], SETTINGS, directory)
+            self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
+        self.assertLessEqual(len(calls), 2)
+
     def test_reports_missing_programs(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=FileNotFoundError("ktx")):
             with self.assertRaisesRegex(encoder.EncoderError, "Could not run ktx"):
                 encoder.encode("ktx", [_job()], SETTINGS, directory)
+
+
+class TestCache(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.work = pathlib.Path(self.directory.name) / "work"
+        self.cache = pathlib.Path(self.directory.name) / "cache"
+        self.work.mkdir()
+        self.cache.mkdir()
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def _encode(self, jobs, settings=SETTINGS, check=None):
+        progress = []
+        with mock.patch.object(encoder, "_run", side_effect=_fake_run) as run:
+            results = encoder.encode("ktx", jobs, settings, self.work, progress=progress.append, cache=self.cache, check=check)
+        return results, run.call_count, progress
+
+    def test_unchanged_textures_are_reused(self):
+        jobs = [_job(data=b"first"), _job(data=b"second")]
+        self.assertEqual(self._encode(jobs), ([b"first ktx2", b"second ktx2"], 2, [1, 2]))
+        self.assertEqual(self._encode(jobs), ([b"first ktx2", b"second ktx2"], 0, [2]))
+        self.assertEqual(self._encode([jobs[0], _job(data=b"third")]), ([b"first ktx2", b"third ktx2"], 1, [1, 2]))
+        self.assertEqual(len(list(self.cache.glob("*.ktx2"))), 3)
+        self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_settings_and_usage_change_the_key(self):
+        job = _job(data=b"first")
+        keys = {encoder.cache_key("ktx", job, SETTINGS), encoder.cache_key("ktx", job, {**SETTINGS, "etc1s_quality": 64}), encoder.cache_key("ktx", _job(data=b"first", usage="data"), SETTINGS), encoder.cache_key("other/ktx", job, SETTINGS)}
+        self.assertEqual(len(keys), 4)
+        self.assertEqual(encoder.cache_key("ktx", job, SETTINGS), encoder.cache_key("ktx", _job(data=b"first", name="other", image=3), SETTINGS))
+
+    def test_rejected_results_are_not_kept(self):
+        job = _job(data=b"first")
+        self.assertEqual(self._encode([job], check=lambda job, data: "broken")[1], 1)
+        self.assertEqual(list(self.cache.iterdir()), [])
+        (self.cache / f"{encoder.cache_key('ktx', job, SETTINGS)}.ktx2").write_bytes(b"corrupt")
+        self.assertEqual(self._encode([job], check=lambda job, data: "corrupt" if data == b"corrupt" else None)[:2], ([b"first ktx2"], 1))
+        self.assertEqual((self.cache / f"{encoder.cache_key('ktx', job, SETTINGS)}.ktx2").read_bytes(), b"first ktx2")
+
+    def test_least_recently_used_entries_are_pruned(self):
+        for index, name in enumerate(("old", "middle", "new")):
+            entry = self.cache / f"{name}.ktx2"
+            entry.write_bytes(b"x" * 10)
+            os.utime(entry, (1000 + index, 1000 + index))
+        encoder.prune_cache(self.cache, limit=25)
+        self.assertEqual(sorted(entry.name for entry in self.cache.iterdir()), ["middle.ktx2", "new.ktx2"])
+        encoder.prune_cache(self.cache / "missing")
 
 
 if __name__ == "__main__":
