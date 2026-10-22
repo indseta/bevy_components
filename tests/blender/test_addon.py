@@ -3,6 +3,8 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 import bpy
 import gpu
@@ -135,9 +137,11 @@ class FakeOperatorProperties:
 
 
 class FakeLayout:
-    def __init__(self, test, calls=None):
+    def __init__(self, test, calls=None, parent=None):
         object.__setattr__(self, "test", test)
         object.__setattr__(self, "calls", [] if calls is None else calls)
+        object.__setattr__(self, "parent", parent)
+        object.__setattr__(self, "enabled", True)
 
     def __setattr__(self, name, value):
         self.test.assertIn(name, LAYOUT.properties.keys())
@@ -157,39 +161,76 @@ class FakeLayout:
         bound = {**dict(zip(parameters, args)), **kwargs}
         if "icon" in bound:
             self.test.assertIn(bound["icon"], ICONS)
-        if name == "prop":
+        if name in {"prop", "panel_prop"}:
             self.test.assertIn(bound["property"], bound["data"].bl_rna.properties.keys())
-        self.calls.append((name, bound))
+        if name == "menu":
+            self.test.assertTrue(hasattr(bpy.types, bound["menu"]), bound["menu"])
+        self.calls.append((name, bound, self))
         if name == "operator":
             self.test.assertTrue(_operator_exists(bound["operator"]), bound["operator"])
-            return FakeOperatorProperties(self.test, bound["operator"])
+            properties = FakeOperatorProperties(self.test, bound["operator"])
+            bound["properties"] = properties
+            return properties
         if name in CHILD_LAYOUTS:
-            return FakeLayout(self.test, self.calls)
+            return FakeLayout(self.test, self.calls, self)
+        if name == "panel_prop":
+            return FakeLayout(self.test, self.calls, self), FakeLayout(self.test, self.calls, self) if getattr(bound["data"], bound["property"]) else None
         return None
 
+    def is_enabled(self):
+        return self.enabled and (self.parent is None or self.parent.is_enabled())
+
     def texts(self):
-        return [bound.get("text", "") for name, bound in self.calls]
+        return [bound.get("text", "") for name, bound, layout in self.calls]
+
+    def props(self):
+        return [bound["property"] for name, bound, layout in self.calls if name == "prop"]
+
+    def menus(self):
+        return [bound["menu"] for name, bound, layout in self.calls if name == "menu"]
 
     def operators(self):
-        return [bound["operator"] for name, bound in self.calls if name == "operator"]
+        return [bound["operator"] for name, bound, layout in self.calls if name == "operator"]
+
+    def buttons(self):
+        return [(bound.get("text", ""), bound["properties"], layout.is_enabled()) for name, bound, layout in self.calls if name == "operator"]
 
 
 class FakePanel:
     def __init__(self, test):
         self.layout = FakeLayout(test)
+        self.bl_label = "Bevy Components"
+
+
+def _menu_context(obj=None, item=None):
+    return SimpleNamespace(object=obj, bevy_component=item, scene=bpy.context.scene, space_data=SimpleNamespace(overlay=SimpleNamespace(show_overlays=True)))
 
 
 class TestRegistration(unittest.TestCase):
     def test_extension_registers_types_and_operators(self):
         self.assertTrue(hasattr(bpy.types.Object, "bevy_component_data"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.lod_preset", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
+        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
-        self.assertIn(addon.panel.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_gameplay", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_overlay"):
+            self.assertTrue(hasattr(bpy.types, idname), idname)
+        self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
+        self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.system.save_sync, bpy.app.handlers.save_pre)
 
-    def test_add_operator_searches_component_types(self):
-        self.assertEqual(addon.operator.BEVY_OT_add_component.bl_property, "component_type")
+    def test_registers_with_restricted_blend_data(self):
+        bpy.ops.preferences.addon_disable(module=addon.__name__)
+        try:
+            with mock.patch.object(bpy, "data", SimpleNamespace()), mock.patch.object(bpy, "context", SimpleNamespace()):
+                addon.register()
+            addon.unregister()
+        finally:
+            bpy.ops.preferences.addon_enable(module=addon.__name__)
+        self.assertTrue(_operator_exists("bevy_components.add"))
+
+    def test_add_menus_search_on_key_press(self):
+        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_gameplay):
+            self.assertEqual(menu.bl_options, {"SEARCH_ON_KEY_PRESS"})
 
     def test_disable_and_enable_keeps_components(self):
         clear_scene()
@@ -260,6 +301,68 @@ class TestOperators(unittest.TestCase):
         item.custom_json = "[1, 2]"
         self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
 
+    def test_disabled_components_are_not_stored_or_validated(self):
+        add_component(self.obj, "SPAWN_POINT", spawn_tag="kept")
+        collider = add_component(self.obj, "COLLIDER")
+        custom = add_component(self.obj, "CUSTOM", custom_json="{broken")
+        collider.enabled = False
+        self.assertNotIn("bevy_components", self.obj.keys())
+        custom.enabled = False
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "spawn_point", "tag": "kept"}])
+        self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
+        collider.enabled = True
+        self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["spawn_point", "collider"])
+
+    def test_duplicate_only_custom_components(self):
+        add_component(self.obj, "COLLIDER")
+        add_component(self.obj, "CUSTOM", custom_type="game::First", custom_json='{"a": 1}')
+        add_component(self.obj, "CUSTOM", custom_type="game::Last")
+        self.assertEqual(bpy.ops.bevy_components.duplicate(index=0), {"CANCELLED"})
+        self.assertEqual(bpy.ops.bevy_components.duplicate(index=1), {"FINISHED"})
+        self.assertEqual([item["type_path"] for item in _stored(self.obj)["components"][1:]], ["game::First", "game::First", "game::Last"])
+        self.assertEqual(_stored(self.obj)["components"][2]["data"], {"a": 1})
+
+    def test_copy_component_to_selected_adds_or_replaces(self):
+        add_component(self.obj, "COLLIDER", collider_shape="SPHERE", collider_radius=2)
+        add_component(self.obj, "CUSTOM", custom_type="game::Tag", custom_json='{"a": 1}')
+        first = add_mesh(bpy.ops.mesh.primitive_cube_add, "first")
+        add_component(first, "SPAWN_POINT")
+        add_component(first, "COLLIDER", collider_shape="CUBOID")
+        add_component(first, "CUSTOM", custom_type="game::Tag", custom_json='{"a": 0}')
+        second = add_empty("second", (0, 0, 0))
+        select(self.obj, first, second)
+        self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=0), {"FINISHED"})
+        self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=1), {"FINISHED"})
+        self.assertEqual(_stored(first)["components"], [{"type": "spawn_point", "tag": "default"}, *_stored(self.obj)["components"]])
+        self.assertEqual(_stored(second), _stored(self.obj))
+
+    def test_copy_needs_other_selected_objects(self):
+        add_component(self.obj, "COLLIDER")
+        select(self.obj)
+        self.assertFalse(bpy.ops.bevy_components.copy_component_to_selected.poll())
+        self.assertFalse(bpy.ops.bevy_components.copy_to_selected.poll())
+
+    def test_reset_restores_defaults(self):
+        item = add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=3, collider_sensor=True)
+        item.show_expanded = False
+        self.assertEqual(bpy.ops.bevy_components.reset(index=0), {"FINISHED"})
+        self.assertEqual((item.component_type, item.collider_shape, item.collider_radius, item.collider_sensor, item.show_expanded), ("COLLIDER", "TRIMESH", 0.5, False, False))
+        self.assertEqual(_stored(self.obj)["components"][0]["shape"], "trimesh")
+
+    def test_move(self):
+        for kind in ("COLLIDER", "RIGID_BODY", "SPAWN_POINT"):
+            add_component(self.obj, kind)
+        order = lambda: [item.component_type for item in self.obj.bevy_component_data.components]
+        self.assertEqual(bpy.ops.bevy_components.move(index=0, direction="UP"), {"CANCELLED"})
+        bpy.ops.bevy_components.move(index=0, direction="DOWN")
+        self.assertEqual(order(), ["RIGID_BODY", "COLLIDER", "SPAWN_POINT"])
+        bpy.ops.bevy_components.move(index=2, direction="FIRST")
+        self.assertEqual(order(), ["SPAWN_POINT", "RIGID_BODY", "COLLIDER"])
+        bpy.ops.bevy_components.move(index=0, direction="LAST")
+        self.assertEqual(order(), ["RIGID_BODY", "COLLIDER", "SPAWN_POINT"])
+        bpy.ops.bevy_components.move(index=2, direction="UP")
+        self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["rigid_body", "spawn_point", "collider"])
+
     def test_invalid_custom_json_is_not_stored(self):
         add_component(self.obj, "CUSTOM", custom_json="{broken")
         self.assertNotIn("bevy_components", self.obj.keys())
@@ -290,17 +393,59 @@ class TestPanels(unittest.TestCase):
             panel = FakePanel(self)
             self.assertTrue(addon.panel.BEVY_PT_object_properties.poll(bpy.context))
             addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
-            self.assertIn("bevy_components.add", panel.layout.operators())
-            self.assertIn("export_scene.bevy_components_glb", panel.layout.operators())
-        self.assertNotIn("Distances must be ordered", panel.layout.texts())
+            text, add_menu, enabled = panel.layout.buttons()[0]
+            self.assertEqual((text, add_menu.name), ("Add Component", "BEVY_MT_component_add"))
+            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 5)
+            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded"] * 5)
+            self.assertEqual(panel.layout.props().count("enabled"), 5)
+        self.assertIn("collider_height", panel.layout.props())
+        self.assertNotIn("Fade distances must increase from top to bottom", panel.layout.texts())
 
     def test_object_panel_flags_bad_ranges_and_collapsed_cards(self):
         add_component(self.obj, "VISIBILITY_RANGE", fade_in_end=50)
-        add_component(self.obj, "COLLIDER", expanded=False)
+        add_component(self.obj, "COLLIDER", show_expanded=False)
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
-        self.assertIn("Distances must be ordered", panel.layout.texts())
-        self.assertNotIn("Shape", panel.layout.texts())
+        self.assertIn("Fade distances must increase from top to bottom", panel.layout.texts())
+        self.assertIn("Collider", panel.layout.texts())
+        self.assertNotIn("collider_shape", panel.layout.props())
+
+    def test_custom_component_card_shows_type_path(self):
+        add_component(self.obj, "CUSTOM", custom_type="my_game::Health")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertIn("my_game::Health", panel.layout.texts())
+
+    def test_add_menu_disables_components_already_present(self):
+        add_component(self.obj, "COLLIDER")
+        add_component(self.obj, "CUSTOM")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
+        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_gameplay"])
+        found = {}
+        for menu_type in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_gameplay):
+            menu = FakePanel(self)
+            menu_type.draw(menu, _menu_context(self.obj))
+            found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "VISIBILITY_RANGE": True, "SPAWN_POINT": True})
+
+    def test_component_context_menu_targets_its_component(self):
+        add_component(self.obj, "COLLIDER")
+        custom = add_component(self.obj, "CUSTOM")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_context_menu.draw(menu, _menu_context(self.obj, custom))
+        buttons = {text: (properties, enabled) for text, properties, enabled in menu.layout.buttons()}
+        self.assertEqual(set(buttons), {"Duplicate", "Copy to Selected", "Reset to Defaults", "Move to First", "Move Up", "Move Down", "Move to Last", "Remove"})
+        self.assertTrue(all(properties.index == 1 for properties, enabled in buttons.values()))
+        self.assertEqual({text for text, (properties, enabled) in buttons.items() if not enabled}, {"Move Down", "Move to Last"})
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_context_menu.draw(menu, _menu_context(self.obj, self.obj.bevy_component_data.components[0]))
+        self.assertEqual({text for text, properties, enabled in menu.layout.buttons() if not enabled}, {"Duplicate", "Move to First", "Move Up"})
+
+    def test_object_context_menu(self):
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
+        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"])
 
     def test_sidebar_without_active_object(self):
         select()
@@ -308,19 +453,30 @@ class TestPanels(unittest.TestCase):
         addon.panel.BEVY_PT_view_sidebar.draw(panel, bpy.context)
         self.assertEqual(panel.layout.texts(), ["Select an object"])
 
-    def test_sidebar_and_viewport_controls(self):
+    def test_sidebar_draws_components(self):
         add_component(self.obj, "SPAWN_POINT")
         select(self.obj)
-        addon.panel.BEVY_PT_view_sidebar.draw(FakePanel(self), bpy.context)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_view_sidebar.draw(panel, bpy.context)
+        self.assertIn("spawn_tag", panel.layout.props())
+
+    def test_overlay_popover(self):
         settings = bpy.context.scene.bevy_component_previews
-        for scope, edit_handles in (("SELECTED", True), ("ALL", False)):
-            settings.scope = scope
-            settings.edit_handles = edit_handles
-            addon.panel.BEVY_PT_viewport_previews.draw(FakePanel(self), bpy.context)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_overlay.draw_header(panel, _menu_context())
+        self.assertEqual(panel.layout.props(), ["enabled"])
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "visibility_ranges", "spawn_points", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        settings.enabled = False
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
+        self.assertFalse(panel.layout.active)
+        settings.enabled = True
 
     def test_export_menu(self):
         panel = FakePanel(self)
-        addon.panel.export_menu(panel, bpy.context)
+        addon.menu.export_menu(panel, bpy.context)
         self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb"])
 
 

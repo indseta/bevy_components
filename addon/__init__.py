@@ -3,8 +3,8 @@ bl_info = {
     "author": "Ask Indset",
     "version": (0, 2, 0),
     "blender": (4, 2, 0),
-    "location": "Object Properties > Bevy Components; 3D View > Sidebar > Bevy",
-    "description": "Bevy component inspector, 3D collider/LOD overlays, viewport handles, and GLB exporter",
+    "location": "Properties > Object > Bevy Components, 3D Viewport > Sidebar > Bevy, 3D Viewport > Overlays",
+    "description": "Add Bevy components to objects, preview them in the viewport and export levels as GLB",
     "category": "Import-Export",
 }
 
@@ -12,13 +12,14 @@ import bpy
 from bpy.props import PointerProperty
 
 from .gizmo import BEVY_GGT_collider_handles
-from .operator import BEVY_OT_add_component, BEVY_OT_copy_to_selected, BEVY_OT_export_glb, BEVY_OT_lod_preset, BEVY_OT_remove_component, BEVY_OT_validate
+from .menu import BEVY_MT_component_add, BEVY_MT_component_add_gameplay, BEVY_MT_component_add_physics, BEVY_MT_component_add_rendering, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, export_menu
+from .operator import BEVY_OT_add_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_duplicate_component, BEVY_OT_export_glb, BEVY_OT_lod_preset, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate
 from .overlay import register_draw_handlers, unregister_draw_handlers
-from .panel import BEVY_PT_object_properties, BEVY_PT_view_sidebar, BEVY_PT_viewport_previews, export_menu
+from .panel import BEVY_PT_object_properties, BEVY_PT_overlay, BEVY_PT_view_sidebar
 from .property import BEVY_PG_component, BEVY_PG_object_data, BEVY_PG_viewport_settings
 from .system import glTF2ExportUserExtension, save_sync
 
-CLASSES = (BEVY_PG_component, BEVY_PG_object_data, BEVY_OT_add_component, BEVY_OT_remove_component, BEVY_OT_lod_preset, BEVY_OT_copy_to_selected, BEVY_OT_validate, BEVY_OT_export_glb, BEVY_PT_object_properties, BEVY_PT_view_sidebar, BEVY_PG_viewport_settings, BEVY_PT_viewport_previews, BEVY_GGT_collider_handles)
+CLASSES = (BEVY_PG_component, BEVY_PG_object_data, BEVY_PG_viewport_settings, BEVY_OT_add_component, BEVY_OT_remove_component, BEVY_OT_duplicate_component, BEVY_OT_copy_component_to_selected, BEVY_OT_reset_component, BEVY_OT_move_component, BEVY_OT_lod_preset, BEVY_OT_copy_to_selected, BEVY_OT_validate, BEVY_OT_export_glb, BEVY_MT_component_add, BEVY_MT_component_add_physics, BEVY_MT_component_add_rendering, BEVY_MT_component_add_gameplay, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, BEVY_PT_object_properties, BEVY_PT_view_sidebar, BEVY_PT_overlay, BEVY_GGT_collider_handles)
 
 
 def register():

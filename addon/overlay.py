@@ -67,6 +67,11 @@ def _draw_lines(shader, obj, lines, color, width=1.5):
     batch.draw(shader)
 
 
+def _overlays_shown(context):
+    space = context.space_data
+    return space is None or space.overlay.show_overlays
+
+
 def preview_batches(context, settings):
     batches = []
     for obj in preview_objects(context, settings):
@@ -99,7 +104,7 @@ def _draw_geometry():
     if not context.scene or not hasattr(context.scene, "bevy_component_previews"):
         return
     settings = context.scene.bevy_component_previews
-    if not settings.enabled or context.region_data is None:
+    if not settings.enabled or context.region_data is None or not _overlays_shown(context):
         return
     shader = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
     gpu.state.blend_set("ALPHA")
@@ -144,7 +149,7 @@ def _draw_labels():
     if not context.scene or not hasattr(context.scene, "bevy_component_previews"):
         return
     settings = context.scene.bevy_component_previews
-    if not settings.enabled or not settings.labels or context.region_data is None:
+    if not settings.enabled or not settings.labels or context.region_data is None or not _overlays_shown(context):
         return
     region = context.region
     font_id = 0
@@ -170,7 +175,6 @@ def register_draw_handlers():
         DRAW_3D = bpy.types.SpaceView3D.draw_handler_add(_draw_geometry, (), "WINDOW", "POST_VIEW")
     if DRAW_2D is None:
         DRAW_2D = bpy.types.SpaceView3D.draw_handler_add(_draw_labels, (), "WINDOW", "POST_PIXEL")
-    redraw_viewports()
 
 
 def unregister_draw_handlers():

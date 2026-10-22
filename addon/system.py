@@ -14,7 +14,7 @@ def redraw_viewports(_self=None, _context=None):
 def components_for(obj):
     if not hasattr(obj, "bevy_component_data"):
         return []
-    return obj.bevy_component_data.components
+    return [item for item in obj.bevy_component_data.components if item.enabled]
 
 
 def component_of(obj, kind):
@@ -30,13 +30,32 @@ def sync_object(obj):
     data = getattr(obj, "bevy_component_data", None)
     if not data:
         return
-    if len(data.components):
+    items = components_for(obj)
+    if items:
         try:
-            obj[EXTRAS_KEY] = serialize_items(data.components)
+            obj[EXTRAS_KEY] = serialize_items(items)
         except ValueError:
             obj.pop(EXTRAS_KEY, None)
     else:
         obj.pop(EXTRAS_KEY, None)
+
+
+def component_index(obj, item):
+    for index, other in enumerate(obj.bevy_component_data.components):
+        if other == item:
+            return index
+    return -1
+
+
+def copy_component(source, destination):
+    for field in source.bl_rna.properties:
+        if field.identifier in {"rna_type", "id_data"} or field.is_readonly:
+            continue
+        value = getattr(source, field.identifier)
+        try:
+            setattr(destination, field.identifier, tuple(value) if field.type == "FLOAT" and field.is_array else value)
+        except (TypeError, AttributeError):
+            continue
 
 
 def sync_changed(self, context):
