@@ -2,10 +2,72 @@ name: CI
 
 on:
     push:
+        branches: [main]
     pull_request:
     workflow_dispatch:
 
+concurrency:
+    group: ci_${{ github.head_ref || github.run_id }}
+    cancel-in-progress: true
+
 jobs:
+    plan:
+        name: Pick tests
+        runs-on: ubuntu-latest
+        outputs:
+            addon: ${{ steps.plan.outputs.addon }}
+            encoder: ${{ steps.plan.outputs.encoder }}
+            importer: ${{ steps.plan.outputs.importer }}
+            importer_os: ${{ steps.plan.outputs.importer_os }}
+        steps:
+            - uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
+            - name: Pick tests for the changed files
+              id: plan
+              env:
+                  GH_TOKEN: ${{ github.token }}
+                  BEFORE: ${{ github.event.before }}
+              run: |
+                  version=$(python3 -c 'import tomllib; print(tomllib.load(open("addon/blender_manifest.toml", "rb"))["version"])')
+                  case "$GITHUB_EVENT_NAME" in
+                      pull_request) base=HEAD^1 ;;
+                      push) base=$BEFORE ;;
+                      *) base= ;;
+                  esac
+                  all_platforms=false
+                  changed=
+                  if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2> /dev/null; then
+                      changed=$(git diff --name-only "$base" HEAD | grep -v '\.md$' || true)
+                      echo "Changed files:"
+                      echo "$changed"
+                  else
+                      echo "No commit to compare with, testing every platform"
+                      all_platforms=true
+                  fi
+                  if grep -q '^\.github/' <<< "$changed"; then
+                      echo "CI changed, testing every platform"
+                      all_platforms=true
+                  elif ! gh release view "bevy_components_${version//./_}" > /dev/null 2>&1; then
+                      echo "Version $version is not released yet, testing every platform"
+                      all_platforms=true
+                  fi
+                  pick() {
+                      if [ "$all_platforms" = true ] || grep -Eq "$2" <<< "$changed"; then
+                          echo "$1=true" >> "$GITHUB_OUTPUT"
+                      else
+                          echo "$1=false" >> "$GITHUB_OUTPUT"
+                      fi
+                  }
+                  pick addon '^(addon|scripts|tests|importer/tests/assets)/'
+                  pick encoder '^addon/(compression|encoder)\.py$'
+                  pick importer '^importer/'
+                  if [ "$all_platforms" = true ]; then
+                      echo 'importer_os=["ubuntu-latest", "macos-latest", "windows-latest"]' >> "$GITHUB_OUTPUT"
+                  else
+                      echo 'importer_os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
+                  fi
+                  cat "$GITHUB_OUTPUT"
     addon:
         name: Python tests and extension ZIP
         runs-on: ubuntu-latest
@@ -27,6 +89,8 @@ jobs:
                   path: dist/*.zip
     blender:
         name: Blender ${{ matrix.blender }} tests
+        needs: plan
+        if: needs.plan.outputs.addon == 'true'
         runs-on: ubuntu-latest
         strategy:
             fail-fast: false
@@ -60,6 +124,8 @@ jobs:
               run: python tests/blender/run.py -v
     blender_texture_compression:
         name: Blender texture compression on ${{ matrix.os }}
+        needs: plan
+        if: needs.plan.outputs.encoder == 'true'
         runs-on: ${{ matrix.os }}
         strategy:
             fail-fast: false
@@ -94,11 +160,13 @@ jobs:
               run: python tests/blender/run.py -v -k TextureCompression
     importer:
         name: Rust importer tests on ${{ matrix.os }}
+        needs: plan
+        if: needs.plan.outputs.importer == 'true'
         runs-on: ${{ matrix.os }}
         strategy:
             fail-fast: false
             matrix:
-                os: [ubuntu-latest, macos-latest, windows-latest]
+                os: ${{ fromJSON(needs.plan.outputs.importer_os) }}
         env:
             CARGO_PROFILE_DEV_DEBUG: 0
         steps:
@@ -112,6 +180,7 @@ jobs:
             - uses: Swatinem/rust-cache@v2
               with:
                   workspaces: importer
+                  save-if: ${{ github.ref == 'refs/heads/main' }}
             - name: Test importer
               run: cargo test --manifest-path importer/Cargo.toml
             - name: Render compressed levels on the GPU
