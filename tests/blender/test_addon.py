@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 import bpy
 import gpu
@@ -216,6 +217,16 @@ class TestRegistration(unittest.TestCase):
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.system.save_sync, bpy.app.handlers.save_pre)
+
+    def test_registers_with_restricted_blend_data(self):
+        bpy.ops.preferences.addon_disable(module=addon.__name__)
+        try:
+            with mock.patch.object(bpy, "data", SimpleNamespace()), mock.patch.object(bpy, "context", SimpleNamespace()):
+                addon.register()
+            addon.unregister()
+        finally:
+            bpy.ops.preferences.addon_enable(module=addon.__name__)
+        self.assertTrue(_operator_exists("bevy_components.add"))
 
     def test_add_menus_search_on_key_press(self):
         for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_gameplay):

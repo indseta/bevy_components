@@ -175,7 +175,6 @@ def register_draw_handlers():
         DRAW_3D = bpy.types.SpaceView3D.draw_handler_add(_draw_geometry, (), "WINDOW", "POST_VIEW")
     if DRAW_2D is None:
         DRAW_2D = bpy.types.SpaceView3D.draw_handler_add(_draw_labels, (), "WINDOW", "POST_PIXEL")
-    redraw_viewports()
 
 
 def unregister_draw_handlers():
