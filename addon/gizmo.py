@@ -1,7 +1,7 @@
 import bpy
 from mathutils import Vector
 
-from .system import component_of, redraw_viewports
+from .system import component_of, panel_expanded, redraw_viewports
 
 
 def _get_handle_value(index):
@@ -45,7 +45,7 @@ class BEVY_GGT_collider_handles(bpy.types.GizmoGroup):
     @classmethod
     def poll(cls, context):
         obj = context.object
-        if not obj or obj.library or obj.mode != "OBJECT" or not context.scene:
+        if not obj or obj.library or obj.mode != "OBJECT" or not obj.select_get() or not context.scene or not panel_expanded():
             return False
         if not hasattr(context.scene, "bevy_component_previews"):
             return False

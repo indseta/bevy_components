@@ -98,7 +98,7 @@ def build_sample_level():
     add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC")
     add_component(crate, "VISIBILITY_RANGE")
     apply_lod_preset(crate, "MID")
-    add_component(crate, "SPAWN_POINT")
+    add_component(crate, "CUSTOM", custom_type="my_game::Removed")
     select(crate)
     bpy.ops.bevy_components.remove(index=len(crate.bevy_component_data.components) - 1)
 
@@ -109,7 +109,7 @@ def build_sample_level():
     ball = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "ball", radius=0.5, segments=16, ring_count=8, location=(-3, 0, 0.5))
     add_component(ball, "COLLIDER", collider_shape="SPHERE", collider_radius=0.5)
     add_component(ball, "RIGID_BODY", rigid_body_kind="KINEMATIC")
-    add_component(ball, "SPAWN_POINT", spawn_tag="disabled", enabled=False)
+    add_component(ball, "CUSTOM", custom_type="my_game::Disabled", enabled=False)
 
     pillar = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "pillar", radius=0.4, depth=2, location=(0, 4, 1))
     add_component(pillar, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.4, collider_height=1.2)
@@ -125,9 +125,9 @@ def build_sample_level():
     pickup_zone = add_empty("pickup_zone", (4, -4, 1))
     add_component(pickup_zone, "COLLIDER", collider_shape="SPHERE", collider_radius=1.5, collider_sensor=True)
 
-    add_component(add_empty("player_spawn", (2, 3, 0)), "SPAWN_POINT", spawn_tag="player")
+    add_component(add_empty("player_spawn", (2, 3, 0)), "CUSTOM", custom_type="my_game::PlayerSpawn")
     enemy_spawn = add_empty("enemy_spawn", (-6, -6, 0))
-    add_component(enemy_spawn, "SPAWN_POINT", spawn_tag="enemy")
+    add_component(enemy_spawn, "CUSTOM", custom_type="my_game::EnemySpawn")
     add_component(enemy_spawn, "CUSTOM", custom_type="my_game::Wave", custom_json=json.dumps({"count": 3, "delay": 1.5}))
 
     lamp = add_mesh(bpy.ops.mesh.primitive_cube_add, "lamp", size=0.5, location=(4, 4, 0.25))

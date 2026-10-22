@@ -25,11 +25,10 @@ pub enum ExportedComponent {
     RigidBody {
         kind: String,
     },
-    SpawnPoint {
-        tag: String,
-    },
     Custom {
         type_path: String,
         data: Value,
     },
+    #[serde(other)]
+    Unsupported,
 }

@@ -33,10 +33,6 @@ class TestGeometry(unittest.TestCase):
             segments = geometry.circle_lines(4.5, plane=plane, segments=24)
             self.assertEqual(len(segments), 24)
 
-    def test_spawn_forward(self):
-        lines = geometry.spawn_marker_lines()
-        self.assertIn(((0, 0, 0), (0, 0.9, 0)), lines)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,7 +7,6 @@ COMPONENT_TYPES = [
     ("VISIBILITY_RANGE", "Visibility Range", "Fade the object in and out by camera distance, for levels of detail", "HIDE_OFF", 0),
     ("COLLIDER", "Collider", "Avian collision shape", "MOD_PHYSICS", 1),
     ("RIGID_BODY", "Rigid Body", "Avian rigid body that is static, dynamic or kinematic", "RIGID_BODY", 2),
-    ("SPAWN_POINT", "Spawn Point", "Tagged marker your game can spawn things at", "EMPTY_AXIS", 3),
     ("CUSTOM", "Custom Component", "Any Rust component, filled in from JSON by your game", "FILE_SCRIPT", 4),
 ]
 
@@ -42,7 +41,6 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
         ("DYNAMIC", "Dynamic", "Moved by forces and gravity"),
         ("KINEMATIC", "Kinematic", "Moved by game code and pushes dynamic bodies"),
     ], default="STATIC", update=sync_changed)
-    spawn_tag: StringProperty(name="Tag", description="Name your game uses to find this spawn point", default="default", update=sync_changed)
     custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health", default="my_game::MyComponent", update=sync_changed)
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
 
@@ -52,15 +50,14 @@ class BEVY_PG_object_data(bpy.types.PropertyGroup):
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
-    enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport, never exported", default=True, update=redraw_viewports)
+    enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport while the Bevy Components panel in Properties is expanded, never exported", default=True, update=redraw_viewports)
     scope: EnumProperty(name="Draw On", items=[
         ("SELECTED", "Selected", "Draw previews for selected objects only"),
         ("ALL", "All", "Draw previews for every visible object with Bevy components"),
     ], default="SELECTED", update=redraw_viewports)
     colliders: BoolProperty(name="Colliders", description="Draw collider shapes", default=True, update=redraw_viewports)
     visibility_ranges: BoolProperty(name="Visibility Ranges", description="Draw fade distances as spheres", default=True, update=redraw_viewports)
-    spawn_points: BoolProperty(name="Spawn Points", description="Draw spawn point markers", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
-    edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the active object to resize box, sphere and capsule colliders", default=True, update=redraw_viewports)
+    edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders", default=True, update=redraw_viewports)
     max_mesh_edges: IntProperty(name="Max Mesh Edges", description="Draw triangle mesh colliders with more edges than this as bounding boxes", default=2000, min=64, max=20000, update=redraw_viewports)

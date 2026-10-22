@@ -49,10 +49,10 @@ EXPECTED_COMPONENTS = {
         {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 1.5, "sensor": True}},
     ],
     "player_spawn": [
-        {"type": "spawn_point", "tag": "player"},
+        {"type": "custom", "type_path": "my_game::PlayerSpawn", "data": {}},
     ],
     "enemy_spawn": [
-        {"type": "spawn_point", "tag": "enemy"},
+        {"type": "custom", "type_path": "my_game::EnemySpawn", "data": {}},
         {"type": "custom", "type_path": "my_game::Wave", "data": {"count": 3, "delay": 1.5}},
     ],
     "lamp": [
@@ -212,7 +212,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
         for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_gameplay", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_overlay"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_overlay"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
@@ -229,19 +229,19 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(_operator_exists("bevy_components.add"))
 
     def test_add_menus_search_on_key_press(self):
-        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_gameplay):
+        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering):
             self.assertEqual(menu.bl_options, {"SEARCH_ON_KEY_PRESS"})
 
     def test_disable_and_enable_keeps_components(self):
         clear_scene()
         obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "kept")
-        add_component(obj, "SPAWN_POINT", spawn_tag="kept")
+        add_component(obj, "CUSTOM", custom_type="game::Kept")
         bpy.ops.preferences.addon_disable(module=addon.__name__)
         self.assertFalse(hasattr(bpy.types.Object, "bevy_component_data"))
         self.assertFalse(_operator_exists("bevy_components.add"))
         bpy.ops.preferences.addon_enable(module=addon.__name__)
-        self.assertEqual(obj.bevy_component_data.components[0].spawn_tag, "kept")
-        self.assertEqual(_stored(obj)["components"], [{"type": "spawn_point", "tag": "kept"}])
+        self.assertEqual(obj.bevy_component_data.components[0].custom_type, "game::Kept")
+        self.assertEqual(_stored(obj)["components"], [{"type": "custom", "type_path": "game::Kept", "data": {}}])
 
 
 class TestOperators(unittest.TestCase):
@@ -264,10 +264,10 @@ class TestOperators(unittest.TestCase):
 
     def test_remove(self):
         add_component(self.obj, "COLLIDER")
-        add_component(self.obj, "SPAWN_POINT")
+        add_component(self.obj, "RIGID_BODY")
         self.assertEqual(bpy.ops.bevy_components.remove(index=5), {"CANCELLED"})
         self.assertEqual(bpy.ops.bevy_components.remove(index=0), {"FINISHED"})
-        self.assertEqual(_stored(self.obj)["components"], [{"type": "spawn_point", "tag": "default"}])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "rigid_body", "kind": "static"}])
         bpy.ops.bevy_components.remove(index=0)
         self.assertNotIn("bevy_components", self.obj.keys())
 
@@ -284,7 +284,7 @@ class TestOperators(unittest.TestCase):
         add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.3, collider_height=1.7, collider_size=(1, 2, 3), collider_sensor=True)
         add_component(self.obj, "CUSTOM", custom_type="game::Tag", custom_json='{"a": 1}')
         first = add_mesh(bpy.ops.mesh.primitive_cube_add, "first")
-        add_component(first, "SPAWN_POINT")
+        add_component(first, "RIGID_BODY")
         second = add_empty("second", (0, 0, 0))
         select(self.obj, first, second)
         self.assertEqual(bpy.ops.bevy_components.copy_to_selected(), {"FINISHED"})
@@ -302,16 +302,16 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
 
     def test_disabled_components_are_not_stored_or_validated(self):
-        add_component(self.obj, "SPAWN_POINT", spawn_tag="kept")
+        add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC")
         collider = add_component(self.obj, "COLLIDER")
         custom = add_component(self.obj, "CUSTOM", custom_json="{broken")
         collider.enabled = False
         self.assertNotIn("bevy_components", self.obj.keys())
         custom.enabled = False
-        self.assertEqual(_stored(self.obj)["components"], [{"type": "spawn_point", "tag": "kept"}])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "rigid_body", "kind": "dynamic"}])
         self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
         collider.enabled = True
-        self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["spawn_point", "collider"])
+        self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["rigid_body", "collider"])
 
     def test_duplicate_only_custom_components(self):
         add_component(self.obj, "COLLIDER")
@@ -326,14 +326,14 @@ class TestOperators(unittest.TestCase):
         add_component(self.obj, "COLLIDER", collider_shape="SPHERE", collider_radius=2)
         add_component(self.obj, "CUSTOM", custom_type="game::Tag", custom_json='{"a": 1}')
         first = add_mesh(bpy.ops.mesh.primitive_cube_add, "first")
-        add_component(first, "SPAWN_POINT")
+        add_component(first, "RIGID_BODY")
         add_component(first, "COLLIDER", collider_shape="CUBOID")
         add_component(first, "CUSTOM", custom_type="game::Tag", custom_json='{"a": 0}')
         second = add_empty("second", (0, 0, 0))
         select(self.obj, first, second)
         self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=0), {"FINISHED"})
         self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=1), {"FINISHED"})
-        self.assertEqual(_stored(first)["components"], [{"type": "spawn_point", "tag": "default"}, *_stored(self.obj)["components"]])
+        self.assertEqual(_stored(first)["components"], [{"type": "rigid_body", "kind": "static"}, *_stored(self.obj)["components"]])
         self.assertEqual(_stored(second), _stored(self.obj))
 
     def test_copy_needs_other_selected_objects(self):
@@ -350,18 +350,18 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(_stored(self.obj)["components"][0]["shape"], "trimesh")
 
     def test_move(self):
-        for kind in ("COLLIDER", "RIGID_BODY", "SPAWN_POINT"):
+        for kind in ("COLLIDER", "RIGID_BODY", "VISIBILITY_RANGE"):
             add_component(self.obj, kind)
         order = lambda: [item.component_type for item in self.obj.bevy_component_data.components]
         self.assertEqual(bpy.ops.bevy_components.move(index=0, direction="UP"), {"CANCELLED"})
         bpy.ops.bevy_components.move(index=0, direction="DOWN")
-        self.assertEqual(order(), ["RIGID_BODY", "COLLIDER", "SPAWN_POINT"])
+        self.assertEqual(order(), ["RIGID_BODY", "COLLIDER", "VISIBILITY_RANGE"])
         bpy.ops.bevy_components.move(index=2, direction="FIRST")
-        self.assertEqual(order(), ["SPAWN_POINT", "RIGID_BODY", "COLLIDER"])
+        self.assertEqual(order(), ["VISIBILITY_RANGE", "RIGID_BODY", "COLLIDER"])
         bpy.ops.bevy_components.move(index=0, direction="LAST")
-        self.assertEqual(order(), ["RIGID_BODY", "COLLIDER", "SPAWN_POINT"])
+        self.assertEqual(order(), ["RIGID_BODY", "COLLIDER", "VISIBILITY_RANGE"])
         bpy.ops.bevy_components.move(index=2, direction="UP")
-        self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["rigid_body", "spawn_point", "collider"])
+        self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["rigid_body", "visibility_range", "collider"])
 
     def test_invalid_custom_json_is_not_stored(self):
         add_component(self.obj, "CUSTOM", custom_json="{broken")
@@ -385,7 +385,7 @@ class TestPanels(unittest.TestCase):
         self.obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "subject")
 
     def test_object_panel_draws_every_component(self):
-        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "SPAWN_POINT", "CUSTOM"):
+        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM"):
             add_component(self.obj, kind)
         collider = self.obj.bevy_component_data.components[1]
         for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE"):
@@ -395,9 +395,9 @@ class TestPanels(unittest.TestCase):
             addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
             text, add_menu, enabled = panel.layout.buttons()[0]
             self.assertEqual((text, add_menu.name), ("Add Component", "BEVY_MT_component_add"))
-            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 5)
-            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded"] * 5)
-            self.assertEqual(panel.layout.props().count("enabled"), 5)
+            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 4)
+            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded"] * 4)
+            self.assertEqual(panel.layout.props().count("enabled"), 4)
         self.assertIn("collider_height", panel.layout.props())
         self.assertNotIn("Fade distances must increase from top to bottom", panel.layout.texts())
 
@@ -416,18 +416,29 @@ class TestPanels(unittest.TestCase):
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertIn("my_game::Health", panel.layout.texts())
 
+    def test_removed_component_types_are_skipped(self):
+        add_component(self.obj, "COLLIDER")
+        removed = add_component(self.obj, "RIGID_BODY")
+        removed["component_type"] = 3
+        addon.system.sync_object(self.obj)
+        self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["collider"])
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertIn("Removed Component", panel.layout.texts())
+        self.assertIn("No longer exported", panel.layout.texts())
+
     def test_add_menu_disables_components_already_present(self):
         add_component(self.obj, "COLLIDER")
         add_component(self.obj, "CUSTOM")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_gameplay"])
+        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering"])
         found = {}
-        for menu_type in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_gameplay):
+        for menu_type in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "VISIBILITY_RANGE": True, "SPAWN_POINT": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "VISIBILITY_RANGE": True})
 
     def test_component_context_menu_targets_its_component(self):
         add_component(self.obj, "COLLIDER")
@@ -454,11 +465,11 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.texts(), ["Select an object"])
 
     def test_sidebar_draws_components(self):
-        add_component(self.obj, "SPAWN_POINT")
+        add_component(self.obj, "RIGID_BODY")
         select(self.obj)
         panel = FakePanel(self)
         addon.panel.BEVY_PT_view_sidebar.draw(panel, bpy.context)
-        self.assertIn("spawn_tag", panel.layout.props())
+        self.assertIn("rigid_body_kind", panel.layout.props())
 
     def test_overlay_popover(self):
         settings = bpy.context.scene.bevy_component_previews
@@ -467,7 +478,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.props(), ["enabled"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
-        self.assertEqual(panel.layout.props(), ["scope", "colliders", "visibility_ranges", "spawn_points", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "visibility_ranges", "labels", "xray", "edit_handles", "max_mesh_edges"])
         settings.enabled = False
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
@@ -499,6 +510,35 @@ class TestViewport(unittest.TestCase):
         self.settings.edit_handles = False
         self.assertFalse(gizmo.poll(bpy.context))
 
+    def test_gizmo_needs_selected_object(self):
+        gizmo = addon.gizmo.BEVY_GGT_collider_handles
+        add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
+        self.assertTrue(gizmo.poll(bpy.context))
+        self.obj.select_set(False)
+        self.assertEqual(bpy.context.object, self.obj)
+        self.assertFalse(gizmo.poll(bpy.context))
+
+    def test_collapsed_panel_hides_previews(self):
+        gizmo = addon.gizmo.BEVY_GGT_collider_handles
+        panel_type = addon.panel.BEVY_PT_object_properties
+        add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
+        context = SimpleNamespace(region_data=object(), space_data=SimpleNamespace(overlay=SimpleNamespace(show_overlays=True)))
+        panel = FakePanel(self)
+        try:
+            panel_type.draw_header(panel, bpy.context)
+            self.assertTrue(bpy.app.timers.is_registered(addon.system._apply_panel_state))
+            addon.system._apply_panel_state()
+            self.assertFalse(addon.system.panel_expanded())
+            self.assertFalse(addon.overlay._previews_shown(context))
+            self.assertFalse(gizmo.poll(bpy.context))
+        finally:
+            panel_type.draw_header(panel, bpy.context)
+            panel_type.draw(panel, bpy.context)
+            addon.system._apply_panel_state()
+        self.assertTrue(addon.system.panel_expanded())
+        self.assertTrue(addon.overlay._previews_shown(context))
+        self.assertTrue(gizmo.poll(bpy.context))
+
     def test_gizmo_handles_resize_colliders(self):
         collider = add_component(self.obj, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 4, 6))
         self.assertEqual([addon.gizmo._get_handle_value(index) for index in range(3)], [1.0, 2.0, 3.0])
@@ -517,16 +557,17 @@ class TestViewport(unittest.TestCase):
     def test_preview_batches(self):
         add_component(self.obj, "COLLIDER", collider_sensor=True)
         add_component(self.obj, "VISIBILITY_RANGE")
-        spawn = add_empty("spawn", (5, 0, 0))
-        add_component(spawn, "SPAWN_POINT")
+        zone = add_empty("zone", (5, 0, 0))
+        add_component(zone, "COLLIDER", collider_shape="SPHERE")
         select(self.obj)
         colors = [color for obj, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)]
         self.assertEqual(colors, [addon.overlay.SENSOR_COLOR, addon.overlay.LOD_OUT_COLOR, addon.overlay.LOD_OUT_COLOR])
         self.settings.scope = "ALL"
         self.assertEqual(len(addon.overlay.preview_batches(bpy.context, self.settings)), 4)
-        self.settings.colliders = False
         self.settings.visibility_ranges = False
-        self.assertEqual([obj.name for obj, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)], ["spawn"])
+        self.assertEqual([obj.name for obj, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)], ["subject", "zone"])
+        self.settings.colliders = False
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
         self.settings.colliders = True
         self.settings.visibility_ranges = True
 
@@ -550,8 +591,7 @@ class TestViewport(unittest.TestCase):
     def test_labels(self):
         add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.25, collider_height=2)
         add_component(self.obj, "VISIBILITY_RANGE")
-        add_component(self.obj, "SPAWN_POINT", spawn_tag="hero")
-        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings), ["Collider · Capsule · r=0.25, cylinder=2m", "LOD · in 0–0m · out 20–25m", "Spawn · hero"])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings), ["Collider · Capsule · r=0.25, cylinder=2m", "LOD · in 0–0m · out 20–25m"])
 
     def test_draws_lines_on_gpu(self):
         if not hasattr(gpu, "init"):

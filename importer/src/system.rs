@@ -23,7 +23,6 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         let mut components = ImportedComponents::default();
         let mut custom = BlenderCustomComponents::default();
         let mut rigid_body = None;
-        let mut spawn_tag = None;
 
         for component in exported.components {
             match component {
@@ -52,8 +51,8 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         }
                     };
                 }
-                ExportedComponent::SpawnPoint { tag } => spawn_tag = Some(tag),
                 ExportedComponent::Custom { type_path, data } => custom.0.push(BlenderCustomComponent { type_path, data }),
+                ExportedComponent::Unsupported => warn!("Unsupported Bevy component on {:?}", name),
             }
         }
 
@@ -65,9 +64,6 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
             }
         }
         commands.entity(entity).insert(components);
-        if let Some(tag) = spawn_tag {
-            commands.entity(entity).insert(BlenderSpawnPoint(tag));
-        }
         if !custom.0.is_empty() {
             commands.entity(entity).insert(custom);
         }

@@ -4,7 +4,7 @@ mod system;
 
 use bevy::prelude::*;
 
-pub use component::{BlenderCustomComponent, BlenderCustomComponents, BlenderSpawnPoint};
+pub use component::{BlenderCustomComponent, BlenderCustomComponents};
 
 pub struct BlenderBevyComponentsPlugin;
 

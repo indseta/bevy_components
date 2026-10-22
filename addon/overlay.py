@@ -5,8 +5,8 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from .geometry import capsule_lines, cuboid_lines, spawn_marker_lines, sphere_lines
-from .system import component_of, components_for, redraw_viewports
+from .geometry import capsule_lines, cuboid_lines, sphere_lines
+from .system import component_of, components_for, panel_expanded, redraw_viewports
 
 DRAW_3D = None
 DRAW_2D = None
@@ -15,7 +15,6 @@ COLLIDER_COLOR = (0.22, 0.96, 0.55, 0.90)
 SENSOR_COLOR = (0.96, 0.60, 0.20, 0.90)
 LOD_IN_COLOR = (0.20, 0.72, 1.0, 0.55)
 LOD_OUT_COLOR = (1.0, 0.62, 0.25, 0.55)
-SPAWN_COLOR = (0.90, 0.35, 1.0, 0.95)
 
 
 def preview_objects(context, settings):
@@ -67,9 +66,9 @@ def _draw_lines(shader, obj, lines, color, width=1.5):
     batch.draw(shader)
 
 
-def _overlays_shown(context):
+def _previews_shown(context):
     space = context.space_data
-    return space is None or space.overlay.show_overlays
+    return panel_expanded() and context.region_data is not None and (space is None or space.overlay.show_overlays)
 
 
 def preview_batches(context, settings):
@@ -92,10 +91,6 @@ def preview_batches(context, settings):
                     continue
                 local_lines = [(tuple(offset + inverse @ Vector(start)), tuple(offset + inverse @ Vector(end))) for start, end in sphere_lines(radius, segments=48)]
                 batches.append((obj, local_lines, color, width))
-
-        spawn = component_of(obj, "SPAWN_POINT")
-        if spawn and settings.spawn_points:
-            batches.append((obj, spawn_marker_lines(), SPAWN_COLOR, 2.4))
     return batches
 
 
@@ -104,7 +99,7 @@ def _draw_geometry():
     if not context.scene or not hasattr(context.scene, "bevy_component_previews"):
         return
     settings = context.scene.bevy_component_previews
-    if not settings.enabled or context.region_data is None or not _overlays_shown(context):
+    if not settings.enabled or not _previews_shown(context):
         return
     shader = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
     gpu.state.blend_set("ALPHA")
@@ -138,9 +133,6 @@ def _label_lines(obj, settings):
     visibility = component_of(obj, "VISIBILITY_RANGE")
     if visibility and settings.visibility_ranges:
         descriptions.append(f"LOD · in {visibility.fade_in_start:g}–{visibility.fade_in_end:g}m · out {visibility.fade_out_start:g}–{visibility.fade_out_end:g}m")
-    spawn = component_of(obj, "SPAWN_POINT")
-    if spawn and settings.spawn_points:
-        descriptions.append(f"Spawn · {spawn.spawn_tag}")
     return descriptions
 
 
@@ -149,7 +141,7 @@ def _draw_labels():
     if not context.scene or not hasattr(context.scene, "bevy_component_previews"):
         return
     settings = context.scene.bevy_component_previews
-    if not settings.enabled or not settings.labels or context.region_data is None or not _overlays_shown(context):
+    if not settings.enabled or not settings.labels or not _previews_shown(context):
         return
     region = context.region
     font_id = 0

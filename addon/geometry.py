@@ -53,16 +53,3 @@ def capsule_lines(radius, height, segments=32):
         lines.extend(circle_lines(radius, plane, arc_segments, (0, 0, half), 0, pi))
         lines.extend(circle_lines(radius, plane, arc_segments, (0, 0, -half), pi, 2 * pi))
     return lines
-
-
-def spawn_marker_lines(scale=1.0):
-    lines = circle_lines(0.30 * scale, segments=24)
-    lines.extend([
-        ((0, 0, -0.3 * scale), (0, 0, 0.4 * scale)),
-        ((-0.2 * scale, 0, 0), (0.2 * scale, 0, 0)),
-        ((0, -0.2 * scale, 0), (0, 0.2 * scale, 0)),
-        ((0, 0, 0), (0, 0.9 * scale, 0)),
-        ((0, 0.9 * scale, 0), (-0.16 * scale, 0.68 * scale, 0)),
-        ((0, 0.9 * scale, 0), (0.16 * scale, 0.68 * scale, 0)),
-    ])
-    return lines

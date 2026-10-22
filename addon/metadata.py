@@ -24,8 +24,6 @@ def serialize_component(item):
         }
     if kind == "RIGID_BODY":
         return {"type": "rigid_body", "kind": item.rigid_body_kind.lower()}
-    if kind == "SPAWN_POINT":
-        return {"type": "spawn_point", "tag": item.spawn_tag}
     if kind == "CUSTOM":
         try:
             value = json.loads(item.custom_json)

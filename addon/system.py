@@ -3,6 +3,9 @@ from bpy.app.handlers import persistent
 
 from .metadata import EXTRAS_KEY, serialize_items
 
+PANEL_EXPANDED = True
+PANEL_DRAWN_EXPANDED = True
+
 
 def redraw_viewports(_self=None, _context=None):
     for screen in bpy.data.screens:
@@ -11,10 +14,39 @@ def redraw_viewports(_self=None, _context=None):
                 area.tag_redraw()
 
 
+def panel_expanded():
+    return PANEL_EXPANDED
+
+
+def panel_header_drawn():
+    global PANEL_DRAWN_EXPANDED
+    PANEL_DRAWN_EXPANDED = False
+    if not bpy.app.timers.is_registered(_apply_panel_state):
+        bpy.app.timers.register(_apply_panel_state, first_interval=0.0)
+
+
+def panel_body_drawn():
+    global PANEL_DRAWN_EXPANDED
+    PANEL_DRAWN_EXPANDED = True
+
+
+def _apply_panel_state():
+    global PANEL_EXPANDED
+    if PANEL_EXPANDED != PANEL_DRAWN_EXPANDED:
+        PANEL_EXPANDED = PANEL_DRAWN_EXPANDED
+        redraw_viewports()
+    return None
+
+
+def stop_panel_tracking():
+    if bpy.app.timers.is_registered(_apply_panel_state):
+        bpy.app.timers.unregister(_apply_panel_state)
+
+
 def components_for(obj):
     if not hasattr(obj, "bevy_component_data"):
         return []
-    return [item for item in obj.bevy_component_data.components if item.enabled]
+    return [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]
 
 
 def component_of(obj, kind):

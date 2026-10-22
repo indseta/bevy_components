@@ -1,9 +1,6 @@
 use bevy::{camera::visibility::VisibilityRange, prelude::*};
 use serde_json::Value;
 
-#[derive(Component, Clone, Debug)]
-pub struct BlenderSpawnPoint(pub String);
-
 #[derive(Clone, Debug)]
 pub struct BlenderCustomComponent {
     pub type_path: String,

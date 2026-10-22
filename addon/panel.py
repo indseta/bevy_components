@@ -6,7 +6,7 @@ from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT
 from .metadata import validate_items
 from .operator import BEVY_OT_lod_preset, BEVY_OT_remove_component
 from .property import COMPONENT_LABELS
-from .system import component_of
+from .system import component_of, panel_body_drawn, panel_header_drawn
 
 
 def _labeled_row(layout, text):
@@ -69,10 +69,6 @@ def _draw_rigid_body(layout, obj, index, item):
     layout.prop(item, "rigid_body_kind")
 
 
-def _draw_spawn_point(layout, obj, index, item):
-    layout.prop(item, "spawn_tag")
-
-
 def _draw_custom(layout, obj, index, item):
     row = layout.row()
     row.alert = not item.custom_type.strip()
@@ -86,13 +82,12 @@ DRAWERS = {
     "VISIBILITY_RANGE": _draw_visibility_range,
     "COLLIDER": _draw_collider,
     "RIGID_BODY": _draw_rigid_body,
-    "SPAWN_POINT": _draw_spawn_point,
     "CUSTOM": _draw_custom,
 }
 
 
 def _draw_component(layout, obj, index, item):
-    text, icon = COMPONENT_LABELS[item.component_type]
+    text, icon = COMPONENT_LABELS.get(item.component_type, ("Removed Component", "ERROR"))
     header, body = layout.panel_prop(item, "show_expanded")
     header.prop(item, "enabled", text="")
     header.label(text=item.custom_type if item.component_type == "CUSTOM" and item.custom_type.strip() else text, icon=icon)
@@ -102,6 +97,9 @@ def _draw_component(layout, obj, index, item):
     tools.menu(BEVY_MT_component_context_menu.bl_idname, text="", icon="DOWNARROW_HLT")
     tools.operator(BEVY_OT_remove_component.bl_idname, text="", icon="X").index = index
     if body is None:
+        return
+    if item.component_type not in DRAWERS:
+        body.label(text="No longer exported", icon="INFO")
         return
     body.use_property_split = True
     body.use_property_decorate = False
@@ -128,7 +126,11 @@ class BEVY_PT_object_properties(bpy.types.Panel):
     def poll(cls, context):
         return context.object is not None
 
+    def draw_header(self, context):
+        panel_header_drawn()
+
     def draw(self, context):
+        panel_body_drawn()
         draw_components(self.layout, context.object)
 
 
@@ -170,7 +172,6 @@ class BEVY_PT_overlay(bpy.types.Panel):
         column = split.column()
         column.prop(settings, "colliders")
         column.prop(settings, "visibility_ranges")
-        column.prop(settings, "spawn_points")
         column = split.column()
         column.prop(settings, "labels")
         column.prop(settings, "xray")

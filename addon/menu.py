@@ -25,7 +25,6 @@ class BEVY_MT_component_add(bpy.types.Menu):
         layout.separator()
         layout.menu(BEVY_MT_component_add_physics.bl_idname)
         layout.menu(BEVY_MT_component_add_rendering.bl_idname)
-        layout.menu(BEVY_MT_component_add_gameplay.bl_idname)
 
 
 class BEVY_MT_component_add_physics(bpy.types.Menu):
@@ -44,15 +43,6 @@ class BEVY_MT_component_add_rendering(bpy.types.Menu):
 
     def draw(self, context):
         _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE",))
-
-
-class BEVY_MT_component_add_gameplay(bpy.types.Menu):
-    bl_idname = "BEVY_MT_component_add_gameplay"
-    bl_label = "Gameplay"
-    bl_options = {"SEARCH_ON_KEY_PRESS"}
-
-    def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("SPAWN_POINT",))
 
 
 class BEVY_MT_component_context_menu(bpy.types.Menu):

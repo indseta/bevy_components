@@ -1,6 +1,6 @@
 use avian3d::prelude::*;
 use bevy::{app::PluginsState, asset::AssetPlugin, audio::AudioPlugin, camera::visibility::VisibilityRange, gilrs::GilrsPlugin, gltf::GltfExtras, log::LogPlugin, prelude::*, render::{RenderPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin};
-use bevy_components_importer::{BlenderBevyComponentsPlugin, BlenderCustomComponents, BlenderSpawnPoint};
+use bevy_components_importer::{BlenderBevyComponentsPlugin, BlenderCustomComponents};
 use serde_json::{Value, json};
 use std::{thread, time::Duration};
 
@@ -19,8 +19,8 @@ fn load_sample_level() -> App {
     app.world_mut().spawn(WorldAssetRoot(level));
     for _ in 0..1000 {
         app.update();
-        let mut spawn_points = app.world_mut().query::<&BlenderSpawnPoint>();
-        if spawn_points.iter(app.world()).count() > 0 {
+        let mut custom_components = app.world_mut().query::<&BlenderCustomComponents>();
+        if custom_components.iter(app.world()).count() > 0 {
             for _ in 0..10 {
                 app.update();
             }
@@ -148,23 +148,20 @@ fn rigid_bodies_own_their_colliders() {
 }
 
 #[test]
-fn spawn_points_keep_tags_and_positions() {
+fn empties_keep_positions() {
     let mut app = load_sample_level();
     let world = app.world_mut();
-    for (name, tag, translation) in [("player_spawn", "player", Vec3::new(2.0, 0.0, -3.0)), ("enemy_spawn", "enemy", Vec3::new(-6.0, 0.0, 6.0))] {
+    for (name, translation) in [("player_spawn", Vec3::new(2.0, 0.0, -3.0)), ("enemy_spawn", Vec3::new(-6.0, 0.0, 6.0))] {
         let node = node(world, name);
-        assert_eq!(world.get::<BlenderSpawnPoint>(node).map(|spawn_point| spawn_point.0.as_str()), Some(tag));
-        assert_eq!(world.get::<Transform>(node).map(|transform| transform.translation), Some(translation));
+        assert_eq!(world.get::<Transform>(node).map(|transform| transform.translation), Some(translation), "{name}");
     }
-    let mut spawn_points = world.query::<&BlenderSpawnPoint>();
-    assert_eq!(spawn_points.iter(world).count(), 2);
 }
 
 #[test]
 fn custom_components_keep_type_paths_and_data() {
     let mut app = load_sample_level();
     let world = app.world_mut();
-    let expected = [("enemy_spawn", vec![("my_game::Wave", json!({"count": 3, "delay": 1.5}))]), ("lamp", vec![("my_game::Glow", json!({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"})), ("my_game::Flicker", json!(0.25))])];
+    let expected = [("player_spawn", vec![("my_game::PlayerSpawn", json!({}))]), ("enemy_spawn", vec![("my_game::EnemySpawn", json!({})), ("my_game::Wave", json!({"count": 3, "delay": 1.5}))]), ("lamp", vec![("my_game::Glow", json!({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"})), ("my_game::Flicker", json!(0.25))])];
     for (name, components) in expected {
         let node = node(world, name);
         let custom = world.get::<BlenderCustomComponents>(node).unwrap_or_else(|| panic!("{name} has no custom components"));
