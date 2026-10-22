@@ -83,7 +83,7 @@ def _draw_collider(layout, obj, index, item):
         for layer in range(LAYER_COUNT):
             grid.prop(item, prop, index=layer, text=str(layer), toggle=True)
     if not any(item.collider_memberships) or not any(item.collider_filters):
-        body.label(text="Needs a layer in both rows to touch anything", icon="INFO")
+        body.label(text="Collides with nothing", icon="INFO")
 
 
 def _draw_rigid_body(layout, obj, index, item):

@@ -576,11 +576,11 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(buttons, [("All", 0, "MEMBERSHIPS", True), ("None", 0, "MEMBERSHIPS", False), ("All", 0, "FILTERS", True), ("None", 0, "FILTERS", False)])
         self.assertIn("Belongs To", panel.layout.texts())
         self.assertIn("Collides With", panel.layout.texts())
-        self.assertNotIn("Needs a layer in both rows to touch anything", panel.layout.texts())
+        self.assertNotIn("Collides with nothing", panel.layout.texts())
         collider.collider_filters = [False] * 32
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
-        self.assertIn("Needs a layer in both rows to touch anything", panel.layout.texts())
+        self.assertIn("Collides with nothing", panel.layout.texts())
 
     def test_rigid_body_card_shows_mass_for_dynamic_bodies(self):
         body = add_component(self.obj, "RIGID_BODY")

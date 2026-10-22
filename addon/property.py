@@ -48,7 +48,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
         ("KINEMATIC", "Kinematic", "Moved by game code and pushes dynamic bodies"),
     ], default="STATIC", update=sync_changed)
     rigid_body_use_mass: BoolProperty(name="Set Mass", description="Use a fixed total mass instead of one computed from the colliders' volume at 1 kg per cubic meter", default=False, update=sync_changed)
-    rigid_body_mass: FloatProperty(name="Mass", description="Total mass of the body, including colliders on child objects", default=1.0, min=0.001, unit="MASS", update=sync_changed)
+    rigid_body_mass: FloatProperty(name="Mass", description="Total mass of the body, including colliders on child objects", default=1.0, min=0.001, precision=3, unit="MASS", update=sync_changed)
     custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health", default="my_game::MyComponent", update=sync_changed)
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
 
