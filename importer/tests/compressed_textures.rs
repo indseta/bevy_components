@@ -140,7 +140,7 @@ fn compressed_levels_load_from_the_ordinary_scene_path() {
 fn typed_gltf_handles_load_compressed_levels() {
     for file in COMPRESSED_LEVELS {
         let mut app = LevelApp::default().build();
-        let handle = spawn_level(&mut app, file).unwrap_or_else(|error| panic!("{file} did not load: {error}"));
+        let handle = load_gltf(&mut app, file).unwrap_or_else(|error| panic!("{file} did not load: {error}"));
         let gltf = app.world().resource::<Assets<Gltf>>().get(&handle).unwrap_or_else(|| panic!("{file} has no Gltf asset"));
         assert_eq!(gltf.materials.len(), 7, "{file}");
         assert_eq!(gltf.named_materials.len(), 7, "{file}");

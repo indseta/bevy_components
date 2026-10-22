@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use avian3d::prelude::*;
-use bevy::{app::PluginsState, asset::{AssetPlugin, LoadState}, audio::AudioPlugin, gilrs::GilrsPlugin, gltf::{Gltf, GltfExtras}, image::{CompressedImageFormatSupport, CompressedImageFormats}, log::LogPlugin, prelude::*, render::{RenderPlugin, pipelined_rendering::PipelinedRenderingPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin};
+use bevy::{app::PluginsState, asset::{AssetPlugin, LoadState, UntypedAssetId}, audio::AudioPlugin, gilrs::GilrsPlugin, gltf::{Gltf, GltfExtras}, image::{CompressedImageFormatSupport, CompressedImageFormats}, log::LogPlugin, prelude::*, render::{RenderPlugin, pipelined_rendering::PipelinedRenderingPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin};
 use bevy_components_importer::BlenderBevyComponentsPlugin;
 use std::{thread, time::Duration};
 
@@ -54,21 +54,31 @@ impl LevelApp {
     }
 }
 
-pub fn spawn_level(app: &mut App, file: &str) -> Result<Handle<Gltf>, String> {
+pub fn spawn_level(app: &mut App, file: &str) -> Result<(), String> {
+    let scene: Handle<WorldAsset> = app.world().resource::<AssetServer>().load(format!("{file}#Scene0"));
+    app.world_mut().spawn(WorldAssetRoot(scene.clone()));
+    return wait_for(app, scene.id().untyped(), file, true);
+}
+
+pub fn load_gltf(app: &mut App, file: &str) -> Result<Handle<Gltf>, String> {
+    let gltf: Handle<Gltf> = app.world().resource::<AssetServer>().load(file.to_string());
+    wait_for(app, gltf.id().untyped(), file, false)?;
+    return Ok(gltf);
+}
+
+fn wait_for(app: &mut App, id: UntypedAssetId, file: &str, spawned: bool) -> Result<(), String> {
     let asset_server = app.world().resource::<AssetServer>().clone();
-    let gltf: Handle<Gltf> = asset_server.load(file.to_string());
-    app.world_mut().spawn(WorldAssetRoot(asset_server.load(format!("{file}#Scene0"))));
     for _ in 0..1000 {
         app.update();
-        if let LoadState::Failed(error) = asset_server.load_state(&gltf) {
+        if let LoadState::Failed(error) = asset_server.load_state(id) {
             return Err(error.to_string());
         }
         let mut extras = app.world_mut().query::<&GltfExtras>();
-        if asset_server.is_loaded_with_dependencies(&gltf) && extras.iter(app.world()).count() > 0 {
+        if asset_server.is_loaded_with_dependencies(id) && (!spawned || extras.iter(app.world()).count() > 0) {
             for _ in 0..10 {
                 app.update();
             }
-            return Ok(gltf);
+            return Ok(());
         }
         thread::sleep(Duration::from_millis(10));
     }
