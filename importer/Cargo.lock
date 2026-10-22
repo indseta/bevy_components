@@ -739,7 +739,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_components_importer"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "avian3d",
  "bevy",
