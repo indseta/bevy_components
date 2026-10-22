@@ -51,6 +51,28 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 Collider sizes are in Bevy coordinates (Y up). Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Bevy Components** panel in Properties is expanded, and resize handles show on the selected object.
 
+## Texture compression
+
+The exporter can compress textures to KTX2 and embed them in the GLB, so the level stays one file but is smaller on disk and in GPU memory.
+
+1. Install [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4 or newer. The addon looks for `ktx` on your `PATH` and in the default install folders (`C:\Program Files\KTX-Software\bin`, `/usr/local/bin`, `/opt/homebrew/bin`). If it lives elsewhere, set its path under **Edit > Preferences > Add-ons > Bevy Components**, which also shows the version it found. KTX-Software is only needed to export, not to run your game.
+2. In **File > Export > Bevy Level (.glb)**, open **Texture Compression** and pick a mode:
+   - **Disabled** (default): ordinary PNG and JPEG textures.
+   - **ETC1S**: smallest files, lower quality.
+   - **UASTC**: best quality, larger files. **Supercompression** shrinks them on disk.
+   - **Automatic**: UASTC for normal maps, metallic-roughness, occlusion and textures set to Closest interpolation, ETC1S for other color textures.
+
+Base color, normal, metallic-roughness, occlusion and emissive textures are converted with mipmaps and stored with the `KHR_texture_basisu` glTF extension. Samplers, UV maps, texture transforms, alpha modes and color spaces are kept, and a texture shared by several materials is stored once. Textures whose size is not a multiple of 4 pixels are scaled up to one, and the export warns when it does. Your Blender images are not changed.
+
+Loading needs no extra code. `BlenderBevyComponentsPlugin` registers a GLB loader that converts the textures to a format the GPU supports (ASTC, BC7 or ETC2, otherwise uncompressed RGBA) and passes the file on to Bevy's glTF loader, so `asset_server.load("level.glb#Scene0")` works the same for compressed and ordinary levels. It relies on Bevy's default `ktx2` feature; `basis-universal` is not needed.
+
+Limitations:
+
+- Bevy logs `Duplicate AssetLoader registered for Asset type bevy_gltf::assets::Gltf with extensions ["glb"]` once at startup. That is the plugin's loader taking over `.glb` files, and the advice about `.meta` files in the warning does not apply.
+- Without the plugin, Bevy 0.20 cannot load compressed levels, because it does not support `KHR_texture_basisu`.
+- Only `.glb` files with embedded textures are handled.
+- ETC1S smears per-pixel detail such as pixel art. Use UASTC or Automatic for those textures.
+
 ## Development
 
 ```sh
@@ -66,7 +88,9 @@ pip install bpy==4.2.23
 python tests/blender/run.py
 ```
 
-The importer tests load `importer/tests/assets/sample_level.glb`, which `python tests/blender/sample_level.py` regenerates. The Blender tests fail if it no longer matches a fresh export.
+The importer tests load `importer/tests/assets/sample_level.glb` and its compressed copies `sample_level_etc1s.glb`, `sample_level_uastc.glb` and `sample_level_automatic.glb`, which `python tests/blender/sample_level.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
+
+The rendering test compares compressed and uncompressed levels on a real GPU and is skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
 
 `addon/` holds the Blender extension and `importer/` the Rust crate. When CI passes on `main`, a GitHub release with both downloads is published whenever the version changes. The addon and importer share one version, kept in `addon/blender_manifest.toml`, `addon/__init__.py` and `importer/Cargo.toml`, and a test checks they match.
 

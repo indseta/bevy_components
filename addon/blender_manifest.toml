@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "bevy_components"
-version = "0.3.1"
+version = "0.3.2"
 name = "Bevy Components"
 tagline = "Author Bevy object components and export complete glTF levels"
 maintainer = "Ask Indset"
@@ -10,3 +10,6 @@ tags = ["Import-Export", "Object"]
 blender_version_min = "4.2.0"
 license = ["SPDX:MIT"]
 copyright = ["2026 Ask Indset"]
+
+[permissions]
+files = "Export levels and run the KTX-Software texture encoder"

@@ -1,10 +1,24 @@
+import os
+import tempfile
+from pathlib import Path
+
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
+from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
+from .encoder import HINT, EncoderError, check_encoder, encode
 from .metadata import validate_items
+from .preferences import draw_encoder_status, encoder_path
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
-from .system import components_for, copy_component, redraw_viewports, sync_object
+from .system import components_for, copy_component, image_to_png, redraw_viewports, sync_object
+
+TEXTURE_COMPRESSION = [
+    ("DISABLED", "Disabled", "Export ordinary embedded textures"),
+    ("ETC1S", "ETC1S", "Compress every texture as ETC1S KTX2, for the smallest files"),
+    ("UASTC", "UASTC", "Compress every texture as UASTC KTX2, for the best quality"),
+    ("AUTOMATIC", "Automatic", "UASTC for normal maps, data textures such as metallic-roughness and pixel art with Closest sampling, ETC1S for other color textures"),
+]
 
 
 def _editable(context):
@@ -271,6 +285,37 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
     include_lights: BoolProperty(name="Include Lights", default=True)
     include_cameras: BoolProperty(name="Include Cameras", default=False)
     include_animations: BoolProperty(name="Include Animations", default=False)
+    texture_compression: EnumProperty(name="Texture Compression", description="Convert textures to KTX2 with KTX-Software and embed them in the GLB", items=TEXTURE_COMPRESSION, default="DISABLED")
+    etc1s_quality: IntProperty(name="ETC1S Quality", description="Higher keeps more detail in ETC1S textures and makes them larger", default=128, min=1, max=255)
+    etc1s_effort: IntProperty(name="ETC1S Effort", description="Higher encodes ETC1S textures more slowly with slightly better quality", default=2, min=0, max=6)
+    uastc_quality: IntProperty(name="UASTC Quality", description="Higher encodes UASTC textures more slowly with better quality", default=2, min=0, max=4)
+    uastc_zstd: IntProperty(name="UASTC Supercompression", description="Zstandard level that shrinks UASTC textures in the file, 0 turns it off", default=18, min=0, max=22)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        header, body = layout.panel("BEVY_export_include")
+        header.label(text="Include")
+        if body:
+            body.prop(self, "selected_only")
+            body.prop(self, "include_lights")
+            body.prop(self, "include_cameras")
+            body.prop(self, "include_animations")
+        header, body = layout.panel("BEVY_export_texture_compression")
+        header.label(text="Texture Compression")
+        if body:
+            body.prop(self, "texture_compression", text="Mode")
+            if self.texture_compression in {"ETC1S", "AUTOMATIC"}:
+                column = body.column(align=True)
+                column.prop(self, "etc1s_quality")
+                column.prop(self, "etc1s_effort", text="Effort")
+            if self.texture_compression in {"UASTC", "AUTOMATIC"}:
+                column = body.column(align=True)
+                column.prop(self, "uastc_quality")
+                column.prop(self, "uastc_zstd", text="Supercompression")
+            if self.texture_compression != "DISABLED":
+                draw_encoder_status(body, context)
 
     def execute(self, context):
         if not hasattr(bpy.ops.export_scene, "gltf"):
@@ -283,13 +328,61 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         if problems:
             self.report({"ERROR"}, f"Cannot export: {problems[0]}")
             return {"CANCELLED"}
+        encoder = None
+        if self.texture_compression != "DISABLED":
+            try:
+                encoder, _version = check_encoder(encoder_path(context))
+            except EncoderError as error:
+                self.report({"ERROR"}, f"{error}. {HINT}")
+                return {"CANCELLED"}
         for obj in objects:
             sync_object(obj)
-        try:
-            result = bpy.ops.export_scene.gltf(filepath=self.filepath, export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, check_existing=False)
-        except Exception as error:
-            self.report({"ERROR"}, f"GLB export failed: {error}")
-            return {"CANCELLED"}
-        if "FINISHED" in result:
-            self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
+        with tempfile.TemporaryDirectory(prefix="bevy_components_") as directory:
+            path = Path(directory) / "level.glb" if encoder else Path(self.filepath)
+            try:
+                result = bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, check_existing=False)
+            except Exception as error:
+                self.report({"ERROR"}, f"GLB export failed: {error}")
+                return {"CANCELLED"}
+            if "FINISHED" not in result:
+                return result
+            if encoder:
+                try:
+                    message = self._compress_textures(context, path, encoder, directory)
+                except (EncoderError, ValueError) as error:
+                    self.report({"ERROR"}, f"Texture compression failed: {error}")
+                    return {"CANCELLED"}
+                self.report({"INFO"}, f"Exported Bevy level with {message}: {self.filepath}")
+                return result
+        self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
         return result
+
+    def _compress_textures(self, context, path, encoder, directory):
+        gltf, binary = read_glb(path.read_bytes())
+        jobs = plan_textures(gltf, binary, self.texture_compression, convert=image_to_png)
+        settings = {
+            "etc1s_quality": self.etc1s_quality,
+            "etc1s_effort": self.etc1s_effort,
+            "uastc_quality": self.uastc_quality,
+            "uastc_zstd": self.uastc_zstd,
+        }
+        window_manager = context.window_manager
+        window_manager.progress_begin(0, max(len(jobs), 1))
+        try:
+            encoded = encode(encoder, jobs, settings, directory, progress=window_manager.progress_update)
+        finally:
+            window_manager.progress_end()
+        for job, data in zip(jobs, encoded):
+            problem = check_encoded(job, data)
+            if problem:
+                raise ValueError(problem)
+        before = sum(len(data) for data in {job.image: job.data for job in jobs}.values())
+        gltf, binary = embed_textures(gltf, binary, jobs, encoded)
+        output = Path(self.filepath)
+        staging = output.with_name(f".{output.name}.tmp")
+        staging.write_bytes(write_glb(gltf, binary))
+        os.replace(staging, output)
+        resized = sorted({job.name for job in jobs if job.resized})
+        if resized:
+            self.report({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need")
+        return f"{len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB)"
