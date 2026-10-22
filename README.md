@@ -62,7 +62,7 @@ The Blender tests install the built addon into Blender's `bpy` module, build a s
 
 ```sh
 pip install bpy==4.2.23
-python -m unittest discover -s tests/blender
+python tests/blender/run.py
 ```
 
 The importer tests load `importer/tests/assets/sample_level.glb`, which `python tests/blender/sample_level.py` regenerates. The Blender tests fail if it no longer matches a fresh export.
