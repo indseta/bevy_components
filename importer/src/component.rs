@@ -42,6 +42,10 @@ impl ColliderShape {
             _ => None,
         };
     }
+
+    pub fn is_mesh(&self) -> bool {
+        return matches!(self, Self::Trimesh | Self::Convex);
+    }
 }
 
 #[derive(Component, Default)]
