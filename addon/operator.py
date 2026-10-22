@@ -11,7 +11,7 @@ from .compression import check_encoded, embed_textures, plan_textures, read_glb,
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
-from .property import COMPONENT_LABELS, COMPONENT_TYPES
+from .property import COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
 from .system import apply_definitions, copy_component, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import check_objects, count, describe, draw_issues, issue_summary
 
@@ -211,7 +211,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
         item = items[self.index]
         custom = item.component_type == "CUSTOM"
         typed = custom and item.use_fields
-        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded"} | ({"custom_type"} if custom else set()) | ({"use_fields"} if typed else set())
+        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers"} | ({"custom_type"} if custom else set()) | ({"use_fields"} if typed else set())
         for field in item.bl_rna.properties:
             if field.identifier not in kept and field.type != "COLLECTION" and not field.is_readonly:
                 item.property_unset(field.identifier)
@@ -284,6 +284,33 @@ class BEVY_OT_lod_preset(bpy.types.Operator):
         item.fade_in_end = fade_in_end
         item.fade_out_start = fade_out_start
         item.fade_out_end = fade_out_end
+        sync_object(context.object)
+        redraw_viewports()
+        return {"FINISHED"}
+
+
+class BEVY_OT_set_collision_layers(bpy.types.Operator):
+    bl_idname = "bevy_components.set_collision_layers"
+    bl_label = "Set Collision Layers"
+    bl_description = "Turn every collision layer in the row on or off"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(name="Index")
+    layers: EnumProperty(name="Layers", items=[
+        ("MEMBERSHIPS", "Belongs To", "Collision layers the collider is on"),
+        ("FILTERS", "Collides With", "Collision layers the collider touches"),
+    ])
+    enable: BoolProperty(name="Enable", default=True)
+
+    @classmethod
+    def poll(cls, context):
+        return _editable(context)
+
+    def execute(self, context):
+        items = _components(context, self.index)
+        if items is None or items[self.index].component_type != "COLLIDER":
+            return {"CANCELLED"}
+        setattr(items[self.index], f"collider_{self.layers.lower()}", (self.enable,) * LAYER_COUNT)
         sync_object(context.object)
         redraw_viewports()
         return {"FINISHED"}

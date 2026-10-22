@@ -1,5 +1,5 @@
 import bpy
-from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, StringProperty
 
 from .system import custom_type_changed, definition_renamed, field_changed, redraw_viewports, sync_changed
 
@@ -11,6 +11,7 @@ COMPONENT_TYPES = [
 ]
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
+LAYER_COUNT = 32
 
 FIELD_TYPES = [
     ("FLOAT", "Float", "Decimal number, read as f32"),
@@ -58,12 +59,19 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     collider_radius: FloatProperty(name="Radius", description="Radius of the sphere or capsule", default=0.5, min=0.001, unit="LENGTH", update=sync_changed)
     collider_height: FloatProperty(name="Height", description="Length of the capsule's cylinder, without the caps", default=1.0, min=0.0, unit="LENGTH", update=sync_changed)
     collider_sensor: BoolProperty(name="Sensor", description="Detect overlaps without producing collision forces", default=False, update=sync_changed)
+    collider_friction: FloatProperty(name="Friction", description="How strongly the collider resists sliding, from 0 (ice) to 1 (rubber), averaged with the surface it touches", default=0.5, min=0.0, soft_max=1.0, update=sync_changed)
+    collider_restitution: FloatProperty(name="Restitution", description="How much speed the collider keeps when it bounces, from 0 (no bounce) to 1 (full bounce), averaged with the surface it touches", default=0.0, min=0.0, soft_max=1.0, update=sync_changed)
+    collider_memberships: BoolVectorProperty(name="Belongs To", description="Collision layers the collider is on", size=LAYER_COUNT, default=(True,) + (False,) * (LAYER_COUNT - 1), update=sync_changed)
+    collider_filters: BoolVectorProperty(name="Collides With", description="Collision layers the collider touches. Two colliders touch only when each is on a layer the other collides with", size=LAYER_COUNT, default=(True,) * LAYER_COUNT, update=sync_changed)
+    show_layers: BoolProperty(name="Collision Layers", description="Show the collider's collision layers", default=False)
 
     rigid_body_kind: EnumProperty(name="Type", items=[
         ("STATIC", "Static", "Never moves"),
         ("DYNAMIC", "Dynamic", "Moved by forces and gravity"),
         ("KINEMATIC", "Kinematic", "Moved by game code and pushes dynamic bodies"),
     ], default="STATIC", update=sync_changed)
+    rigid_body_use_mass: BoolProperty(name="Set Mass", description="Use a fixed total mass instead of one computed from the colliders' volume at 1 kg per cubic meter", default=False, update=sync_changed)
+    rigid_body_mass: FloatProperty(name="Mass", description="Total mass of the body, including colliders on child objects", default=1.0, min=0.001, precision=3, unit="MASS", update=sync_changed)
     custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health. Pick a type defined in Properties > Scene to edit its fields instead of JSON", default="my_game::MyComponent", update=custom_type_changed)
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
     use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")

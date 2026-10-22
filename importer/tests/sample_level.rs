@@ -86,6 +86,11 @@ fn colliders_match_exported_shapes() {
     assert_eq!(node_collider(world, "pickup_zone").shape().as_ball().expect("pickup_zone is a sphere").radius, 1.5);
     assert_eq!(node_collider(world, "cart_shape").shape().as_cuboid().expect("cart_shape is a cuboid").half_extents, Vec3::splat(0.5));
     assert_eq!(node_collider(world, "cart_handle").shape().as_ball().expect("cart_handle is a sphere").radius, 0.25);
+    assert_eq!(node_collider(world, "bouncy_ball").shape().as_ball().expect("bouncy_ball is a sphere").radius, 0.3);
+    assert_eq!(node_collider(world, "ramp").shape().as_cuboid().expect("ramp is a cuboid").half_extents, Vec3::new(3.0, 0.1, 1.0));
+    for name in ["ghost", "ice_block", "rubber_block"] {
+        assert!(node_collider(world, name).shape().as_cuboid().is_some(), "{name}");
+    }
     for name in ["lamp", "tree_lod0", "tree_lod1", "player_spawn", "enemy_spawn", "cart", "cart_body"] {
         assert!(colliders(world, name).is_empty(), "{name}");
     }
@@ -95,7 +100,7 @@ fn colliders_match_exported_shapes() {
 fn primitive_colliders_are_added_once_per_object() {
     let mut app = load_level(LEVEL);
     let world = app.world_mut();
-    for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone", "cart_shape", "cart_handle"] {
+    for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone", "cart_shape", "cart_handle", "bouncy_ball", "ghost", "ramp", "ice_block", "rubber_block"] {
         let node = node(world, name);
         assert_eq!(colliders(world, name), vec![node], "{name}");
     }
@@ -121,7 +126,7 @@ fn sensors_are_marked() {
 fn rigid_bodies_own_their_colliders() {
     let mut app = load_level(LEVEL);
     let world = app.world_mut();
-    let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house"), ("cart_shape", RigidBody::Dynamic, "cart"), ("cart_handle", RigidBody::Dynamic, "cart")];
+    let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house"), ("cart_shape", RigidBody::Dynamic, "cart"), ("cart_handle", RigidBody::Dynamic, "cart"), ("bouncy_ball", RigidBody::Dynamic, "bouncy_ball"), ("ghost", RigidBody::Dynamic, "ghost"), ("ramp", RigidBody::Static, "ramp"), ("ice_block", RigidBody::Dynamic, "ice_block"), ("rubber_block", RigidBody::Dynamic, "rubber_block")];
     for (name, kind, owner) in expected {
         let owner = node(world, owner);
         assert_eq!(world.get::<RigidBody>(owner), Some(&kind), "{name}");
@@ -183,7 +188,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 17);
+    assert_eq!(count, 22);
 }
 
 #[test]
@@ -199,4 +204,105 @@ fn dynamic_bodies_rest_on_the_ground() {
         let translation = world.get::<Transform>(node).map(|transform| transform.translation).unwrap_or_else(|| panic!("{name} has no transform"));
         assert!(translation.distance(start) < 0.05, "{name} moved from {start} to {translation}");
     }
+}
+
+#[test]
+fn colliders_keep_surface_and_layer_settings() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let expected = [("ground", 0.5, 0.0, CollisionLayers::DEFAULT), ("crate", 0.8, 0.1, CollisionLayers::DEFAULT), ("crate_copy", 0.8, 0.1, CollisionLayers::DEFAULT), ("rock", 0.5, 0.0, CollisionLayers::DEFAULT), ("house", 0.5, 0.0, CollisionLayers::DEFAULT), ("chimney", 0.5, 0.0, CollisionLayers::DEFAULT), ("trigger_zone", 0.5, 0.0, CollisionLayers::from_bits(0b100, 0b010)), ("cart_shape", 0.5, 0.0, CollisionLayers::DEFAULT), ("bouncy_ball", 0.5, 1.0, CollisionLayers::DEFAULT), ("ghost", 0.5, 0.0, CollisionLayers::from_bits(0b10, 0b10)), ("ice_block", 0.0, 0.0, CollisionLayers::DEFAULT), ("rubber_block", 1.0, 0.0, CollisionLayers::DEFAULT)];
+    for (name, friction, restitution, layers) in expected {
+        let entities = colliders(world, name);
+        assert!(!entities.is_empty(), "{name}");
+        for collider in entities {
+            assert_eq!(world.get::<Friction>(collider), Some(&Friction::new(friction)), "{name}");
+            assert_eq!(world.get::<Restitution>(collider), Some(&Restitution::new(restitution)), "{name}");
+            assert_eq!(world.get::<CollisionLayers>(collider), Some(&layers), "{name}");
+        }
+    }
+}
+
+#[test]
+fn masses_set_the_total_body_mass() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    for (name, mass) in [("rock", 25.0), ("cart", 12.0)] {
+        let node = node(world, name);
+        assert_eq!(world.get::<Mass>(node), Some(&Mass(mass)), "{name}");
+        assert!(world.get::<NoAutoMass>(node).is_some(), "{name}");
+        assert_eq!(world.get::<ComputedMass>(node).map(|computed| computed.value()), Some(mass), "{name}");
+    }
+    for (name, mass) in [("crate", 8.0), ("ice_block", 0.125)] {
+        let node = node(world, name);
+        assert!(world.get::<Mass>(node).is_none(), "{name}");
+        let computed = world.get::<ComputedMass>(node).map(|computed| computed.value()).unwrap_or_else(|| panic!("{name} has no computed mass"));
+        assert!((computed - mass).abs() < 1e-4, "{name} weighs {computed}");
+    }
+}
+
+#[test]
+fn restitution_makes_bodies_bounce() {
+    let mut app = load_level(LEVEL);
+    let ball = node(app.world_mut(), "bouncy_ball");
+    let mut fell = false;
+    let mut bounced = false;
+    let mut peak = 0.0_f32;
+    for _ in 0..120 {
+        app.update();
+        let world = app.world();
+        let velocity = world.get::<LinearVelocity>(ball).map(|velocity| velocity.y).expect("bouncy_ball has a velocity");
+        let height = world.get::<Transform>(ball).map(|transform| transform.translation.y).expect("bouncy_ball has a transform");
+        fell |= velocity < -1.0;
+        bounced |= fell && velocity > 0.0;
+        if bounced {
+            peak = peak.max(height);
+        }
+    }
+    assert!(bounced, "bouncy_ball never bounced");
+    assert!(peak > 0.8, "bouncy_ball only bounced up to {peak}");
+}
+
+#[test]
+fn collision_layers_let_bodies_pass_through() {
+    let mut app = load_level(LEVEL);
+    for _ in 0..60 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let ghost = node(world, "ghost");
+    let height = world.get::<Transform>(ghost).map(|transform| transform.translation.y).expect("ghost has a transform");
+    assert!(height < -2.0, "ghost stopped at {height}");
+}
+
+#[test]
+fn friction_decides_whether_bodies_slide() {
+    let mut app = load_level(LEVEL);
+    for _ in 0..60 {
+        app.update();
+    }
+    let world = app.world_mut();
+    for (name, start, sliding) in [("ice_block", Vec3::new(-1.124038, 3.053109, -7.4), true), ("rubber_block", Vec3::new(-1.124038, 3.053109, -8.6), false)] {
+        let node = node(world, name);
+        let distance = world.get::<Transform>(node).map(|transform| transform.translation.distance(start)).unwrap_or_else(|| panic!("{name} has no transform"));
+        assert_eq!(distance > 1.0, sliding, "{name} moved {distance}");
+        assert!(sliding || distance < 0.05, "{name} moved {distance}");
+    }
+}
+
+#[test]
+fn older_exports_keep_avian_defaults() {
+    let mut app = LevelApp::default().build();
+    let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "collider", "shape": "cuboid", "size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": false}, {"type": "rigid_body", "kind": "dynamic"}]}).to_string()});
+    let entity = app.world_mut().spawn((Name::new("old_crate"), Transform::default(), GltfExtras { value: extras.to_string() })).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    assert!(world.get::<Collider>(entity).is_some());
+    assert_eq!(world.get::<RigidBody>(entity), Some(&RigidBody::Dynamic));
+    assert_eq!(world.get::<CollisionLayers>(entity), Some(&CollisionLayers::DEFAULT));
+    assert!(world.get::<Friction>(entity).is_none());
+    assert!(world.get::<Restitution>(entity).is_none());
+    assert!(world.get::<Mass>(entity).is_none());
+    assert!(world.get::<NoAutoMass>(entity).is_none());
 }

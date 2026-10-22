@@ -6,11 +6,14 @@ import tempfile
 from pathlib import Path
 
 import bpy
+from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_level.glb"
 COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_level_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
 REPOSITORY = "bevy_components_test"
+RAMP_CENTER = (0, 8, 2)
+RAMP_ANGLE = 30
 
 sys.path.insert(0, str(ROOT))
 
@@ -236,6 +239,10 @@ def add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp):
     lamp.data.materials.append(glow)
 
 
+def layers(*numbers):
+    return [index in numbers for index in range(32)]
+
+
 def apply_lod_preset(obj, preset):
     select(obj)
     index = next(index for index, item in enumerate(obj.bevy_component_data.components) if item.component_type == "VISIBILITY_RANGE")
@@ -251,7 +258,7 @@ def build_sample_level():
     add_component(ground, "RIGID_BODY", rigid_body_kind="STATIC")
 
     crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2, location=(3, -2, 1), rotation=(0, 0, math.radians(30)))
-    add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2))
+    add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_friction=0.8, collider_restitution=0.1)
     add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC")
     add_component(crate, "VISIBILITY_RANGE")
     apply_lod_preset(crate, "MID")
@@ -273,11 +280,11 @@ def build_sample_level():
 
     rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", radius=0.8, subdivisions=1, location=(-4, 4, 0.8))
     add_component(rock, "COLLIDER", collider_shape="CONVEX")
-    add_component(rock, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+    add_component(rock, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=25)
 
     trigger_zone = add_mesh(bpy.ops.mesh.primitive_cube_add, "trigger_zone", size=1, location=(0, -6, 1))
     trigger_zone.scale = (2, 1, 1)
-    add_component(trigger_zone, "COLLIDER", collider_shape="CUBOID", collider_size=(1, 2, 3), collider_sensor=True)
+    add_component(trigger_zone, "COLLIDER", collider_shape="CUBOID", collider_size=(1, 2, 3), collider_sensor=True, collider_memberships=layers(2), collider_filters=layers(1))
 
     pickup_zone = add_empty("pickup_zone", (4, -4, 1))
     add_component(pickup_zone, "COLLIDER", collider_shape="SPHERE", collider_radius=1.5, collider_sensor=True)
@@ -306,7 +313,7 @@ def build_sample_level():
     add_component(tree_lod1, "VISIBILITY_RANGE", fade_in_start=20, fade_in_end=25, fade_out_start=100, fade_out_end=120)
 
     cart = add_empty("cart", (-8, -2, 0.5))
-    add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+    add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=12)
     cart_shape = add_empty("cart_shape", (0, 0, 0))
     add_component(cart_shape, "COLLIDER", collider_shape="CUBOID")
     cart_handle = add_empty("cart_handle", (-0.75, 0, 0.25))
@@ -314,6 +321,25 @@ def build_sample_level():
     cart_body = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart_body", size=1)
     for child in (cart_shape, cart_handle, cart_body):
         child.parent = cart
+
+    bouncy_ball = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "bouncy_ball", radius=0.3, segments=16, ring_count=8, location=(8, -8, 4))
+    add_component(bouncy_ball, "COLLIDER", collider_shape="SPHERE", collider_radius=0.3, collider_restitution=1)
+    add_component(bouncy_ball, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+
+    ghost = add_mesh(bpy.ops.mesh.primitive_cube_add, "ghost", size=1, location=(8, 0, 0.5))
+    add_component(ghost, "COLLIDER", collider_shape="CUBOID", collider_memberships=layers(1), collider_filters=layers(1))
+    add_component(ghost, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+
+    slope = math.radians(RAMP_ANGLE)
+    ramp = add_mesh(bpy.ops.mesh.primitive_cube_add, "ramp", size=1, location=RAMP_CENTER, rotation=(0, slope, 0))
+    ramp.data.transform(Matrix.Diagonal((6, 2, 0.2, 1)))
+    add_component(ramp, "COLLIDER", collider_shape="CUBOID", collider_size=(6, 0.2, 2))
+    add_component(ramp, "RIGID_BODY", rigid_body_kind="STATIC")
+    for name, friction, side in (("ice_block", 0, -0.6), ("rubber_block", 1, 0.6)):
+        location = Vector(RAMP_CENTER) + Vector((math.sin(slope), 0, math.cos(slope))) * 0.35 + Vector((math.cos(slope), 0, -math.sin(slope))) * -1.5 + Vector((0, side, 0))
+        block = add_mesh(bpy.ops.mesh.primitive_cube_add, name, size=0.5, location=location, rotation=(0, slope, 0))
+        add_component(block, "COLLIDER", collider_shape="CUBOID", collider_size=(0.5, 0.5, 0.5), collider_friction=friction)
+        add_component(block, "RIGID_BODY", rigid_body_kind="DYNAMIC")
 
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 10))
     bpy.context.object.name = "sun"

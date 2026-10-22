@@ -1,3 +1,4 @@
+use avian3d::prelude::CollisionLayers;
 use bevy::{camera::visibility::VisibilityRange, prelude::*};
 use serde_json::Value;
 
@@ -17,6 +18,9 @@ pub struct ColliderSpec {
     pub radius: f32,
     pub height: f32,
     pub sensor: bool,
+    pub friction: Option<f32>,
+    pub restitution: Option<f32>,
+    pub layers: Option<CollisionLayers>,
 }
 
 #[derive(Clone, Copy, Debug)]
