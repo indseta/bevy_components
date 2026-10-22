@@ -73,6 +73,15 @@ EXPECTED_COMPONENTS = {
     "tree_lod1": [
         {"type": "visibility_range", "start": [20.0, 25.0], "end": [100.0, 120.0], "use_aabb": False},
     ],
+    "cart": [
+        {"type": "rigid_body", "kind": "dynamic"},
+    ],
+    "cart_shape": [
+        {"type": "collider", "shape": "cuboid", **DEFAULT_COLLIDER},
+    ],
+    "cart_handle": [
+        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.25}},
+    ],
 }
 
 addon = None
@@ -693,8 +702,9 @@ class TestExport(unittest.TestCase):
         cls.directory.cleanup()
 
     def test_every_object_is_exported(self):
-        self.assertEqual(set(self.nodes), set(EXPECTED_COMPONENTS) | {"chimney", "sun"})
+        self.assertEqual(set(self.nodes), set(EXPECTED_COMPONENTS) | {"chimney", "sun", "cart_body"})
         self.assertEqual(self.nodes["house"].get("children"), [self.gltf["nodes"].index(self.nodes["chimney"])])
+        self.assertEqual(sorted(self.gltf["nodes"][index]["name"] for index in self.nodes["cart"]["children"]), ["cart_body", "cart_handle", "cart_shape"])
 
     def test_component_extras(self):
         for name, expected in EXPECTED_COMPONENTS.items():
@@ -706,6 +716,7 @@ class TestExport(unittest.TestCase):
 
     def test_editor_state_is_not_exported(self):
         self.assertNotIn("extras", self.nodes["chimney"])
+        self.assertNotIn("extras", self.nodes["cart_body"])
         self.assertNotIn("extras", self.nodes["sun"])
         self.assertTrue(all("extras" not in scene for scene in self.gltf["scenes"]))
 
@@ -714,6 +725,7 @@ class TestExport(unittest.TestCase):
         self.assertEqual(_rounded(self.nodes["crate"]["rotation"]), [0.0, 0.25882, 0.0, 0.96593])
         self.assertEqual(_rounded(self.nodes["trigger_zone"]["scale"]), [2.0, 1.0, 1.0])
         self.assertEqual(_rounded(self.nodes["player_spawn"]["translation"]), [2.0, 0.0, -3.0])
+        self.assertEqual(_rounded(self.nodes["cart_handle"]["translation"]), [-0.75, 0.25, 0.0])
 
     def test_fixture_is_current(self):
         self.assertTrue(FIXTURE.is_file(), f"Missing {FIXTURE}, run tests/blender/sample_level.py to create it")

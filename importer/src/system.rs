@@ -70,7 +70,17 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         if let Some(body) = rigid_body {
             commands.entity(entity).insert(body);
         } else if has_collider {
-            commands.entity(entity).insert(RigidBody::Static);
+            commands.entity(entity).insert(DefaultStaticBody);
+        }
+    }
+}
+
+pub fn apply_default_bodies(mut commands: Commands, candidates: Query<Entity, With<DefaultStaticBody>>, parents: Query<&ChildOf>, bodies: Query<(), With<RigidBody>>) {
+    for entity in &candidates {
+        let mut target = commands.entity(entity);
+        target.remove::<DefaultStaticBody>();
+        if !parents.iter_ancestors(entity).any(|ancestor| bodies.contains(ancestor)) {
+            target.insert(RigidBody::Static);
         }
     }
 }

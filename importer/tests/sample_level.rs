@@ -73,7 +73,9 @@ fn colliders_match_exported_shapes() {
     assert_eq!(node_collider(world, "trigger_zone").shape().as_cuboid().expect("trigger_zone is a cuboid").half_extents, Vec3::new(0.5, 1.0, 1.5));
     assert_eq!(node_collider(world, "trigger_zone").scale(), Vec3::new(2.0, 1.0, 1.0));
     assert_eq!(node_collider(world, "pickup_zone").shape().as_ball().expect("pickup_zone is a sphere").radius, 1.5);
-    for name in ["lamp", "tree_lod0", "tree_lod1", "player_spawn", "enemy_spawn"] {
+    assert_eq!(node_collider(world, "cart_shape").shape().as_cuboid().expect("cart_shape is a cuboid").half_extents, Vec3::splat(0.5));
+    assert_eq!(node_collider(world, "cart_handle").shape().as_ball().expect("cart_handle is a sphere").radius, 0.25);
+    for name in ["lamp", "tree_lod0", "tree_lod1", "player_spawn", "enemy_spawn", "cart", "cart_body"] {
         assert!(colliders(world, name).is_empty(), "{name}");
     }
 }
@@ -82,7 +84,7 @@ fn colliders_match_exported_shapes() {
 fn primitive_colliders_are_added_once_per_object() {
     let mut app = load_level(LEVEL);
     let world = app.world_mut();
-    for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone"] {
+    for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone", "cart_shape", "cart_handle"] {
         let node = node(world, name);
         assert_eq!(colliders(world, name), vec![node], "{name}");
     }
@@ -108,7 +110,7 @@ fn sensors_are_marked() {
 fn rigid_bodies_own_their_colliders() {
     let mut app = load_level(LEVEL);
     let world = app.world_mut();
-    let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house")];
+    let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house"), ("cart_shape", RigidBody::Dynamic, "cart"), ("cart_handle", RigidBody::Dynamic, "cart")];
     for (name, kind, owner) in expected {
         let owner = node(world, owner);
         assert_eq!(world.get::<RigidBody>(owner), Some(&kind), "{name}");
@@ -116,7 +118,7 @@ fn rigid_bodies_own_their_colliders() {
             assert_eq!(world.get::<ColliderOf>(collider).map(|collider_of| collider_of.body), Some(owner), "{name}");
         }
     }
-    for name in ["chimney", "lamp", "player_spawn", "enemy_spawn", "tree_lod0", "sun"] {
+    for name in ["chimney", "lamp", "player_spawn", "enemy_spawn", "tree_lod0", "sun", "cart_shape", "cart_handle", "cart_body"] {
         let node = node(world, name);
         assert!(world.get::<RigidBody>(node).is_none(), "{name}");
     }
@@ -159,7 +161,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 14);
+    assert_eq!(count, 17);
 }
 
 #[test]
@@ -170,7 +172,7 @@ fn dynamic_bodies_rest_on_the_ground() {
     }
     let world = app.world_mut();
     assert!(world.resource::<Time<Physics>>().elapsed_secs() > 1.5);
-    for (name, start) in [("crate", Vec3::new(3.0, 1.0, 2.0)), ("crate_copy", Vec3::new(6.0, 1.0, 2.0)), ("ball", Vec3::new(-3.0, 0.5, 0.0))] {
+    for (name, start) in [("crate", Vec3::new(3.0, 1.0, 2.0)), ("crate_copy", Vec3::new(6.0, 1.0, 2.0)), ("ball", Vec3::new(-3.0, 0.5, 0.0)), ("cart", Vec3::new(-8.0, 0.5, 2.0))] {
         let node = node(world, name);
         let translation = world.get::<Transform>(node).map(|transform| transform.translation).unwrap_or_else(|| panic!("{name} has no transform"));
         assert!(translation.distance(start) < 0.05, "{name} moved from {start} to {translation}");

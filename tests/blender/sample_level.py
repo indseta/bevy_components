@@ -279,6 +279,16 @@ def build_sample_level():
     tree_lod1 = add_mesh(bpy.ops.mesh.primitive_cone_add, "tree_lod1", radius1=1, depth=3, vertices=8, location=(-8, 8, 1.5))
     add_component(tree_lod1, "VISIBILITY_RANGE", fade_in_start=20, fade_in_end=25, fade_out_start=100, fade_out_end=120)
 
+    cart = add_empty("cart", (-8, -2, 0.5))
+    add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+    cart_shape = add_empty("cart_shape", (0, 0, 0))
+    add_component(cart_shape, "COLLIDER", collider_shape="CUBOID")
+    cart_handle = add_empty("cart_handle", (-0.75, 0, 0.25))
+    add_component(cart_handle, "COLLIDER", collider_shape="SPHERE", collider_radius=0.25)
+    cart_body = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart_body", size=1)
+    for child in (cart_shape, cart_handle, cart_body):
+        child.parent = cart
+
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 10))
     bpy.context.object.name = "sun"
     add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp)
