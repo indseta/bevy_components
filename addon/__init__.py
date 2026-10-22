@@ -16,7 +16,7 @@ from .operator import BEVY_OT_add_component, BEVY_OT_copy_to_selected, BEVY_OT_e
 from .overlay import register_draw_handlers, unregister_draw_handlers
 from .panel import BEVY_PT_object_properties, BEVY_PT_view_sidebar, BEVY_PT_viewport_previews, export_menu
 from .property import BEVY_PG_component, BEVY_PG_object_data, BEVY_PG_viewport_settings
-from .system import save_sync
+from .system import glTF2ExportUserExtension, save_sync
 
 CLASSES = (BEVY_PG_component, BEVY_PG_object_data, BEVY_OT_add_component, BEVY_OT_remove_component, BEVY_OT_lod_preset, BEVY_OT_copy_to_selected, BEVY_OT_validate, BEVY_OT_export_glb, BEVY_PT_object_properties, BEVY_PT_view_sidebar, BEVY_PG_viewport_settings, BEVY_PT_viewport_previews, BEVY_GGT_collider_handles)
 

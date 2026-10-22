@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 
-def inspect(path):
+def read_gltf(path):
     raw = Path(path).read_bytes()
     if raw[:4] != b"glTF" or len(raw) < 20:
         raise ValueError("Not a valid GLB header")
@@ -14,7 +14,11 @@ def inspect(path):
     chunk_length, chunk_type = struct.unpack_from("<I4s", raw, 12)
     if chunk_type != b"JSON":
         raise ValueError("Expected a JSON glTF chunk")
-    gltf = json.loads(raw[20:20 + chunk_length])
+    return json.loads(raw[20:20 + chunk_length])
+
+
+def inspect(path):
+    gltf = read_gltf(path)
     count = 0
     for node in gltf.get("nodes", []):
         raw_components = node.get("extras", {}).get("bevy_components")

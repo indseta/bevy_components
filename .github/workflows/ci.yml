@@ -25,8 +25,32 @@ jobs:
               with:
                   name: bevy_components_addon
                   path: dist/*.zip
+    blender:
+        name: Blender ${{ matrix.blender }} tests
+        runs-on: ubuntu-latest
+        strategy:
+            fail-fast: false
+            matrix:
+                include:
+                    - blender: '4.2.23'
+                      python: '3.11'
+                    - blender: '5.2.3'
+                      python: '3.13'
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: ${{ matrix.python }}
+            - name: Install Linux dependencies
+              run: |
+                  sudo apt-get update
+                  sudo apt-get install -y --no-install-recommends libegl1 libgl1 libgl1-mesa-dri libgomp1 libsm6 libx11-6 libxfixes3 libxi6 libxkbcommon0 libxrender1 libxxf86vm1
+            - name: Install Blender as a Python module
+              run: pip install bpy==${{ matrix.blender }}
+            - name: Run Blender tests
+              run: python -m unittest discover -s tests/blender -v
     importer:
-        name: Rust importer check
+        name: Rust importer tests
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v4
@@ -38,11 +62,11 @@ jobs:
             - uses: Swatinem/rust-cache@v2
               with:
                   workspaces: importer
-            - name: Check importer
-              run: cargo check --manifest-path importer/Cargo.toml
+            - name: Test importer
+              run: cargo test --manifest-path importer/Cargo.toml
     release:
         name: Publish release
-        needs: [addon, importer]
+        needs: [addon, blender, importer]
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         runs-on: ubuntu-latest
         permissions:

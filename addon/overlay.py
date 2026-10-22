@@ -67,6 +67,33 @@ def _draw_lines(shader, obj, lines, color, width=1.5):
     batch.draw(shader)
 
 
+def preview_batches(context, settings):
+    batches = []
+    for obj in preview_objects(context, settings):
+        collider = component_of(obj, "COLLIDER")
+        if collider and settings.colliders:
+            color = SENSOR_COLOR if collider.collider_sensor else COLLIDER_COLOR
+            batches.append((obj, collider_lines(obj, collider, settings.max_mesh_edges), color, 2.0))
+
+        visibility = component_of(obj, "VISIBILITY_RANGE")
+        if visibility and settings.visibility_ranges:
+            inverse = obj.matrix_world.to_3x3().inverted_safe()
+            offset = Vector((0, 0, 0))
+            if visibility.use_aabb and obj.type == "MESH":
+                offset = sum((Vector(corner) for corner in obj.bound_box), Vector()) / 8
+            radii = ((visibility.fade_in_start, LOD_IN_COLOR, 1.1), (visibility.fade_in_end, LOD_IN_COLOR, 1.9), (visibility.fade_out_start, LOD_OUT_COLOR, 1.9), (visibility.fade_out_end, LOD_OUT_COLOR, 1.1))
+            for radius, color, width in radii:
+                if radius < 0.01:
+                    continue
+                local_lines = [(tuple(offset + inverse @ Vector(start)), tuple(offset + inverse @ Vector(end))) for start, end in sphere_lines(radius, segments=48)]
+                batches.append((obj, local_lines, color, width))
+
+        spawn = component_of(obj, "SPAWN_POINT")
+        if spawn and settings.spawn_points:
+            batches.append((obj, spawn_marker_lines(), SPAWN_COLOR, 2.4))
+    return batches
+
+
 def _draw_geometry():
     context = bpy.context
     if not context.scene or not hasattr(context.scene, "bevy_component_previews"):
@@ -78,28 +105,8 @@ def _draw_geometry():
     gpu.state.blend_set("ALPHA")
     gpu.state.depth_test_set("NONE" if settings.xray else "LESS_EQUAL")
     try:
-        for obj in preview_objects(context, settings):
-            collider = component_of(obj, "COLLIDER")
-            if collider and settings.colliders:
-                color = SENSOR_COLOR if collider.collider_sensor else COLLIDER_COLOR
-                _draw_lines(shader, obj, collider_lines(obj, collider, settings.max_mesh_edges), color, width=2.0)
-
-            visibility = component_of(obj, "VISIBILITY_RANGE")
-            if visibility and settings.visibility_ranges:
-                inverse = obj.matrix_world.to_3x3().inverted_safe()
-                offset = Vector((0, 0, 0))
-                if visibility.use_aabb and obj.type == "MESH":
-                    offset = sum((Vector(corner) for corner in obj.bound_box), Vector()) / 8
-                radii = ((visibility.fade_in_start, LOD_IN_COLOR, 1.1), (visibility.fade_in_end, LOD_IN_COLOR, 1.9), (visibility.fade_out_start, LOD_OUT_COLOR, 1.9), (visibility.fade_out_end, LOD_OUT_COLOR, 1.1))
-                for radius, color, width in radii:
-                    if radius < 0.01:
-                        continue
-                    local_lines = [(tuple(offset + inverse @ Vector(start)), tuple(offset + inverse @ Vector(end))) for start, end in sphere_lines(radius, segments=48)]
-                    _draw_lines(shader, obj, local_lines, color, width=width)
-
-            spawn = component_of(obj, "SPAWN_POINT")
-            if spawn and settings.spawn_points:
-                _draw_lines(shader, obj, spawn_marker_lines(), SPAWN_COLOR, width=2.4)
+        for obj, lines, color, width in preview_batches(context, settings):
+            _draw_lines(shader, obj, lines, color, width=width)
     finally:
         gpu.state.depth_test_set("NONE")
         gpu.state.blend_set("NONE")

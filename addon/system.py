@@ -50,3 +50,18 @@ def sync_changed(self, context):
 def save_sync(_scene):
     for obj in bpy.data.objects:
         sync_object(obj)
+
+
+class glTF2ExportUserExtension:
+    def gather_node_hook(self, gltf2_node, _blender_object, _export_settings):
+        _remove_extra(gltf2_node, "bevy_component_data")
+
+    def gather_scene_hook(self, gltf2_scene, _blender_scene, _export_settings):
+        _remove_extra(gltf2_scene, "bevy_component_previews")
+
+
+def _remove_extra(gltf2_element, key):
+    if isinstance(gltf2_element.extras, dict):
+        gltf2_element.extras.pop(key, None)
+        if not gltf2_element.extras:
+            gltf2_element.extras = None

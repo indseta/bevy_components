@@ -58,6 +58,12 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         }
 
         let has_collider = components.collider.is_some();
+        if let Some(spec) = &components.collider && let Some(collider) = primitive_collider(spec) {
+            commands.entity(entity).insert(collider);
+            if spec.sensor {
+                commands.entity(entity).insert(Sensor);
+            }
+        }
         commands.entity(entity).insert(components);
         if let Some(tag) = spawn_tag {
             commands.entity(entity).insert(BlenderSpawnPoint(tag));
@@ -99,7 +105,7 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
         if let Some(range) = visibility {
             target.insert(range);
         }
-        if let Some(spec) = collider {
+        if let Some(spec) = collider && spec.shape.is_mesh() {
             target.insert(PendingMeshCollider(spec));
         }
     }
@@ -108,18 +114,10 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
 pub fn build_colliders(mut commands: Commands, candidates: Query<(Entity, &Mesh3d, &PendingMeshCollider)>, mesh_assets: Res<Assets<Mesh>>) {
     for (entity, mesh3d, pending) in &candidates {
         let spec = &pending.0;
+        let Some(mesh) = mesh_assets.get(&mesh3d.0) else { continue; };
         let collider = match spec.shape {
-            ColliderShape::Trimesh => {
-                let Some(mesh) = mesh_assets.get(&mesh3d.0) else { continue; };
-                Collider::trimesh_from_mesh(mesh)
-            }
-            ColliderShape::Convex => {
-                let Some(mesh) = mesh_assets.get(&mesh3d.0) else { continue; };
-                Collider::convex_hull_from_mesh(mesh)
-            }
-            ColliderShape::Cuboid => Some(Collider::cuboid(spec.size[0], spec.size[1], spec.size[2])),
-            ColliderShape::Sphere => Some(Collider::sphere(spec.radius)),
-            ColliderShape::Capsule => Some(Collider::capsule(spec.radius, spec.height)),
+            ColliderShape::Convex => Collider::convex_hull_from_mesh(mesh),
+            _ => Collider::trimesh_from_mesh(mesh),
         };
 
         let mut target = commands.entity(entity);
@@ -133,4 +131,13 @@ pub fn build_colliders(mut commands: Commands, candidates: Query<(Entity, &Mesh3
             warn!("Could not create collider from mesh on entity {:?}", entity);
         }
     }
+}
+
+fn primitive_collider(spec: &ColliderSpec) -> Option<Collider> {
+    return match spec.shape {
+        ColliderShape::Cuboid => Some(Collider::cuboid(spec.size[0], spec.size[1], spec.size[2])),
+        ColliderShape::Sphere => Some(Collider::sphere(spec.radius)),
+        ColliderShape::Capsule => Some(Collider::capsule(spec.radius, spec.height)),
+        ColliderShape::Trimesh | ColliderShape::Convex => None,
+    };
 }
