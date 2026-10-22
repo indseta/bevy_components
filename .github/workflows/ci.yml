@@ -41,7 +41,7 @@ jobs:
             - name: Check importer
               run: cargo check --manifest-path importer/Cargo.toml
     release:
-        name: Publish releases
+        name: Publish release
         needs: [addon, importer]
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         runs-on: ubuntu-latest
@@ -55,27 +55,15 @@ jobs:
               with:
                   name: bevy_components_addon
                   path: dist
-            - name: Read versions
-              run: |
-                  echo "ADDON_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("addon/blender_manifest.toml", "rb"))["version"].replace(".", "_"))')" >> "$GITHUB_ENV"
-                  echo "IMPORTER_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("importer/Cargo.toml", "rb"))["package"]["version"].replace(".", "_"))')" >> "$GITHUB_ENV"
+            - name: Read version
+              run: echo "VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("addon/blender_manifest.toml", "rb"))["version"])')" >> "$GITHUB_ENV"
             - name: Package importer
-              run: git archive --format=zip --prefix="bevy_components_importer/" -o "dist/bevy_components_importer_$IMPORTER_VERSION.zip" HEAD:importer
-            - name: Publish addon release
+              run: git archive --format=zip --prefix="bevy_components_importer/" -o "dist/bevy_components_importer_${VERSION//./_}.zip" HEAD:importer
+            - name: Publish release
               run: |
-                  tag="addon_$ADDON_VERSION"
-                  asset="dist/bevy_components_$ADDON_VERSION.zip"
+                  tag="bevy_components_${VERSION//./_}"
                   if gh release view "$tag" > /dev/null 2>&1; then
                       echo "$tag is already released, bump the version to publish a new one"
                   else
-                      gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "Bevy Components addon ${ADDON_VERSION//_/.}" --notes "Blender extension. Install with Edit > Preferences > Get Extensions > Install from Disk."
-                  fi
-            - name: Publish importer release
-              run: |
-                  tag="importer_$IMPORTER_VERSION"
-                  asset="dist/bevy_components_importer_$IMPORTER_VERSION.zip"
-                  if gh release view "$tag" > /dev/null 2>&1; then
-                      echo "$tag is already released, bump the version to publish a new one"
-                  else
-                      gh release create "$tag" "$asset" --target "$GITHUB_SHA" --latest=false --title "Bevy Components importer ${IMPORTER_VERSION//_/.}" --notes "Rust crate source for Bevy 0.20 and Avian 0.8. Unzip and add it as a path dependency."
+                      gh release create "$tag" "dist/bevy_components_${VERSION//./_}.zip" "dist/bevy_components_importer_${VERSION//./_}.zip" --target "$GITHUB_SHA" --title "Bevy Components $VERSION" --notes "Download bevy_components_${VERSION//./_}.zip for the Blender addon and bevy_components_importer_${VERSION//./_}.zip for the Rust importer. See the README for installation."
                   fi
