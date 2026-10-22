@@ -1,8 +1,8 @@
 import bpy
 
-from .operator import BEVY_OT_add_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_duplicate_component, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate
+from .operator import BEVY_OT_add_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate
 from .property import COMPONENT_LABELS
-from .system import component_index
+from .system import component_index, find_definition
 
 
 def _draw_add_items(layout, obj, kinds):
@@ -14,6 +14,20 @@ def _draw_add_items(layout, obj, kinds):
         column.operator(BEVY_OT_add_component.bl_idname, text=text, icon=icon).component_type = kind
 
 
+def _draw_defined_items(layout, obj, scene):
+    definitions = [definition for definition in scene.bevy_component_definitions.definitions if definition.name.strip()] if scene else []
+    if not definitions:
+        return
+    present = {item.custom_type for item in obj.bevy_component_data.components if item.component_type == "CUSTOM"} if obj else set()
+    layout.separator()
+    for definition in definitions:
+        column = layout.column()
+        column.enabled = definition.name not in present
+        button = column.operator(BEVY_OT_add_component.bl_idname, text=definition.name, icon=COMPONENT_LABELS["CUSTOM"][1])
+        button.component_type = "CUSTOM"
+        button.type_path = definition.name
+
+
 class BEVY_MT_component_add(bpy.types.Menu):
     bl_idname = "BEVY_MT_component_add"
     bl_label = "Add Component"
@@ -22,6 +36,7 @@ class BEVY_MT_component_add(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         _draw_add_items(layout, context.object, ("CUSTOM",))
+        _draw_defined_items(layout, context.object, context.scene)
         layout.separator()
         layout.menu(BEVY_MT_component_add_physics.bl_idname)
         layout.menu(BEVY_MT_component_add_rendering.bl_idname)
@@ -61,6 +76,10 @@ class BEVY_MT_component_context_menu(bpy.types.Menu):
         column.enabled = item.component_type == "CUSTOM"
         column.operator(BEVY_OT_duplicate_component.bl_idname, text="Duplicate", icon="DUPLICATE").index = index
         layout.operator(BEVY_OT_copy_component_to_selected.bl_idname, text="Copy to Selected", icon="COPYDOWN").index = index
+        if item.component_type == "CUSTOM":
+            layout.separator()
+            defined = find_definition(context.scene, item.custom_type) is not None
+            layout.operator(BEVY_OT_define_fields.bl_idname, text="Edit Fields" if defined else "Define Fields", icon="PROPERTIES").index = index
         layout.separator()
         layout.operator(BEVY_OT_reset_component.bl_idname, text="Reset to Defaults", icon="LOOP_BACK").index = index
         layout.separator()

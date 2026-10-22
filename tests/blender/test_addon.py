@@ -14,7 +14,7 @@ import bpy
 import gpu
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, export_sample_level, install_addon, read_gltf, select, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, define_component, export_sample_level, install_addon, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -51,6 +51,7 @@ EXPECTED_COMPONENTS = {
     ],
     "pickup_zone": [
         {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 1.5, "sensor": True}},
+        {"type": "custom", "type_path": "my_game::Pickup", "data": {"item": "coin", "amount": 5, "respawn": True, "weight": 0.1, "spin": [0.0, 1.5, 0.0], "glow": {"Srgba": {"red": 1.0, "green": 0.8, "blue": 0.2, "alpha": 1.0}}}},
     ],
     "player_spawn": [
         {"type": "custom", "type_path": "my_game::PlayerSpawn", "data": {}},
@@ -242,9 +243,10 @@ class TestRegistration(unittest.TestCase):
     def test_extension_registers_types_and_operators(self):
         self.assertTrue(hasattr(bpy.types.Object, "bevy_component_data"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
+        self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
+        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_overlay"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
@@ -381,6 +383,9 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.reset(index=0), {"FINISHED"})
         self.assertEqual((item.component_type, item.collider_shape, item.collider_radius, item.collider_sensor, item.show_expanded), ("COLLIDER", "TRIMESH", 0.5, False, False))
         self.assertEqual(_stored(self.obj)["components"][0]["shape"], "trimesh")
+        add_component(self.obj, "CUSTOM", custom_type="game::Tag", custom_json='{"a": 1}')
+        self.assertEqual(bpy.ops.bevy_components.reset(index=1), {"FINISHED"})
+        self.assertEqual(_stored(self.obj)["components"][1], {"type": "custom", "type_path": "game::Tag", "data": {}})
 
     def test_move(self):
         for kind in ("COLLIDER", "RIGID_BODY", "VISIBILITY_RANGE"):
@@ -479,7 +484,7 @@ class TestPanels(unittest.TestCase):
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_context_menu.draw(menu, _menu_context(self.obj, custom))
         buttons = {text: (properties, enabled) for text, properties, enabled in menu.layout.buttons()}
-        self.assertEqual(set(buttons), {"Duplicate", "Copy to Selected", "Reset to Defaults", "Move to First", "Move Up", "Move Down", "Move to Last", "Remove"})
+        self.assertEqual(set(buttons), {"Duplicate", "Copy to Selected", "Define Fields", "Reset to Defaults", "Move to First", "Move Up", "Move Down", "Move to Last", "Remove"})
         self.assertTrue(all(properties.index == 1 for properties, enabled in buttons.values()))
         self.assertEqual({text for text, (properties, enabled) in buttons.items() if not enabled}, {"Move Down", "Move to Last"})
         menu = FakePanel(self)
@@ -556,6 +561,239 @@ class TestPanels(unittest.TestCase):
             addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
             self.assertEqual(panel.layout.alerts(), [])
             self.assertTrue(any(text.startswith("KTX-Software 4.") for text in panel.layout.texts()))
+
+
+class TestCustomFields(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+        self.obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "subject")
+        self.other = add_empty("other", (0, 0, 0))
+        self.library = bpy.context.scene.bevy_component_definitions
+
+    def _definition(self, type_path):
+        return next(definition for definition in self.library.definitions if definition.name == type_path)
+
+    def _data(self, obj):
+        return [component["data"] for component in _stored(obj)["components"]]
+
+    def test_defined_components_start_with_defaults(self):
+        define_component("game::Health", ("amount", "INT", 100), ("regen", "FLOAT", 0.5), ("tint", "COLOR", (1.0, 0.0, 0.0, 1.0)))
+        item = add_component(self.obj, "CUSTOM", type_path="game::Health")
+        self.assertEqual((item.custom_type, item.use_fields), ("game::Health", True))
+        self.assertEqual([(field.name, field.field_type) for field in item.fields], [("amount", "INT"), ("regen", "FLOAT"), ("tint", "COLOR")])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "custom", "type_path": "game::Health", "data": {"amount": 100, "regen": 0.5, "tint": {"Srgba": {"red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0}}}}])
+        set_fields(item, amount=80)
+        self.assertEqual(self._data(self.obj), [{"amount": 80, "regen": 0.5, "tint": {"Srgba": {"red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0}}}])
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="CUSTOM", type_path="game::Health"), {"CANCELLED"})
+        self.assertEqual(len(self.obj.bevy_component_data.components), 1)
+
+    def test_new_definitions_and_fields_get_unique_names(self):
+        add_component(self.obj, "CUSTOM")
+        bpy.ops.bevy_components.definition_add()
+        bpy.ops.bevy_components.definition_add()
+        self.assertEqual([definition.name for definition in self.library.definitions], ["my_game::MyComponent2", "my_game::MyComponent3"])
+        self.assertFalse(self.obj.bevy_component_data.components[0].use_fields)
+        self.library.definitions[1].name = "space::Ship"
+        bpy.ops.bevy_components.definition_add()
+        self.assertEqual(self.library.definitions[2].name, "space::MyComponent")
+        bpy.ops.bevy_components.field_add()
+        bpy.ops.bevy_components.field_add()
+        fields = self.library.definitions[2].fields
+        self.assertEqual([field.name for field in fields], ["field", "field_2"])
+        self.assertEqual(len({field.identifier for field in fields}), 2)
+
+    def test_definition_changes_reach_every_object(self):
+        define_component("game::Mover", ("speed", "FLOAT", 2.0), ("axis", "VECTOR", (0.0, 1.0, 0.0)))
+        first = set_fields(add_component(self.obj, "CUSTOM", type_path="game::Mover"), speed=4.6)
+        add_component(self.other, "CUSTOM", type_path="game::Mover")
+        definition = self._definition("game::Mover")
+        definition.fields[0].name = "velocity"
+        self.assertEqual(self._data(self.obj), [{"velocity": 4.6, "axis": [0.0, 1.0, 0.0]}])
+        definition.fields[0].field_type = "INT"
+        self.assertEqual([self._data(obj)[0]["velocity"] for obj in (self.obj, self.other)], [5, 2])
+        definition.fields[0].field_type = "STRING"
+        self.assertEqual(self._data(self.obj), [{"velocity": "", "axis": [0.0, 1.0, 0.0]}])
+        definition.active_field = 1
+        self.assertEqual(bpy.ops.bevy_components.field_move(direction="UP"), {"FINISHED"})
+        self.assertEqual(bpy.ops.bevy_components.field_move(direction="UP"), {"CANCELLED"})
+        self.assertEqual(list(self._data(self.obj)[0]), ["axis", "velocity"])
+        bpy.ops.bevy_components.field_add()
+        self.assertEqual(self._data(self.other), [{"axis": [0.0, 1.0, 0.0], "velocity": "", "field": 0.0}])
+        definition.active_field = 1
+        bpy.ops.bevy_components.field_remove()
+        self.assertEqual(list(self._data(self.obj)[0]), ["axis", "field"])
+        self.assertEqual([field.name for field in first.fields], ["axis", "field"])
+
+    def test_renaming_a_definition_moves_its_components(self):
+        define_component("game::Door", ("locked", "BOOL", True))
+        item = add_component(self.obj, "CUSTOM", type_path="game::Door")
+        gate = add_component(self.other, "CUSTOM", custom_type="game::Gate", custom_json='{"locked": false}')
+        self.assertFalse(gate.use_fields)
+        self._definition("game::Door").name = "game::Gate"
+        self.assertEqual(item.custom_type, "game::Gate")
+        self.assertTrue(gate.use_fields)
+        self.assertEqual(self._data(self.other), [{"locked": False}])
+        self._definition("game::Gate").name = ""
+        self.assertEqual((item.custom_type, item.use_fields), ("game::Gate", True))
+        self._definition("").name = "game::Portal"
+        self.assertEqual([item.custom_type, gate.custom_type], ["game::Portal", "game::Portal"])
+        self.assertEqual(_stored(self.obj)["components"][0]["type_path"], "game::Portal")
+
+    def test_removing_a_definition_keeps_values_as_json(self):
+        define_component("game::Door", ("locked", "BOOL", False), ("key", "STRING", ""))
+        item = set_fields(add_component(self.obj, "CUSTOM", type_path="game::Door"), locked=True, key="red")
+        self.assertEqual(bpy.ops.bevy_components.definition_remove(), {"FINISHED"})
+        self.assertEqual((item.use_fields, len(item.fields), item.custom_type), (False, 0, "game::Door"))
+        self.assertEqual(json.loads(item.custom_json), {"locked": True, "key": "red"})
+        self.assertEqual(self._data(self.obj), [{"locked": True, "key": "red"}])
+        self.assertFalse(bpy.ops.bevy_components.definition_remove.poll())
+
+    def test_json_components_switch_to_fields_without_losing_data(self):
+        item = add_component(self.obj, "CUSTOM", custom_type="game::Door", custom_json='{"locked": true, "key": "red", "note": "back door"}')
+        define_component("game::Door", ("key", "STRING", ""), ("health", "INT", 0), ("locked", "INT", 0))
+        self.assertTrue(item.use_fields)
+        self.assertEqual(self._data(self.obj), [{"key": "red", "health": 0, "locked": 0}])
+        self._definition("game::Door").fields[2].field_type = "BOOL"
+        self.assertEqual(self._data(self.obj), [{"key": "red", "health": 0, "locked": True}])
+        bpy.ops.bevy_components.definition_remove()
+        self.assertEqual(json.loads(item.custom_json), {"key": "red", "health": 0, "locked": True, "note": "back door"})
+        mover = add_component(self.other, "CUSTOM", custom_json='{"speed": 3}')
+        define_component("game::Mover", ("speed", "FLOAT", 1.0))
+        self.assertFalse(mover.use_fields)
+        mover.custom_type = "game::Mover"
+        self.assertTrue(mover.use_fields)
+        self.assertEqual(self._data(self.other), [{"speed": 3.0}])
+
+    def test_define_fields_from_json(self):
+        wave = add_component(self.obj, "CUSTOM", custom_type="game::Wave", custom_json='{"count": 3, "delay": 1.5, "boss": "ogre", "spawn": [1, 0, 2]}')
+        other = add_component(self.other, "CUSTOM", custom_type="game::Wave", custom_json='{"count": 7}')
+        add_component(self.other, "CUSTOM", custom_type="game::Flicker", custom_json="0.25")
+        select(self.obj)
+        self.assertEqual(bpy.ops.bevy_components.define_fields(index=0), {"FINISHED"})
+        definition = self._definition("game::Wave")
+        self.assertEqual(self.library.active_index, 0)
+        self.assertEqual([(field.name, field.field_type) for field in definition.fields], [("count", "INT"), ("delay", "FLOAT"), ("boss", "STRING"), ("spawn", "VECTOR")])
+        self.assertEqual((definition.fields[0].int_value, tuple(definition.fields[3].vector_value)), (3, (1.0, 0.0, 2.0)))
+        self.assertTrue(wave.use_fields and other.use_fields)
+        self.assertEqual(self._data(self.obj), [{"count": 3, "delay": 1.5, "boss": "ogre", "spawn": [1.0, 0.0, 2.0]}])
+        self.assertEqual(self._data(self.other)[0], {"count": 7, "delay": 1.5, "boss": "ogre", "spawn": [1.0, 0.0, 2.0]})
+        select(self.other)
+        with self.assertRaises(RuntimeError):
+            bpy.ops.bevy_components.define_fields(index=1)
+        self.assertFalse(self.other.bevy_component_data.components[1].use_fields)
+        self.assertEqual(len(self.library.definitions), 1)
+
+    def test_edit_fields_selects_the_definition(self):
+        define_component("game::Tag")
+        define_component("game::Mover", ("speed", "FLOAT", 1.0))
+        add_component(self.obj, "CUSTOM", type_path="game::Tag")
+        self.assertEqual(self.library.active_index, 1)
+        self.assertEqual(bpy.ops.bevy_components.define_fields(index=0), {"FINISHED"})
+        self.assertEqual((self.library.active_index, len(self.library.definitions)), (0, 2))
+
+    def test_define_fields_restores_a_missing_definition(self):
+        define_component("game::Tag", ("label", "STRING", "a"))
+        item = set_fields(add_component(self.obj, "CUSTOM", type_path="game::Tag"), label="b")
+        self.library.definitions.clear()
+        self.assertTrue(item.use_fields)
+        self.assertEqual(self._data(self.obj), [{"label": "b"}])
+        self.assertEqual(bpy.ops.bevy_components.define_fields(index=0), {"FINISHED"})
+        field = self._definition("game::Tag").fields[0]
+        self.assertEqual((field.name, field.string_value, field.identifier), ("label", "b", item.fields[0].identifier))
+
+    def test_copy_duplicate_and_reset_keep_fields(self):
+        define_component("game::Health", ("amount", "INT", 100))
+        set_fields(add_component(self.obj, "CUSTOM", type_path="game::Health"), amount=5)
+        self.assertEqual(bpy.ops.bevy_components.duplicate(index=0), {"FINISHED"})
+        self.assertEqual(self._data(self.obj), [{"amount": 5}, {"amount": 5}])
+        select(self.obj, self.other)
+        self.assertEqual(bpy.ops.bevy_components.copy_to_selected(), {"FINISHED"})
+        self.assertEqual(self._data(self.other), [{"amount": 5}, {"amount": 5}])
+        self.assertTrue(all(component.use_fields for component in self.other.bevy_component_data.components))
+        select(self.obj)
+        self.assertEqual(bpy.ops.bevy_components.reset(index=0), {"FINISHED"})
+        item = self.obj.bevy_component_data.components[0]
+        self.assertEqual((item.custom_type, item.use_fields), ("game::Health", True))
+        self.assertEqual(self._data(self.obj), [{"amount": 100}, {"amount": 5}])
+
+    def test_duplicate_field_names_block_export(self):
+        define_component("game::Pair", ("value", "INT", 0), ("other", "INT", 0))
+        add_component(self.obj, "CUSTOM", type_path="game::Pair")
+        self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
+        self._definition("game::Pair").fields[1].name = "value"
+        with self.assertRaises(RuntimeError):
+            bpy.ops.bevy_components.validate()
+
+    def test_save_and_reload_keeps_definitions_and_fields(self):
+        define_component("game::Glow", ("tint", "COLOR", (1.0, 0.5, 0.0, 1.0)))
+        add_component(self.obj, "CUSTOM", type_path="game::Glow")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "level.blend"
+            bpy.ops.wm.save_as_mainfile(filepath=str(path))
+            bpy.ops.wm.open_mainfile(filepath=str(path))
+        self.assertEqual([definition.name for definition in bpy.context.scene.bevy_component_definitions.definitions], ["game::Glow"])
+        item = bpy.data.objects["subject"].bevy_component_data.components[0]
+        self.assertEqual((item.use_fields, tuple(round(value, 5) for value in item.fields[0].color_value)), (True, (1.0, 0.5, 0.0, 1.0)))
+
+    def test_custom_card_draws_fields(self):
+        define_component("game::Mover", ("speed", "FLOAT", 1.0), ("axis", "VECTOR", (0.0, 1.0, 0.0)), ("tint", "COLOR", (1.0, 1.0, 1.0, 1.0)))
+        define_component("game::Marker")
+        add_component(self.obj, "CUSTOM", type_path="game::Mover")
+        add_component(self.obj, "CUSTOM", type_path="game::Marker")
+        add_component(self.obj, "CUSTOM", custom_type="game::Raw")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual([(bound["property"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"].endswith("_value")], [("float_value", "speed"), ("vector_value", "axis"), ("color_value", "tint")])
+        self.assertIn("No fields", panel.layout.texts())
+        self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "prop_search"], ["custom_type"])
+        self.assertEqual(panel.layout.props().count("custom_json"), 1)
+        self.assertIn("game::Mover", panel.layout.texts())
+
+    def test_scene_panel_lists_definitions_and_fields(self):
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_scene_definitions.draw(panel, bpy.context)
+        lists = lambda: [bound["listtype_name"] for name, bound, layout in panel.layout.calls if name == "template_list"]
+        self.assertEqual(lists(), ["BEVY_UL_definitions"])
+        define_component("game::Mover", ("speed", "FLOAT", 1.0), ("axis", "VECTOR", (0.0, 1.0, 0.0)))
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_scene_definitions.draw(panel, bpy.context)
+        self.assertEqual(lists(), ["BEVY_UL_definitions", "BEVY_UL_fields"])
+        self.assertEqual(panel.layout.operators(), ["bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.field_move"])
+        self.assertEqual(panel.layout.props(), ["field_type", "vector_value"])
+
+    def test_lists_flag_repeated_names(self):
+        define_component("game::Pair", ("value", "INT", 0), ("value", "FLOAT", 0.0))
+        define_component("game::Pair")
+        for index, definition in enumerate(self.library.definitions):
+            layout = FakeLayout(self)
+            addon.panel.BEVY_UL_definitions.draw_item(None, bpy.context, layout, self.library, definition, 0, self.library, "active_index", index)
+            self.assertEqual(layout.props(), ["name"])
+            self.assertTrue(layout.alert)
+        definition = self.library.definitions[0]
+        layout = FakeLayout(self)
+        addon.panel.BEVY_UL_fields.draw_item(None, bpy.context, layout, definition, definition.fields[0], 0, definition, "active_field", 0)
+        self.assertEqual([layout.is_alert() for name, bound, layout in layout.calls if name == "prop"], [True])
+        self.assertIn("Integer", layout.texts())
+
+    def test_add_menu_lists_defined_components(self):
+        define_component("game::Health", ("amount", "INT", 100))
+        define_component("game::Wave")
+        add_component(self.obj, "CUSTOM", type_path="game::Health")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
+        buttons = [(text, properties.component_type, getattr(properties, "type_path", ""), enabled) for text, properties, enabled in menu.layout.buttons()]
+        self.assertEqual(buttons, [("Custom Component", "CUSTOM", "", True), ("game::Health", "CUSTOM", "game::Health", False), ("game::Wave", "CUSTOM", "game::Wave", True)])
+
+    def test_component_context_menu_edits_defined_fields(self):
+        define_component("game::Health", ("amount", "INT", 100))
+        item = add_component(self.obj, "CUSTOM", type_path="game::Health")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_context_menu.draw(menu, _menu_context(self.obj, item))
+        self.assertIn("Edit Fields", [text for text, properties, enabled in menu.layout.buttons()])
+        collider = add_component(self.obj, "COLLIDER")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_context_menu.draw(menu, _menu_context(self.obj, collider))
+        self.assertNotIn("bevy_components.define_fields", menu.layout.operators())
 
 
 class TestViewport(unittest.TestCase):
