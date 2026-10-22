@@ -33,7 +33,7 @@ def issue_summary(issues):
 def draw_message(layout, text, icon="ERROR", width=300):
     scale = (bpy.context.preferences.system.ui_scale if bpy.context.preferences else 0.0) or 1.0
     column = layout.column(align=True)
-    for index, line in enumerate(textwrap.wrap(text, max(20, int((width - 40) / (7 * scale))))):
+    for index, line in enumerate(textwrap.wrap(text, max(20, int((width - 40) / (6 * scale))))):
         column.label(text=line, icon=icon if index == 0 else "BLANK1")
 
 
