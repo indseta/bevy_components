@@ -46,6 +46,27 @@ class TestMetadata(unittest.TestCase):
         with self.assertRaises(ValueError):
             metadata.serialize_items([component])
 
+    def test_component_errors_leave_out_the_object_name(self):
+        component = item(component_type="CUSTOM", custom_type=" ", custom_json="oops", use_fields=False)
+        self.assertEqual(metadata.component_errors(component), ["Custom Component needs a Rust type path", "invalid JSON in Custom Component"])
+        self.assertEqual(metadata.validate_items([component], "lamp"), ["lamp: Custom Component needs a Rust type path", "lamp: invalid JSON in Custom Component"])
+
+    def test_matching_levels_of_detail_crossfade(self):
+        self.assertEqual(metadata.visibility_range_problems([("far", (80, 85, 250, 260)), ("near", (0, 0, 20, 25)), ("mid", (20, 25, 80, 85))]), [])
+
+    def test_gaps_between_levels_of_detail(self):
+        self.assertEqual(metadata.visibility_range_problems([("near", (0, 0, 20, 25)), ("far", (30, 35, 80, 85))]), [("far", "Gap after near: nothing shows from 25 to 30 m")])
+
+    def test_overlapping_levels_of_detail(self):
+        self.assertEqual(metadata.visibility_range_problems([("near", (0, 0, 20, 25)), ("far", (0, 0, 100, 120))]), [("far", "Shows together with near from 0 to 20 m")])
+
+    def test_mismatched_fade_margins(self):
+        self.assertEqual(metadata.visibility_range_problems([("near", (0, 0, 20, 25)), ("far", (22.5, 24, 80, 85))]), [("far", "Fades in over 22.5–24 m but near fades out over 20–25 m, so they do not crossfade")])
+
+    def test_parts_of_one_level_of_detail_share_its_range(self):
+        entries = [("trunk", (0, 0, 20, 25)), ("leaves", (0, 0, 20, 25)), ("far_trunk", (30, 35, 80, 85)), ("far_leaves", (30, 35, 80, 85))]
+        self.assertEqual(metadata.visibility_range_problems(entries), [("far_trunk", "Gap after trunk: nothing shows from 25 to 30 m"), ("far_leaves", "Gap after trunk: nothing shows from 25 to 30 m")])
+
     def test_custom_fields(self):
         fields = [field("count", "INT", 3), field("delay", "FLOAT", 0.10000000149011612), field("label", "STRING", "Wave ✦"), field("boss", "BOOL", True), field("offset", "VECTOR", (0.0, 1.5, -2.0)), field("tint", "COLOR", (1.0, 0.800000011920929, 0.20000000298023224, 1.0))]
         component = item(component_type="CUSTOM", custom_type="game::Wave", custom_json="{broken", use_fields=True, fields=fields)

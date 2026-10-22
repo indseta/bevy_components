@@ -6,7 +6,8 @@ from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT
 from .metadata import FIELD_VALUES, invalid_names, validate_items
 from .operator import BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_remove_component
 from .property import COMPONENT_LABELS, FIELD_LABELS
-from .system import component_of, panel_body_drawn, panel_header_drawn
+from .system import panel_body_drawn, panel_header_drawn
+from .validation import check_object, draw_message
 
 
 def _labeled_row(layout, text):
@@ -60,9 +61,6 @@ def _draw_collider(layout, obj, index, item):
         column.prop(item, "collider_radius")
         column.prop(item, "collider_height")
     layout.prop(item, "collider_sensor")
-    rigid_body = component_of(obj, "RIGID_BODY")
-    if item.collider_shape == "TRIMESH" and rigid_body is not None and rigid_body.rigid_body_kind != "STATIC":
-        layout.label(text="Triangle meshes work best on static bodies", icon="INFO")
 
 
 def _draw_rigid_body(layout, obj, index, item):
@@ -101,11 +99,14 @@ DRAWERS = {
 }
 
 
-def _draw_component(layout, obj, index, item):
+def _draw_component(layout, context, obj, index, item, issues):
     text, icon = COMPONENT_LABELS.get(item.component_type, ("Removed Component", "ERROR"))
+    issues = [issue for issue in issues if issue.item == item]
     header, body = layout.panel_prop(item, "show_expanded")
     header.prop(item, "enabled", text="")
     header.label(text=item.custom_type if item.component_type == "CUSTOM" and item.custom_type.strip() else text, icon=icon)
+    if issues:
+        header.label(text="", icon="CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR")
     tools = header.row(align=True)
     tools.emboss = "NONE"
     tools.context_pointer_set("bevy_component", item)
@@ -120,14 +121,18 @@ def _draw_component(layout, obj, index, item):
     body.use_property_decorate = False
     body.active = item.enabled
     DRAWERS[item.component_type](body, obj, index, item)
+    for issue in issues:
+        if issue.level == "WARNING":
+            draw_message(body, issue.message, width=context.region.width if context.region else 300)
 
 
-def draw_components(layout, obj):
+def draw_components(layout, context, obj):
     row = layout.row()
     row.operator("wm.call_menu", text="Add Component", icon="ADD").name = BEVY_MT_component_add.bl_idname
     row.menu(BEVY_MT_object_context_menu.bl_idname, text="", icon="DOWNARROW_HLT")
+    issues = check_object(obj, bpy.data.objects)
     for index, item in enumerate(obj.bevy_component_data.components):
-        _draw_component(layout, obj, index, item)
+        _draw_component(layout, context, obj, index, item, issues)
 
 
 class BEVY_PT_object_properties(bpy.types.Panel):
@@ -146,7 +151,7 @@ class BEVY_PT_object_properties(bpy.types.Panel):
 
     def draw(self, context):
         panel_body_drawn()
-        draw_components(self.layout, context.object)
+        draw_components(self.layout, context, context.object)
 
 
 class BEVY_PT_view_sidebar(bpy.types.Panel):
@@ -160,7 +165,7 @@ class BEVY_PT_view_sidebar(bpy.types.Panel):
         if context.object is None:
             self.layout.label(text="Select an object", icon="INFO")
             return
-        draw_components(self.layout, context.object)
+        draw_components(self.layout, context, context.object)
 
 
 class BEVY_UL_definitions(bpy.types.UIList):

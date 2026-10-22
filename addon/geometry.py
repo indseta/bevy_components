@@ -12,6 +12,12 @@ def cuboid_lines(size):
     return [(corners[start], corners[end]) for start, end in edges]
 
 
+def box_lines(minimum, maximum):
+    corners = [(x, y, z) for z in (minimum[2], maximum[2]) for y in (minimum[1], maximum[1]) for x in (minimum[0], maximum[0])]
+    edges = ((0, 1), (0, 2), (1, 3), (2, 3), (4, 5), (4, 6), (5, 7), (6, 7), (0, 4), (1, 5), (2, 6), (3, 7))
+    return [(corners[start], corners[end]) for start, end in edges]
+
+
 def circle_lines(radius, plane="XY", segments=48, center=(0, 0, 0), start_angle=0.0, end_angle=2 * pi):
     if radius <= 0:
         return []
