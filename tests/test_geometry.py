@@ -3,7 +3,7 @@ import math
 import pathlib
 import unittest
 
-MODULE = pathlib.Path(__file__).resolve().parents[1] / "bevy_components" / "geometry.py"
+MODULE = pathlib.Path(__file__).resolve().parents[1] / "addon" / "geometry.py"
 spec = importlib.util.spec_from_file_location("bevy_geometry", MODULE)
 geometry = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(geometry)

@@ -3,7 +3,7 @@ import tomllib
 from zipfile import ZIP_DEFLATED, ZipFile
 
 ROOT = Path(__file__).resolve().parents[1]
-PACKAGE = ROOT / "bevy_components"
+PACKAGE = ROOT / "addon"
 
 
 def build():

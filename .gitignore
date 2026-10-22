@@ -11,7 +11,7 @@ __pycache__/
 *.blend@*
 *.blend~
 Thumbs.db
-bevy_importer/target/
+importer/target/
 target/
 dist/
 *.zip
