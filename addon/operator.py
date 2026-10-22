@@ -8,10 +8,10 @@ from bpy_extras.io_utils import ExportHelper
 
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, EncoderError, check_encoder, encode
-from .metadata import validate_items
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
-from .system import components_for, copy_component, image_to_png, redraw_viewports, sync_object
+from .system import copy_component, image_to_png, redraw_viewports, sync_object
+from .validation import check_objects, count, describe, draw_issues, issue_summary
 
 TEXTURE_COMPRESSION = [
     ("DISABLED", "Disabled", "Export ordinary embedded textures"),
@@ -255,21 +255,50 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BEVY_OT_select_object(bpy.types.Operator):
+    bl_idname = "bevy_components.select_object"
+    bl_label = "Select Object"
+    bl_description = "Select the object and make it active"
+    bl_options = {"REGISTER", "UNDO"}
+
+    name: StringProperty(name="Object")
+
+    @classmethod
+    def poll(cls, context):
+        return context.view_layer is not None
+
+    def execute(self, context):
+        obj = context.view_layer.objects.get(self.name)
+        if obj is None:
+            self.report({"WARNING"}, f"{self.name} is not in the current view layer")
+            return {"CANCELLED"}
+        for other in context.selected_objects:
+            other.select_set(False)
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        return {"FINISHED"}
+
+
 class BEVY_OT_validate(bpy.types.Operator):
     bl_idname = "bevy_components.validate"
     bl_label = "Validate Components"
-    bl_description = "Check the components of every object for problems that would block export"
+    bl_description = "Check every object for problems that block export or that make the level behave differently in Bevy"
 
     def execute(self, context):
-        problems = []
-        for obj in bpy.data.objects:
-            problems.extend(validate_items(components_for(obj), obj.name))
-        if problems:
-            for problem in problems[:8]:
-                print("Bevy Components:", problem)
-            self.report({"ERROR"}, f"{len(problems)} issue(s); see Blender console: {problems[0]}")
+        issues = check_objects(bpy.data.objects)
+        for issue in issues:
+            print("Bevy Components:", describe(issue))
+        if not issues:
+            self.report({"INFO"}, "All Bevy components are valid")
+            return {"FINISHED"}
+        if context.window is not None and not bpy.app.background:
+            rows = [(issue.level, issue.obj.name, issue.message) for issue in issues]
+            context.window_manager.popup_menu(lambda menu, _context: draw_issues(menu.layout, rows, 20, "in the system console", select=True), title=f"Bevy Components: {issue_summary(issues)}", icon="CANCEL" if any(level == "ERROR" for level, _name, _message in rows) else "ERROR")
+        errors = [issue for issue in issues if issue.level == "ERROR"]
+        if errors:
+            self.report({"ERROR"}, f"{count(len(errors), 'problem')} {'blocks' if len(errors) == 1 else 'block'} export: {describe(errors[0])}")
             return {"CANCELLED"}
-        self.report({"INFO"}, "All Bevy components are valid")
+        self.report({"WARNING"}, f"{count(len(issues), 'warning')}: {describe(issues[0])}")
         return {"FINISHED"}
 
 
@@ -316,17 +345,30 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 column.prop(self, "uastc_zstd", text="Supercompression")
             if self.texture_compression != "DISABLED":
                 draw_encoder_status(body, context)
+        checks = getattr(self, "_checks", None)
+        if checks is None or checks[0] != self.selected_only:
+            checks = (self.selected_only, check_objects(context.selected_objects if self.selected_only else bpy.data.objects))
+            self._checks = checks
+        issues = checks[1]
+        header, body = layout.panel("BEVY_export_checks")
+        header.label(text="Checks")
+        if issues:
+            header.label(text=issue_summary(issues), icon="CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR")
+        if body:
+            if issues:
+                draw_issues(body, [(issue.level, issue.obj.name, issue.message) for issue in issues], 6, "in Validate All Objects", width=context.region.width if context.region else 300)
+            else:
+                body.label(text="No problems found", icon="CHECKMARK")
 
     def execute(self, context):
         if not hasattr(bpy.ops.export_scene, "gltf"):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
             return {"CANCELLED"}
         objects = context.selected_objects if self.selected_only else bpy.data.objects
-        problems = []
-        for obj in objects:
-            problems.extend(validate_items(components_for(obj), obj.name))
-        if problems:
-            self.report({"ERROR"}, f"Cannot export: {problems[0]}")
+        issues = check_objects(objects)
+        errors = [issue for issue in issues if issue.level == "ERROR"]
+        if errors:
+            self.report({"ERROR"}, f"Cannot export: {describe(errors[0])}")
             return {"CANCELLED"}
         encoder = None
         if self.texture_compression != "DISABLED":
@@ -353,9 +395,17 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                     self.report({"ERROR"}, f"Texture compression failed: {error}")
                     return {"CANCELLED"}
                 self.report({"INFO"}, f"Exported Bevy level with {message}: {self.filepath}")
+                self._report_warnings(issues)
                 return result
         self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
+        self._report_warnings(issues)
         return result
+
+    def _report_warnings(self, issues):
+        for issue in issues:
+            print("Bevy Components:", describe(issue))
+        if issues:
+            self.report({"WARNING"}, f"Exported with {count(len(issues), 'warning')}, see Validate All Objects: {describe(issues[0])}")
 
     def _compress_textures(self, context, path, encoder, directory):
         gltf, binary = read_glb(path.read_bytes())

@@ -18,6 +18,12 @@ class TestGeometry(unittest.TestCase):
         self.assertEqual((min(point[1] for point in points), max(point[1] for point in points)), (-3.0, 3.0))
         self.assertEqual((min(point[2] for point in points), max(point[2] for point in points)), (-2.0, 2.0))
 
+    def test_box_spans_its_corners(self):
+        lines = geometry.box_lines((-1, -2, -3), (1, 2, 3))
+        self.assertEqual(len(lines), 12)
+        self.assertEqual({point for line in lines for point in line}, {(x, y, z) for x in (-1, 1) for y in (-2, 2) for z in (-3, 3)})
+        self.assertTrue(all(sum(start != end for start, end in zip(*line)) == 1 for line in lines))
+
     def test_sphere_rings_reach_radius(self):
         points = [point for segment in geometry.sphere_lines(3, 12) for point in segment]
         self.assertTrue(all(abs(math.dist((0, 0, 0), point) - 3) < 1e-5 for point in points))
