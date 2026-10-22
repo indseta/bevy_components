@@ -6,9 +6,11 @@ from pathlib import Path
 
 import bpy
 from bpy.app.handlers import persistent
+from mathutils import Matrix
 
 from .metadata import EXTRAS_KEY, FIELD_VALUES, convert_value, field_data, serialize_items
 
+MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 PANEL_EXPANDED = True
 PANEL_DRAWN_EXPANDED = True
 
@@ -64,6 +66,48 @@ def component_of(obj, kind):
         if item.component_type == kind:
             return item
     return None
+
+
+def inherited(obj, kind):
+    while obj is not None:
+        item = component_of(obj, kind)
+        if item is not None:
+            return obj, item
+        obj = obj.parent
+    return None, None
+
+
+def children_map(objects):
+    children = {}
+    for obj in objects:
+        if obj.parent is not None:
+            children.setdefault(obj.parent, []).append(obj)
+    return children
+
+
+def subtree(obj, children, stop, instances=True):
+    found = []
+    pending = [(obj, None, children)]
+    while pending:
+        current, space, lookup = pending.pop()
+        matrix = current.matrix_world if space is None else space @ current.matrix_world
+        found.append((current, matrix))
+        branches = [(child, space, lookup) for child in lookup.get(current, ())]
+        collection = current.instance_collection if instances and current.instance_type == "COLLECTION" else None
+        if collection is not None:
+            members = set(collection.all_objects)
+            inner = matrix @ Matrix.Translation(-collection.instance_offset)
+            branches.extend((member, inner, children_map(members)) for member in members if member.parent not in members)
+        pending.extend(branch for branch in branches if not stop(branch[0]))
+    return found
+
+
+def has_faces(obj):
+    return obj.type in MESH_TYPES and (obj.type != "MESH" or len(obj.data.polygons) > 0)
+
+
+def mesh_sources(obj, children, kind, instances=True):
+    return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
 
 
 def sync_object(obj):

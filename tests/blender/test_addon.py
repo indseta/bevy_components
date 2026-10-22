@@ -261,6 +261,15 @@ class FakePanel:
         self.bl_label = "Bevy Components"
 
 
+def _collider_lines(obj, item, limit, batches=False):
+    found = addon.overlay.collider_lines(obj, item, limit, addon.system.children_map(bpy.data.objects))
+    return found if batches else [line for matrix, lines in found for line in lines]
+
+
+def _line_keys(lines):
+    return sorted(tuple(sorted(tuple(round(value, 5) for value in point) for point in line)) for line in lines)
+
+
 def _menu_context(obj=None, item=None):
     return SimpleNamespace(object=obj, bevy_component=item, scene=bpy.context.scene, space_data=SimpleNamespace(overlay=SimpleNamespace(show_overlays=True)))
 
@@ -995,12 +1004,12 @@ class TestViewport(unittest.TestCase):
         zone = add_empty("zone", (5, 0, 0))
         add_component(zone, "COLLIDER", collider_shape="SPHERE")
         select(self.obj)
-        colors = [color for obj, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)]
+        colors = [color for matrix, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)]
         self.assertEqual(colors, [addon.overlay.SENSOR_COLOR, addon.overlay.LOD_OUT_COLOR, addon.overlay.LOD_OUT_COLOR])
         self.settings.scope = "ALL"
         self.assertEqual(len(addon.overlay.preview_batches(bpy.context, self.settings)), 4)
         self.settings.visibility_ranges = False
-        self.assertEqual([obj.name for obj, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)], ["subject", "zone"])
+        self.assertEqual([matrix.translation.x for matrix, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)], [0.0, 5.0])
         self.settings.colliders = False
         self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
         self.settings.colliders = True
@@ -1011,22 +1020,93 @@ class TestViewport(unittest.TestCase):
         bpy.context.view_layer.update()
         add_component(self.obj, "VISIBILITY_RANGE", fade_in_start=0, fade_in_end=0, fade_out_start=10, fade_out_end=10)
         select(self.obj)
-        obj, lines, color, width = addon.overlay.preview_batches(bpy.context, self.settings)[0]
-        distances = [(obj.matrix_world @ Vector(point) - obj.matrix_world.translation).length for start, end in lines for point in (start, end)]
+        matrix, lines, color, width = addon.overlay.preview_batches(bpy.context, self.settings)[0]
+        distances = [(matrix @ Vector(point) - matrix.translation).length for start, end in lines for point in (start, end)]
         self.assertTrue(all(abs(distance - 10) < 1e-4 for distance in distances))
 
     def test_mesh_previews_respect_edge_limit(self):
         collider = add_component(self.obj, "COLLIDER", collider_shape="TRIMESH")
-        self.assertEqual(len(addon.overlay.collider_lines(self.obj, collider, 2000)), len(self.obj.data.edges))
+        self.assertEqual(len(_collider_lines(self.obj, collider, 2000)), len(self.obj.data.edges))
         dense = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "dense")
-        self.assertEqual(len(addon.overlay.collider_lines(dense, collider, 64)), 12)
-        collider.collider_shape = "CONVEX"
-        self.assertEqual(len(addon.overlay.collider_lines(dense, collider, 2000)), 12)
+        add_component(dense, "COLLIDER", collider_shape="TRIMESH")
+        self.assertEqual(len(_collider_lines(dense, collider, 64)), 12)
+        self.assertEqual(addon.overlay._label_lines(dense, SimpleNamespace(colliders=True, visibility_ranges=False, max_mesh_edges=64), addon.system.children_map(bpy.data.objects)), ["Collider · Trimesh · AABB preview (mesh edge limit)"])
 
     def test_labels(self):
         add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.25, collider_height=2)
         add_component(self.obj, "VISIBILITY_RANGE")
-        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings), ["Collider · Capsule · r=0.25, cylinder=2m", "LOD · in 0–0m · out 20–25m"])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Collider · Capsule · r=0.25, cylinder=2m", "LOD · in 0–0m · out 20–25m"])
+
+    def test_convex_hull_preview_is_the_real_hull(self):
+        collider = add_component(self.obj, "COLLIDER", collider_shape="CONVEX")
+        self.assertEqual(_line_keys(_collider_lines(self.obj, collider, 2000)), _line_keys([(self.obj.data.vertices[start].co, self.obj.data.vertices[end].co) for start, end in self.obj.data.edge_keys]))
+        rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", subdivisions=1)
+        add_component(rock, "COLLIDER", collider_shape="CONVEX")
+        self.assertEqual(len(_collider_lines(rock, collider, 2000)), 30)
+        monkey = add_mesh(bpy.ops.mesh.primitive_monkey_add, "monkey")
+        add_component(monkey, "COLLIDER", collider_shape="CONVEX")
+        lines = _collider_lines(monkey, collider, 2000)
+        corners = {tuple(round(value, 5) for value in point) for line in lines for point in line}
+        vertices = {tuple(round(value, 5) for value in vertex.co) for vertex in monkey.data.vertices}
+        self.assertTrue(corners < vertices)
+        self.assertLess(len(corners), len(vertices) / 2)
+        for axis in range(3):
+            self.assertAlmostEqual(min(corner[axis] for corner in corners), min(vertex[axis] for vertex in vertices), places=4)
+            self.assertAlmostEqual(max(corner[axis] for corner in corners), max(vertex[axis] for vertex in vertices), places=4)
+        self.assertEqual(addon.overlay._label_lines(monkey, self.settings, {}), ["Collider · Convex · 1 hull"])
+
+    def test_convex_hull_preview_has_one_hull_per_material(self):
+        self.obj.data.materials.append(bpy.data.materials.new("first"))
+        self.obj.data.materials.append(bpy.data.materials.new("second"))
+        self.obj.data.polygons[0].material_index = 1
+        collider = add_component(self.obj, "COLLIDER", collider_shape="CONVEX")
+        self.assertEqual(len(_collider_lines(self.obj, collider, 2000)), 12 + 4)
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Collider · Convex · 2 hulls, one per mesh part"])
+
+    def test_convex_hull_preview_follows_mesh_edits(self):
+        collider = add_component(self.obj, "COLLIDER", collider_shape="CONVEX")
+        before = _collider_lines(self.obj, collider, 2000)
+        self.obj.data.vertices[0].co *= 3
+        after = _collider_lines(self.obj, collider, 2000)
+        self.assertNotEqual(_line_keys(before), _line_keys(after))
+        self.assertIn(tuple(round(value, 5) for value in self.obj.data.vertices[0].co), {tuple(round(value, 5) for value in point) for line in after for point in line})
+
+    def test_mesh_colliders_on_empties_preview_their_child_meshes(self):
+        holder = add_empty("holder", (4, 0, 0))
+        collider = add_component(holder, "COLLIDER", collider_shape="CONVEX")
+        select(holder)
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(holder, self.settings, {}), ["Collider · Convex · no mesh, so no collider"])
+        child = add_mesh(bpy.ops.mesh.primitive_cube_add, "child", location=(1, 2, 3))
+        separate = add_mesh(bpy.ops.mesh.primitive_cube_add, "separate")
+        add_component(separate, "COLLIDER", collider_shape="SPHERE")
+        for obj in (child, separate):
+            obj.parent = holder
+        bpy.context.view_layer.update()
+        select(holder)
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        self.assertEqual([tuple(matrix.translation) for matrix, lines, color, width in batches], [tuple(child.matrix_world.translation)])
+        self.assertEqual(len(batches[0][1]), 12)
+        collider.collider_shape = "TRIMESH"
+        self.assertEqual(len(addon.overlay.preview_batches(bpy.context, self.settings)[0][1]), 12)
+
+    def test_mesh_colliders_preview_collection_instances(self):
+        prop = bpy.data.collections.new("prop")
+        rock = bpy.data.objects.new("prop_rock", bpy.data.meshes.new("prop_rock"))
+        rock.data.from_pydata([(0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)], [], [(0, 1, 2), (0, 1, 3), (0, 2, 3), (1, 2, 3)])
+        rock.matrix_world = Matrix.Translation((0, 0, 1))
+        prop.objects.link(rock)
+        holder = add_empty("holder", (5, 0, 0))
+        holder.instance_type = "COLLECTION"
+        holder.instance_collection = prop
+        collider = add_component(holder, "COLLIDER", collider_shape="CONVEX")
+        bpy.context.view_layer.update()
+        batches = _collider_lines(holder, collider, 2000, batches=True)
+        self.assertEqual([tuple(matrix.translation) for matrix, lines in batches], [(5.0, 0.0, 1.0)])
+        self.assertEqual(len(batches[0][1]), 6)
+        self.assertEqual(addon.validation.check_object(holder, bpy.data.objects), [])
+        bpy.data.objects.remove(rock)
+        bpy.data.collections.remove(prop)
 
     def test_draws_lines_on_gpu(self):
         if not hasattr(gpu, "init"):
@@ -1048,13 +1128,201 @@ class TestViewport(unittest.TestCase):
                 with gpu.matrix.push_pop():
                     gpu.matrix.load_matrix(Matrix.Identity(4))
                     gpu.matrix.load_projection_matrix(Matrix.Identity(4))
-                    for obj, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings):
-                        addon.overlay._draw_lines(shader, obj, lines, color, width=width)
+                    for matrix, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings):
+                        addon.overlay._draw_lines(shader, matrix, lines, color, width=width)
                 pixels = framebuffer.read_color(0, 0, 64, 64, 4, 0, "FLOAT")
         finally:
             offscreen.free()
         pixels.dimensions = 64 * 64 * 4
         self.assertTrue(any(value > 0.1 for value in pixels.to_list()[1::4]))
+
+
+class TestValidation(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+
+    def _messages(self, obj=None):
+        issues = addon.validation.check_objects(bpy.data.objects) if obj is None else addon.validation.check_object(obj, bpy.data.objects)
+        return [addon.validation.describe(issue) for issue in issues]
+
+    def test_sample_level_is_clean(self):
+        build_sample_level()
+        self.assertEqual(self._messages(), [])
+
+    def test_mesh_colliders_need_a_mesh(self):
+        holder = add_empty("holder", (0, 0, 0))
+        collider = add_component(holder, "COLLIDER", collider_shape="CONVEX")
+        self.assertEqual(self._messages(), ["holder: No mesh on this object or under it, so no Convex Hull collider is built"])
+        collider.collider_shape = "CUBOID"
+        self.assertEqual(self._messages(), [])
+        collider.collider_shape = "TRIMESH"
+        child = add_mesh(bpy.ops.mesh.primitive_cube_add, "child")
+        child.parent = holder
+        self.assertEqual(self._messages(), [])
+        add_component(child, "COLLIDER", collider_shape="SPHERE")
+        self.assertEqual(self._messages(), ["holder: No mesh on this object or under it, so no Triangle Mesh collider is built"])
+        curve = bpy.data.objects.new("rail", bpy.data.curves.new("rail", "CURVE"))
+        bpy.context.scene.collection.objects.link(curve)
+        curve.parent = holder
+        self.assertEqual(self._messages(), [])
+
+    def test_visibility_ranges_need_a_mesh(self):
+        holder = add_empty("holder", (0, 0, 0))
+        add_component(holder, "VISIBILITY_RANGE")
+        self.assertEqual(self._messages(), ["holder: No mesh on this object or under it to show or hide"])
+        child = add_mesh(bpy.ops.mesh.primitive_cube_add, "child")
+        child.parent = holder
+        self.assertEqual(self._messages(), [])
+
+    def test_never_visible_range(self):
+        obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "hidden")
+        add_component(obj, "VISIBILITY_RANGE", fade_out_start=0, fade_out_end=0)
+        self.assertEqual(self._messages(), ["hidden: Never visible, because Fade Out End is 0 m"])
+
+    def test_levels_of_detail_at_the_same_spot(self):
+        lod0 = add_mesh(bpy.ops.mesh.primitive_cube_add, "lod0", location=(1, 2, 3))
+        lod1 = add_mesh(bpy.ops.mesh.primitive_cube_add, "lod1", location=(1, 2, 3))
+        lod2 = add_mesh(bpy.ops.mesh.primitive_cube_add, "lod2", location=(1, 2, 3))
+        elsewhere = add_mesh(bpy.ops.mesh.primitive_cube_add, "elsewhere", location=(9, 2, 3))
+        for obj, preset in ((lod0, "NEAR"), (lod1, "MID"), (lod2, "FAR"), (elsewhere, "FAR")):
+            add_component(obj, "VISIBILITY_RANGE")
+            apply_lod_preset(obj, preset)
+        self.assertEqual(self._messages(), [])
+        lod1.bevy_component_data.components[0].fade_in_start = 30
+        lod1.bevy_component_data.components[0].fade_in_end = 35
+        self.assertEqual(self._messages(), ["lod1: Gap after lod0: nothing shows from 25 to 30 m"])
+        lod1.bevy_component_data.components[0].fade_in_start = 10
+        lod1.bevy_component_data.components[0].fade_in_end = 12
+        self.assertEqual(self._messages(), ["lod1: Shows together with lod0 from 12 to 20 m"])
+        lod1.bevy_component_data.components[0].fade_in_start = 21
+        lod1.bevy_component_data.components[0].fade_in_end = 24
+        self.assertEqual(self._messages(), ["lod1: Fades in over 21–24 m but lod0 fades out over 20–25 m, so they do not crossfade"])
+        self.assertEqual(self._messages(lod1), ["lod1: Fades in over 21–24 m but lod0 fades out over 20–25 m, so they do not crossfade"])
+        self.assertEqual(self._messages(lod0), [])
+
+    def test_dynamic_bodies_need_a_collider(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate")
+        add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        self.assertEqual(self._messages(), ["crate: Dynamic body has no collider on it or under it, so it has no mass and collides with nothing"])
+        handle = add_empty("handle", (0, 0, 0))
+        handle.parent = crate
+        add_component(handle, "COLLIDER", collider_shape="SPHERE")
+        self.assertEqual(self._messages(), [])
+        bpy.data.objects.remove(handle)
+        cart = add_empty("cart", (0, 0, 0))
+        add_component(cart, "COLLIDER", collider_shape="CONVEX")
+        crate.parent = cart
+        self.assertEqual(self._messages(), [])
+
+    def test_nested_rigid_bodies(self):
+        cart = add_empty("cart", (0, 0, 0))
+        body = add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel")
+        wheel.parent = cart
+        add_component(wheel, "COLLIDER", collider_shape="CONVEX")
+        add_component(wheel, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        self.assertEqual(self._messages(), ["cart: Dynamic body has no collider on it or under it, so it has no mass and collides with nothing", "wheel: Moves on its own instead of with cart. Remove this Rigid Body to make cart one compound body"])
+        body.rigid_body_kind = "STATIC"
+        self.assertEqual(self._messages(), [])
+
+    def test_triangle_meshes_on_dynamic_bodies(self):
+        rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock")
+        add_component(rock, "COLLIDER", collider_shape="TRIMESH")
+        body = add_component(rock, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        self.assertEqual(self._messages(), ["rock: Triangle meshes collide poorly on Dynamic bodies, use Convex Hull"])
+        body.rigid_body_kind = "KINEMATIC"
+        self.assertEqual(self._messages(), [])
+        body.rigid_body_kind = "DYNAMIC"
+        rock.bevy_component_data.components[0].collider_shape = "CONVEX"
+        self.assertEqual(self._messages(), [])
+        boulders = add_empty("boulders", (0, 0, 0))
+        add_component(boulders, "COLLIDER", collider_shape="TRIMESH")
+        rock.parent = boulders
+        rock.bevy_component_data.components[0].enabled = False
+        self.assertEqual(self._messages(), ["boulders: Triangle meshes collide poorly on Dynamic bodies such as rock, use Convex Hull"])
+
+    def test_colliders_rotated_inside_uneven_scale(self):
+        shelf = add_empty("shelf", (0, 0, 0))
+        board = add_empty("board", (0, 0, 0))
+        add_component(board, "COLLIDER", collider_shape="CUBOID")
+        board.parent = shelf
+        shelf.scale = (2, 1, 1)
+        board.rotation_euler = (0, 0, 0.5)
+        bpy.context.view_layer.update()
+        self.assertEqual(self._messages(), ["board: This is rotated inside shelf, which is scaled unevenly, so the game sizes its collider wrong. Apply scale to shelf"])
+        shelf.scale = (2, 2, 2)
+        bpy.context.view_layer.update()
+        self.assertEqual(self._messages(), [])
+        shelf.scale = (2, 1, 1)
+        board.rotation_euler = (0, 0, 0)
+        shelf.rotation_euler = (0.3, 0.2, 0.1)
+        bpy.context.view_layer.update()
+        self.assertEqual(self._messages(), [])
+        board.bevy_component_data.components[0].collider_shape = "CONVEX"
+        plank = add_mesh(bpy.ops.mesh.primitive_cube_add, "plank", rotation=(0, 0, 0.5))
+        plank.parent = board
+        bpy.context.view_layer.update()
+        self.assertEqual(self._messages(), ["board: plank is rotated inside shelf, which is scaled unevenly, so the game sizes its collider wrong. Apply scale to shelf"])
+
+    def test_custom_component_type_paths(self):
+        marker = add_empty("marker", (0, 0, 0))
+        add_component(marker, "CUSTOM", custom_type="my_game::Wrapper<f32>")
+        add_component(marker, "CUSTOM", custom_type="my_game::Health ")
+        add_component(marker, "CUSTOM", custom_type="my_game::Wrapper<f32>")
+        self.assertEqual(self._messages(), ["marker: \"my_game::Health \" is not a Rust type path such as my_game::Health", "marker: Added more than once, but an entity holds only one my_game::Wrapper<f32>"])
+
+    def test_errors_and_warnings_from_operators(self):
+        holder = add_empty("holder", (0, 0, 0))
+        add_component(holder, "COLLIDER", collider_shape="CONVEX")
+        self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "level.glb"
+            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(path)), {"FINISHED"})
+            self.assertEqual(json.loads(read_gltf(path)["nodes"][0]["extras"]["bevy_components"])["components"][0]["shape"], "convex")
+            item = add_component(holder, "CUSTOM", custom_json="{broken")
+            with self.assertRaisesRegex(RuntimeError, "1 problem blocks export: holder: invalid JSON in Custom Component"):
+                bpy.ops.bevy_components.validate()
+            path.unlink()
+            with self.assertRaisesRegex(RuntimeError, "Cannot export: holder: invalid JSON in Custom Component"):
+                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+            self.assertFalse(path.exists())
+            item.enabled = False
+
+    def test_select_object(self):
+        first = add_mesh(bpy.ops.mesh.primitive_cube_add, "first")
+        second = add_mesh(bpy.ops.mesh.primitive_cube_add, "second")
+        select(first)
+        self.assertEqual(bpy.ops.bevy_components.select_object(name="second"), {"FINISHED"})
+        self.assertEqual((bpy.context.view_layer.objects.active, first.select_get(), second.select_get()), (second, False, True))
+        self.assertEqual(bpy.ops.bevy_components.select_object(name="missing"), {"CANCELLED"})
+
+    def test_panel_shows_warnings_on_their_component(self):
+        holder = add_empty("holder", (0, 0, 0))
+        add_component(holder, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        add_component(holder, "COLLIDER", collider_shape="CONVEX")
+        add_component(holder, "CUSTOM", custom_json="{broken")
+        select(holder)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        text = " ".join(panel.layout.texts())
+        self.assertIn("No mesh on this object or under it, so no Convex Hull collider is built", text)
+        self.assertNotIn("invalid JSON", text)
+        icons = [bound.get("icon") for name, bound, layout in panel.layout.calls if name == "label" and bound.get("text") == ""]
+        self.assertEqual(icons, ["ERROR", "CANCEL"])
+
+    def test_export_dialog_lists_problems(self):
+        properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
+        operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
+        addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+        self.assertIn("No problems found", operator.layout.texts())
+        for index in range(8):
+            add_component(add_empty(f"holder_{index}", (index, 0, 0)), "VISIBILITY_RANGE")
+        operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
+        addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+        texts = operator.layout.texts()
+        self.assertIn("8 warnings", texts)
+        self.assertIn("2 more in Validate All Objects", texts)
+        self.assertIn("holder_0: No mesh on this object or under it to show or hide", " ".join(texts))
 
 
 class TestExport(unittest.TestCase):
