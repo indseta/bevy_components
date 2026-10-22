@@ -55,6 +55,9 @@ pub struct ImportedComponents {
 pub struct DecodedGltfExtras;
 
 #[derive(Component)]
+pub struct DefaultStaticBody;
+
+#[derive(Component)]
 pub struct ProcessedMesh;
 
 #[derive(Component)]

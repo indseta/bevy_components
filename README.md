@@ -62,6 +62,8 @@ The exporter can compress textures to KTX2 and embed them in the GLB, so the lev
    - **UASTC**: best quality, larger files. **Supercompression** shrinks them on disk.
    - **Automatic**: UASTC for normal maps, metallic-roughness, occlusion and textures set to Closest interpolation, ETC1S for other color textures.
 
+A 4K texture takes 10 to 25 seconds to encode, and Blender does not respond until the export is done. The exporter encodes up to four textures at once and caches the results in the add-on's user folder (up to 2 GB), so later exports only encode textures that changed. Leave compression Disabled while you iterate for the fastest exports.
+
 Base color, normal, metallic-roughness, occlusion and emissive textures are converted with mipmaps and stored with the `KHR_texture_basisu` glTF extension. Samplers, UV maps, texture transforms, alpha modes and color spaces are kept, and a texture shared by several materials is stored once. Textures whose size is not a multiple of 4 pixels are scaled up to one, and the export warns when it does. Your Blender images are not changed.
 
 Loading needs no extra code. `BlenderBevyComponentsPlugin` registers a GLB loader that converts the textures to a format the GPU supports (ASTC, BC7 or ETC2, otherwise uncompressed RGBA) and passes the file on to Bevy's glTF loader, so `asset_server.load("level.glb#Scene0")` works the same for compressed and ordinary levels. It relies on Bevy's default `ktx2` feature; `basis-universal` is not needed.

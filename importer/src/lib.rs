@@ -12,6 +12,6 @@ pub struct BlenderBevyComponentsPlugin;
 impl Plugin for BlenderBevyComponentsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(texture::TexturePlugin);
-        app.add_systems(Update, (system::read_gltf_components, system::apply_mesh_components, system::build_colliders).chain());
+        app.add_systems(Update, (system::read_gltf_components, system::apply_default_bodies, system::apply_mesh_components, system::build_colliders).chain());
     }
 }

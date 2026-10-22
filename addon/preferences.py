@@ -11,6 +11,13 @@ def encoder_path(context):
     return bpy.path.abspath(addon.preferences.ktx_path)
 
 
+def texture_cache():
+    try:
+        return bpy.utils.extension_path_user(__package__, path="texture_cache", create=True)
+    except (OSError, ValueError):
+        return None
+
+
 def draw_encoder_status(layout, context):
     try:
         path, version = check_encoder(encoder_path(context))

@@ -9,7 +9,7 @@ from bpy_extras.io_utils import ExportHelper
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, EncoderError, check_encoder, encode
 from .metadata import validate_items
-from .preferences import draw_encoder_status, encoder_path
+from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
 from .system import components_for, copy_component, image_to_png, redraw_viewports, sync_object
 
@@ -369,7 +369,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         window_manager = context.window_manager
         window_manager.progress_begin(0, max(len(jobs), 1))
         try:
-            encoded = encode(encoder, jobs, settings, directory, progress=window_manager.progress_update)
+            encoded = encode(encoder, jobs, settings, directory, progress=window_manager.progress_update, cache=texture_cache(), check=check_encoded)
         finally:
             window_manager.progress_end()
         for job, data in zip(jobs, encoded):
