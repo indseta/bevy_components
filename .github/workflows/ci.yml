@@ -66,7 +66,7 @@ jobs:
                   tag="addon_$ADDON_VERSION"
                   asset="dist/bevy_components_$ADDON_VERSION.zip"
                   if gh release view "$tag" > /dev/null 2>&1; then
-                      gh release upload "$tag" "$asset" --clobber
+                      echo "$tag is already released, bump the version to publish a new one"
                   else
                       gh release create "$tag" "$asset" --target "$GITHUB_SHA" --title "Bevy Components addon ${ADDON_VERSION//_/.}" --notes "Blender extension. Install with Edit > Preferences > Get Extensions > Install from Disk."
                   fi
@@ -75,7 +75,7 @@ jobs:
                   tag="importer_$IMPORTER_VERSION"
                   asset="dist/bevy_components_importer_$IMPORTER_VERSION.zip"
                   if gh release view "$tag" > /dev/null 2>&1; then
-                      gh release upload "$tag" "$asset" --clobber
+                      echo "$tag is already released, bump the version to publish a new one"
                   else
                       gh release create "$tag" "$asset" --target "$GITHUB_SHA" --latest=false --title "Bevy Components importer ${IMPORTER_VERSION//_/.}" --notes "Rust crate source for Bevy 0.20 and Avian 0.8. Unzip and add it as a path dependency."
                   fi

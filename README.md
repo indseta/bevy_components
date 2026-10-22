@@ -58,7 +58,7 @@ python scripts/build_addon.py
 cargo check --manifest-path importer/Cargo.toml
 ```
 
-`addon/` holds the Blender extension and `importer/` the Rust crate. Every push to `main` that passes CI publishes both as GitHub releases.
+`addon/` holds the Blender extension and `importer/` the Rust crate. When CI passes on `main`, a new GitHub release is published for the addon or importer whenever its version number changes.
 
 ## License
 
