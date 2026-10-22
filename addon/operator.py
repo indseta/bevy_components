@@ -10,7 +10,7 @@ from .compression import check_encoded, embed_textures, plan_textures, read_glb,
 from .encoder import HINT, EncoderError, check_encoder, encode
 from .metadata import validate_items
 from .preferences import draw_encoder_status, encoder_path, texture_cache
-from .property import COMPONENT_LABELS, COMPONENT_TYPES
+from .property import COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
 from .system import components_for, copy_component, image_to_png, redraw_viewports, sync_object
 
 TEXTURE_COMPRESSION = [
@@ -154,7 +154,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
             return {"CANCELLED"}
         item = items[self.index]
         for field in item.bl_rna.properties:
-            if field.identifier not in {"rna_type", "name", "component_type", "enabled", "show_expanded"} and not field.is_readonly:
+            if field.identifier not in {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers"} and not field.is_readonly:
                 item.property_unset(field.identifier)
         sync_object(context.object)
         redraw_viewports()
@@ -223,6 +223,33 @@ class BEVY_OT_lod_preset(bpy.types.Operator):
         item.fade_in_end = fade_in_end
         item.fade_out_start = fade_out_start
         item.fade_out_end = fade_out_end
+        sync_object(context.object)
+        redraw_viewports()
+        return {"FINISHED"}
+
+
+class BEVY_OT_set_collision_layers(bpy.types.Operator):
+    bl_idname = "bevy_components.set_collision_layers"
+    bl_label = "Set Collision Layers"
+    bl_description = "Turn every collision layer in the row on or off"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(name="Index")
+    layers: EnumProperty(name="Layers", items=[
+        ("MEMBERSHIPS", "Belongs To", "Collision layers the collider is on"),
+        ("FILTERS", "Collides With", "Collision layers the collider touches"),
+    ])
+    enable: BoolProperty(name="Enable", default=True)
+
+    @classmethod
+    def poll(cls, context):
+        return _editable(context)
+
+    def execute(self, context):
+        items = _components(context, self.index)
+        if items is None or items[self.index].component_type != "COLLIDER":
+            return {"CANCELLED"}
+        setattr(items[self.index], f"collider_{self.layers.lower()}", (self.enable,) * LAYER_COUNT)
         sync_object(context.object)
         redraw_viewports()
         return {"FINISHED"}

@@ -1,4 +1,4 @@
-use avian3d::prelude::{Collider, RigidBody, Sensor};
+use avian3d::prelude::{Collider, CollisionLayers, Friction, LayerMask, Mass, NoAutoMass, Restitution, RigidBody, Sensor};
 use bevy::{camera::visibility::VisibilityRange, gltf::GltfExtras, prelude::*};
 use serde_json::Value;
 use crate::{component::*, data::*};
@@ -23,6 +23,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         let mut components = ImportedComponents::default();
         let mut custom = BlenderCustomComponents::default();
         let mut rigid_body = None;
+        let mut mass = None;
 
         for component in exported.components {
             match component {
@@ -33,14 +34,15 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         warn!("Invalid visibility range on {:?}", name);
                     }
                 }
-                ExportedComponent::Collider { shape, size, radius, height, sensor } => {
+                ExportedComponent::Collider { shape, size, radius, height, sensor, friction, restitution, memberships, filters } => {
                     if let Some(shape) = ColliderShape::from_str(&shape) {
-                        components.collider = Some(ColliderSpec { shape, size, radius, height, sensor });
+                        let layers = (memberships.is_some() || filters.is_some()).then(|| CollisionLayers::from_bits(memberships.unwrap_or(LayerMask::DEFAULT.0), filters.unwrap_or(LayerMask::ALL.0)));
+                        components.collider = Some(ColliderSpec { shape, size, radius, height, sensor, friction, restitution, layers });
                     } else {
                         warn!("Unsupported collider shape on {:?}", name);
                     }
                 }
-                ExportedComponent::RigidBody { kind } => {
+                ExportedComponent::RigidBody { kind, mass: body_mass } => {
                     rigid_body = match kind.as_str() {
                         "static" => Some(RigidBody::Static),
                         "dynamic" => Some(RigidBody::Dynamic),
@@ -50,6 +52,13 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                             None
                         }
                     };
+                    mass = match body_mass {
+                        Some(value) if value <= 0.0 => {
+                            warn!("Invalid mass on {:?}", name);
+                            None
+                        }
+                        _ => body_mass,
+                    };
                 }
                 ExportedComponent::Custom { type_path, data } => custom.0.push(BlenderCustomComponent { type_path, data }),
                 ExportedComponent::Unsupported => warn!("Unsupported Bevy component on {:?}", name),
@@ -58,10 +67,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
 
         let has_collider = components.collider.is_some();
         if let Some(spec) = &components.collider && let Some(collider) = primitive_collider(spec) {
-            commands.entity(entity).insert(collider);
-            if spec.sensor {
-                commands.entity(entity).insert(Sensor);
-            }
+            insert_collider(&mut commands.entity(entity), collider, spec);
         }
         commands.entity(entity).insert(components);
         if !custom.0.is_empty() {
@@ -69,6 +75,9 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         }
         if let Some(body) = rigid_body {
             commands.entity(entity).insert(body);
+            if let Some(mass) = mass {
+                commands.entity(entity).insert((Mass(mass), NoAutoMass));
+            }
         } else if has_collider {
             commands.entity(entity).insert(DefaultStaticBody);
         }
@@ -129,13 +138,26 @@ pub fn build_colliders(mut commands: Commands, candidates: Query<(Entity, &Mesh3
         let mut target = commands.entity(entity);
         target.remove::<PendingMeshCollider>();
         if let Some(collider) = collider {
-            target.insert(collider);
-            if spec.sensor {
-                target.insert(Sensor);
-            }
+            insert_collider(&mut target, collider, spec);
         } else {
             warn!("Could not create collider from mesh on entity {:?}", entity);
         }
+    }
+}
+
+fn insert_collider(target: &mut EntityCommands, collider: Collider, spec: &ColliderSpec) {
+    target.insert(collider);
+    if spec.sensor {
+        target.insert(Sensor);
+    }
+    if let Some(friction) = spec.friction {
+        target.insert(Friction::new(friction));
+    }
+    if let Some(restitution) = spec.restitution {
+        target.insert(Restitution::new(restitution));
+    }
+    if let Some(layers) = spec.layers {
+        target.insert(layers);
     }
 }
 

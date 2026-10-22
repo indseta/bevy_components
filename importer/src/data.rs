@@ -21,9 +21,14 @@ pub enum ExportedComponent {
         radius: f32,
         height: f32,
         sensor: bool,
+        friction: Option<f32>,
+        restitution: Option<f32>,
+        memberships: Option<u32>,
+        filters: Option<u32>,
     },
     RigidBody {
         kind: String,
+        mass: Option<f32>,
     },
     Custom {
         type_path: String,

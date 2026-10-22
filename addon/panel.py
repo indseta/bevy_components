@@ -4,8 +4,8 @@ import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
 from .metadata import validate_items
-from .operator import BEVY_OT_lod_preset, BEVY_OT_remove_component
-from .property import COMPONENT_LABELS
+from .operator import BEVY_OT_lod_preset, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
+from .property import COMPONENT_LABELS, LAYER_COUNT
 from .system import component_of, panel_body_drawn, panel_header_drawn
 
 
@@ -60,13 +60,41 @@ def _draw_collider(layout, obj, index, item):
         column.prop(item, "collider_radius")
         column.prop(item, "collider_height")
     layout.prop(item, "collider_sensor")
+    column = layout.column(align=True)
+    column.active = not item.collider_sensor
+    column.prop(item, "collider_friction")
+    column.prop(item, "collider_restitution")
     rigid_body = component_of(obj, "RIGID_BODY")
     if item.collider_shape == "TRIMESH" and rigid_body is not None and rigid_body.rigid_body_kind != "STATIC":
         layout.label(text="Triangle meshes work best on static bodies", icon="INFO")
+    header, body = layout.panel_prop(item, "show_layers")
+    header.label(text="Collision Layers")
+    if body is None:
+        return
+    for layers, prop, text in (("MEMBERSHIPS", "collider_memberships", "Belongs To"), ("FILTERS", "collider_filters", "Collides With")):
+        buttons = _labeled_row(body, text)
+        for enable, label in ((True, "All"), (False, "None")):
+            button = buttons.operator(BEVY_OT_set_collision_layers.bl_idname, text=label)
+            button.index = index
+            button.layers = layers
+            button.enable = enable
+        grid = body.grid_flow(row_major=True, columns=8, even_columns=True, even_rows=True, align=True)
+        grid.use_property_split = False
+        for layer in range(LAYER_COUNT):
+            grid.prop(item, prop, index=layer, text=str(layer), toggle=True)
+    if not any(item.collider_memberships) or not any(item.collider_filters):
+        body.label(text="Needs a layer in both rows to touch anything", icon="INFO")
 
 
 def _draw_rigid_body(layout, obj, index, item):
     layout.prop(item, "rigid_body_kind")
+    if item.rigid_body_kind != "DYNAMIC":
+        return
+    row = layout.row(heading="Mass")
+    row.prop(item, "rigid_body_use_mass", text="")
+    mass = row.row()
+    mass.active = item.rigid_body_use_mass
+    mass.prop(item, "rigid_body_mass", text="")
 
 
 def _draw_custom(layout, obj, index, item):

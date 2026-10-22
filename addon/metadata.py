@@ -21,9 +21,17 @@ def serialize_component(item):
             "radius": float(item.collider_radius),
             "height": float(item.collider_height),
             "sensor": bool(item.collider_sensor),
+            "friction": float(item.collider_friction),
+            "restitution": float(item.collider_restitution),
+            "memberships": _layer_bits(item.collider_memberships),
+            "filters": _layer_bits(item.collider_filters),
         }
     if kind == "RIGID_BODY":
-        return {"type": "rigid_body", "kind": item.rigid_body_kind.lower()}
+        return {
+            "type": "rigid_body",
+            "kind": item.rigid_body_kind.lower(),
+            "mass": float(item.rigid_body_mass) if item.rigid_body_kind == "DYNAMIC" and item.rigid_body_use_mass else None,
+        }
     if kind == "CUSTOM":
         try:
             value = json.loads(item.custom_json)
@@ -31,6 +39,10 @@ def serialize_component(item):
             raise ValueError(f"Custom JSON for {item.custom_type} is invalid: {error}") from error
         return {"type": "custom", "type_path": item.custom_type, "data": value}
     raise ValueError(f"Unsupported component: {kind}")
+
+
+def _layer_bits(layers):
+    return sum(1 << index for index, enabled in enumerate(layers) if enabled)
 
 
 def serialize_items(items):

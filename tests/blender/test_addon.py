@@ -14,40 +14,42 @@ import bpy
 import gpu
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, export_sample_level, install_addon, read_gltf, select, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, export_sample_level, install_addon, layers, read_gltf, select, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
 CHILD_LAYOUTS = {"row", "column", "box", "split", "grid_flow", "column_flow"}
-DEFAULT_COLLIDER = {"size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": False}
+DEFAULT_COLLIDER = {"size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": False, "friction": 0.5, "restitution": 0.0, "memberships": 1, "filters": 4294967295}
+STATIC_BODY = {"type": "rigid_body", "kind": "static", "mass": None}
+DYNAMIC_BODY = {"type": "rigid_body", "kind": "dynamic", "mass": None}
 EXPECTED_COMPONENTS = {
     "ground": [
         {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
-        {"type": "rigid_body", "kind": "static"},
+        STATIC_BODY,
     ],
     "crate": [
-        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [2.0, 2.0, 2.0]}},
-        {"type": "rigid_body", "kind": "dynamic"},
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [2.0, 2.0, 2.0], "friction": 0.8, "restitution": 0.1}},
+        DYNAMIC_BODY,
         {"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False},
     ],
     "crate_copy": [
-        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [2.0, 2.0, 2.0]}},
-        {"type": "rigid_body", "kind": "dynamic"},
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [2.0, 2.0, 2.0], "friction": 0.8, "restitution": 0.1}},
+        DYNAMIC_BODY,
         {"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False},
     ],
     "ball": [
         {"type": "collider", "shape": "sphere", **DEFAULT_COLLIDER},
-        {"type": "rigid_body", "kind": "kinematic"},
+        {"type": "rigid_body", "kind": "kinematic", "mass": None},
     ],
     "pillar": [
         {"type": "collider", "shape": "capsule", **{**DEFAULT_COLLIDER, "radius": 0.4, "height": 1.2}},
     ],
     "rock": [
         {"type": "collider", "shape": "convex", **DEFAULT_COLLIDER},
-        {"type": "rigid_body", "kind": "dynamic"},
+        {**DYNAMIC_BODY, "mass": 25.0},
     ],
     "trigger_zone": [
-        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [1.0, 2.0, 3.0], "sensor": True}},
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [1.0, 2.0, 3.0], "sensor": True, "memberships": 4, "filters": 2}},
     ],
     "pickup_zone": [
         {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 1.5, "sensor": True}},
@@ -74,13 +76,33 @@ EXPECTED_COMPONENTS = {
         {"type": "visibility_range", "start": [20.0, 25.0], "end": [100.0, 120.0], "use_aabb": False},
     ],
     "cart": [
-        {"type": "rigid_body", "kind": "dynamic"},
+        {**DYNAMIC_BODY, "mass": 12.0},
     ],
     "cart_shape": [
         {"type": "collider", "shape": "cuboid", **DEFAULT_COLLIDER},
     ],
     "cart_handle": [
         {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.25}},
+    ],
+    "bouncy_ball": [
+        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.3, "restitution": 1.0}},
+        DYNAMIC_BODY,
+    ],
+    "ghost": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "memberships": 2, "filters": 2}},
+        DYNAMIC_BODY,
+    ],
+    "ramp": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [6.0, 0.2, 2.0]}},
+        STATIC_BODY,
+    ],
+    "ice_block": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.5, 0.5, 0.5], "friction": 0.0}},
+        DYNAMIC_BODY,
+    ],
+    "rubber_block": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.5, 0.5, 0.5], "friction": 1.0}},
+        DYNAMIC_BODY,
     ],
 }
 
@@ -228,6 +250,10 @@ class FakeLayout:
         return [(bound.get("text", ""), bound["properties"], layout.is_enabled()) for name, bound, layout in self.calls if name == "operator"]
 
 
+def _prop_layout(layout, prop):
+    return next(child for name, bound, child in layout.calls if name == "prop" and bound["property"] == prop)
+
+
 class FakePanel:
     def __init__(self, test):
         self.layout = FakeLayout(test)
@@ -242,7 +268,7 @@ class TestRegistration(unittest.TestCase):
     def test_extension_registers_types_and_operators(self):
         self.assertTrue(hasattr(bpy.types.Object, "bevy_component_data"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
+        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_overlay"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
@@ -300,7 +326,7 @@ class TestOperators(unittest.TestCase):
         add_component(self.obj, "RIGID_BODY")
         self.assertEqual(bpy.ops.bevy_components.remove(index=5), {"CANCELLED"})
         self.assertEqual(bpy.ops.bevy_components.remove(index=0), {"FINISHED"})
-        self.assertEqual(_stored(self.obj)["components"], [{"type": "rigid_body", "kind": "static"}])
+        self.assertEqual(_stored(self.obj)["components"], [STATIC_BODY])
         bpy.ops.bevy_components.remove(index=0)
         self.assertNotIn("bevy_components", self.obj.keys())
 
@@ -314,7 +340,7 @@ class TestOperators(unittest.TestCase):
             self.assertEqual((stored["start"], stored["end"]), (start, end))
 
     def test_copy_to_selected_replaces_components(self):
-        add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.3, collider_height=1.7, collider_size=(1, 2, 3), collider_sensor=True)
+        add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.3, collider_height=1.7, collider_size=(1, 2, 3), collider_sensor=True, collider_friction=0.9, collider_restitution=0.4, collider_memberships=layers(3, 31), collider_filters=layers(0, 3))
         add_component(self.obj, "CUSTOM", custom_type="game::Tag", custom_json='{"a": 1}')
         first = add_mesh(bpy.ops.mesh.primitive_cube_add, "first")
         add_component(first, "RIGID_BODY")
@@ -324,6 +350,8 @@ class TestOperators(unittest.TestCase):
         for obj in (first, second):
             self.assertEqual(_stored(obj), _stored(self.obj))
             self.assertEqual(tuple(obj.bevy_component_data.components[0].collider_size), (1.0, 2.0, 3.0))
+            self.assertEqual(list(obj.bevy_component_data.components[0].collider_memberships), layers(3, 31))
+            self.assertEqual((_stored(obj)["components"][0]["memberships"], _stored(obj)["components"][0]["filters"]), (2**3 + 2**31, 0b1001))
 
     def test_validate(self):
         add_component(self.obj, "VISIBILITY_RANGE")
@@ -341,7 +369,7 @@ class TestOperators(unittest.TestCase):
         collider.enabled = False
         self.assertNotIn("bevy_components", self.obj.keys())
         custom.enabled = False
-        self.assertEqual(_stored(self.obj)["components"], [{"type": "rigid_body", "kind": "dynamic"}])
+        self.assertEqual(_stored(self.obj)["components"], [DYNAMIC_BODY])
         self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
         collider.enabled = True
         self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["rigid_body", "collider"])
@@ -366,7 +394,7 @@ class TestOperators(unittest.TestCase):
         select(self.obj, first, second)
         self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=0), {"FINISHED"})
         self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=1), {"FINISHED"})
-        self.assertEqual(_stored(first)["components"], [{"type": "rigid_body", "kind": "static"}, *_stored(self.obj)["components"]])
+        self.assertEqual(_stored(first)["components"], [STATIC_BODY, *_stored(self.obj)["components"]])
         self.assertEqual(_stored(second), _stored(self.obj))
 
     def test_copy_needs_other_selected_objects(self):
@@ -374,6 +402,35 @@ class TestOperators(unittest.TestCase):
         select(self.obj)
         self.assertFalse(bpy.ops.bevy_components.copy_component_to_selected.poll())
         self.assertFalse(bpy.ops.bevy_components.copy_to_selected.poll())
+
+    def test_set_collision_layers(self):
+        collider = add_component(self.obj, "COLLIDER", collider_memberships=layers(4), collider_filters=layers(2))
+        add_component(self.obj, "RIGID_BODY")
+        self.assertEqual(bpy.ops.bevy_components.set_collision_layers(index=0, layers="MEMBERSHIPS", enable=True), {"FINISHED"})
+        self.assertEqual(bpy.ops.bevy_components.set_collision_layers(index=0, layers="FILTERS", enable=False), {"FINISHED"})
+        self.assertEqual(list(collider.collider_memberships), [True] * 32)
+        self.assertEqual(list(collider.collider_filters), [False] * 32)
+        self.assertEqual((_stored(self.obj)["components"][0]["memberships"], _stored(self.obj)["components"][0]["filters"]), (2**32 - 1, 0))
+        self.assertEqual(bpy.ops.bevy_components.set_collision_layers(index=1, layers="FILTERS", enable=True), {"CANCELLED"})
+        self.assertEqual(bpy.ops.bevy_components.set_collision_layers(index=2, layers="FILTERS", enable=True), {"CANCELLED"})
+
+    def test_mass_is_stored_for_dynamic_bodies(self):
+        body = add_component(self.obj, "RIGID_BODY", rigid_body_mass=40)
+        body.rigid_body_use_mass = True
+        self.assertIsNone(_stored(self.obj)["components"][0]["mass"])
+        body.rigid_body_kind = "DYNAMIC"
+        self.assertEqual(_stored(self.obj)["components"][0]["mass"], 40.0)
+        body.rigid_body_use_mass = False
+        self.assertIsNone(_stored(self.obj)["components"][0]["mass"])
+
+    def test_reset_restores_physics_defaults(self):
+        collider = add_component(self.obj, "COLLIDER", collider_friction=0.1, collider_restitution=0.9, collider_memberships=layers(5), collider_filters=layers(5), show_layers=True)
+        body = add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=3)
+        bpy.ops.bevy_components.reset(index=0)
+        bpy.ops.bevy_components.reset(index=1)
+        self.assertEqual((collider.collider_friction, collider.collider_restitution, list(collider.collider_memberships), list(collider.collider_filters), collider.show_layers), (0.5, 0.0, layers(0), [True] * 32, True))
+        self.assertEqual((body.rigid_body_kind, body.rigid_body_use_mass, body.rigid_body_mass), ("STATIC", False, 1.0))
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER}, STATIC_BODY])
 
     def test_reset_restores_defaults(self):
         item = add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=3, collider_sensor=True)
@@ -401,7 +458,8 @@ class TestOperators(unittest.TestCase):
         self.assertNotIn("bevy_components", self.obj.keys())
 
     def test_save_and_reload(self):
-        add_component(self.obj, "COLLIDER", collider_shape="SPHERE", collider_radius=2)
+        add_component(self.obj, "COLLIDER", collider_shape="SPHERE", collider_radius=2, collider_friction=0.2, collider_memberships=layers(1, 7))
+        add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=7.5)
         self.obj["bevy_components"] = "stale"
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "level.blend"
@@ -410,6 +468,8 @@ class TestOperators(unittest.TestCase):
         obj = bpy.data.objects["subject"]
         self.assertEqual(obj.bevy_component_data.components[0].collider_radius, 2.0)
         self.assertEqual(_stored(obj)["components"][0]["radius"], 2.0)
+        self.assertEqual(list(obj.bevy_component_data.components[0].collider_memberships), layers(1, 7))
+        self.assertEqual(_rounded(_stored(obj)["components"]), [{"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 2.0, "friction": 0.2, "memberships": 0b10000010}}, {**DYNAMIC_BODY, "mass": 7.5}])
 
 
 class TestPanels(unittest.TestCase):
@@ -429,7 +489,7 @@ class TestPanels(unittest.TestCase):
             text, add_menu, enabled = panel.layout.buttons()[0]
             self.assertEqual((text, add_menu.name), ("Add Component", "BEVY_MT_component_add"))
             self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 4)
-            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded"] * 4)
+            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_expanded", "show_layers", "show_expanded", "show_expanded"])
             self.assertEqual(panel.layout.props().count("enabled"), 4)
         self.assertIn("collider_height", panel.layout.props())
         self.assertNotIn("Fade distances must increase from top to bottom", panel.layout.texts())
@@ -496,6 +556,49 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_view_sidebar.draw(panel, bpy.context)
         self.assertEqual(panel.layout.texts(), ["Select an object"])
+
+    def test_collider_card_draws_surface_and_layers(self):
+        collider = add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-3:], ["collider_sensor", "collider_friction", "collider_restitution"])
+        self.assertIn("Collision Layers", panel.layout.texts())
+        self.assertNotIn("collider_memberships", panel.layout.props())
+        self.assertTrue(_prop_layout(panel.layout, "collider_friction").active)
+        collider.show_layers = True
+        collider.collider_sensor = True
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertFalse(_prop_layout(panel.layout, "collider_friction").active)
+        toggles = [(bound["property"], bound["index"], bound["text"], bound["toggle"], layout.use_property_split) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] in {"collider_memberships", "collider_filters"}]
+        self.assertEqual(toggles, [(prop, index, str(index), True, False) for prop in ("collider_memberships", "collider_filters") for index in range(32)])
+        buttons = [(text, properties.index, properties.layers, properties.enable) for text, properties, enabled in panel.layout.buttons() if text in {"All", "None"}]
+        self.assertEqual(buttons, [("All", 0, "MEMBERSHIPS", True), ("None", 0, "MEMBERSHIPS", False), ("All", 0, "FILTERS", True), ("None", 0, "FILTERS", False)])
+        self.assertIn("Belongs To", panel.layout.texts())
+        self.assertIn("Collides With", panel.layout.texts())
+        self.assertNotIn("Needs a layer in both rows to touch anything", panel.layout.texts())
+        collider.collider_filters = [False] * 32
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertIn("Needs a layer in both rows to touch anything", panel.layout.texts())
+
+    def test_rigid_body_card_shows_mass_for_dynamic_bodies(self):
+        body = add_component(self.obj, "RIGID_BODY")
+        for kind in ("STATIC", "KINEMATIC"):
+            body.rigid_body_kind = kind
+            panel = FakePanel(self)
+            addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+            self.assertNotIn("rigid_body_mass", panel.layout.props(), kind)
+        body.rigid_body_kind = "DYNAMIC"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-3:], ["rigid_body_kind", "rigid_body_use_mass", "rigid_body_mass"])
+        self.assertIn(("row", "Mass"), [(name, bound.get("heading")) for name, bound, layout in panel.layout.calls])
+        self.assertFalse(_prop_layout(panel.layout, "rigid_body_mass").active)
+        body.rigid_body_use_mass = True
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertTrue(_prop_layout(panel.layout, "rigid_body_mass").active)
 
     def test_sidebar_draws_components(self):
         add_component(self.obj, "RIGID_BODY")
