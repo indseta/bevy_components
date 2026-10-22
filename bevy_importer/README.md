@@ -6,28 +6,26 @@ Companion to the Blender **Bevy Components** addon. Consumes glTF `extras.bevy_c
 
 See `Cargo.toml`: Bevy 0.20, Avian 0.8, serde, serde_json.
 
-To use in an existing game, copy `src/lib.rs` into e.g. `src/bevy_components.rs`, or add this folder as a path dependency. If copying the module, add `avian3d = "0.8"`, `serde = { version = "1", features = ["derive"] }`, and `serde_json = "1"` to the game's dependencies. Ensure Bevy 0.20 has `bevy_gltf` enabled.
+To use in an existing game, copy `src/` into e.g. `src/bevy_components/`, renaming `lib.rs` to `mod.rs`, or add this folder as a path dependency. If copying the module, add `avian3d = "0.8"`, `serde = { version = "1", features = ["derive"] }`, and `serde_json = "1"` to the game's dependencies. Ensure Bevy 0.20 has `bevy_gltf` enabled.
 
 ```rust
-use bevy::prelude::*;
 use avian3d::prelude::*;
+use bevy::prelude::*;
 use bevy_components_importer::BlenderBevyComponentsPlugin;
 
 fn main() {
-    App::new()
-        .add_plugins((
-            DefaultPlugins,
-            PhysicsPlugins::default(),
-            BlenderBevyComponentsPlugin,
-        ))
-        .add_systems(Startup, setup)
-        .run();
+    let mut app = App::new();
+
+    app.add_plugins(DefaultPlugins);
+    app.add_plugins(PhysicsPlugins::default());
+    app.add_plugins(BlenderBevyComponentsPlugin);
+    app.add_systems(Startup, setup);
+
+    app.run();
 }
 
 fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn(WorldAssetRoot(
-        asset_server.load("static_level_a.glb#Scene0"),
-    ));
+    commands.spawn(WorldAssetRoot(asset_server.load("static_level_a.glb#Scene0")));
 }
 ```
 
@@ -47,4 +45,4 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 - Blender float dimensions and unit scale are not automatically converted to Bevy meters. Keep 1 Blender unit = 1 meter and apply mesh scale if collision shape sizes look wrong.
 - Avoid triangle meshes on dynamic rigid bodies; use a convex hull for movable objects.
 - Imported custom component types and markers are data; add your own game-specific spawning logic.
-- Requires Blender and Rust/Bevy installed locally to runtime-test. Code was syntax-checked, not built against Bevy in the packaging environment.
+- Requires Blender and Rust/Bevy installed locally to runtime-test. The crate passes `cargo check` against Bevy 0.20 but has not been run in a game.
