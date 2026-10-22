@@ -31,7 +31,7 @@ Go to **3D Viewport → N → Bevy → Viewport Previews**. The previews are **e
 - **Selected / All Visible**: limit overlays to selected objects by default, or display them throughout the scene. You can also toggle see-through-meshes mode.
 - **Edit Collider in Viewport**: with a cuboid/sphere/capsule object's collider component selected, drag the colored arrow gizmos to change dimensions directly. For a cuboid, red = Bevy X, green = Bevy Y (Blender Z), blue = Bevy Z (Blender -Y). For a sphere, red adjusts radius. For a capsule, red adjusts radius and green adjusts the overall top extent, changing cylinder height. The component fields and exported GLB metadata update together.
 
-**Note:** The local XYZ size fields for primitive colliders are specified in **Bevy coordinates (Y up)**. Blender's viewport is Z up. Avoid non-uniform object scale for predictable physics; apply transforms where appropriate. Gizmo changes are undoable as Blender property edits, but should be validated interactively in your Blender build.
+**Note:** The local XYZ size fields for primitive colliders are specified in **Bevy coordinates (Y up)**. Blender's viewport is Z up; a Bevy `(x, y, z)` maps to Blender local `(x, -z, y)`, matching the glTF exporter's +Y-up conversion. Avoid non-uniform object scale for predictable physics; apply transforms where appropriate. Gizmo changes are undoable as Blender property edits, but should be validated interactively in your Blender build.
 
 ## What is stored in the file?
 
@@ -59,11 +59,11 @@ The exported GLB also contains whatever ordinary Blender glTF 2.0 export support
 - When hiding LOD models in Blender, be careful about export filters (hidden or unselected models might be excluded). The dedicated exporter defaults to exporting **all** objects.
 - Custom component JSON is exported and exposed to game code; it is not inserted as a Rust type automatically.
 - The dedicated exporter validates fade-distance order and JSON fields but cannot test physics validity until the game loads the meshes.
-- This release passes Python metadata and viewport-geometry unit tests and compileall syntax checks, but **has not been run in Blender or compiled with Bevy**, which are unavailable in this packaging environment. In particular, the actual Blender gizmo interaction should be smoke-tested in Blender 4.2/4.5/5.x. Report Blender console errors if any.
+- This release passes Python metadata and viewport-geometry unit tests, compileall syntax checks and `cargo check` of the importer against Bevy 0.20, but **has not been run in Blender or in a Bevy game**. In particular, the actual Blender gizmo interaction should be smoke-tested in Blender 4.2/4.5/5.x. Report Blender console errors if any.
 
 ## Files
 
-- `bevy_components/`: Blender addon package, including `viewport.py` draw handlers/gizmos and pure-Python `geometry.py`
+- `bevy_components/`: Blender addon package: `__init__.py` registers everything, `property.py` holds property groups, `operator.py` operators, `panel.py` UI panels, `overlay.py` viewport draw handlers, `gizmo.py` resize handles, `system.py` sync helpers, and pure-Python `metadata.py` and `geometry.py`
 - `bevy_importer/`: Rust companion crate
 - `tests/`: pure Python tests for serialization
 

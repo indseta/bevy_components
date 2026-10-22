@@ -4,8 +4,8 @@ import pathlib
 import types
 import unittest
 
-META = pathlib.Path(__file__).resolve().parents[1] / "bevy_components" / "metadata.py"
-spec = importlib.util.spec_from_file_location("bevy_metadata", META)
+MODULE = pathlib.Path(__file__).resolve().parents[1] / "bevy_components" / "metadata.py"
+spec = importlib.util.spec_from_file_location("bevy_metadata", MODULE)
 metadata = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(metadata)
 

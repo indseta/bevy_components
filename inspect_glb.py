@@ -1,5 +1,3 @@
-"""Inspect Bevy Components metadata stored in the glTF JSON chunk of a .glb file."""
-
 import json
 import struct
 import sys
@@ -23,7 +21,7 @@ def inspect(path):
         if raw_components is None:
             continue
         parsed = json.loads(raw_components) if isinstance(raw_components, str) else raw_components
-        print(f'{node.get("name", "<unnamed node>")}:')
+        print(f"{node.get('name', '<unnamed node>')}:")
         for component in parsed.get("components", []):
             print("  -", component)
             count += 1
