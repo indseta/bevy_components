@@ -13,12 +13,12 @@ Requires Blender 4.2+, Bevy 0.20 and Avian 0.8.
 
 ## Install the importer
 
-1. Download `bevy_components_importer-<version>.zip` from the latest [importer release](https://github.com/indseta/bevy_components/releases) and unzip it into your project.
+1. Download `bevy_components_importer-<version>.zip` from the latest [importer release](https://github.com/indseta/bevy_components/releases) and unzip it into your project. It extracts to a `bevy_components_importer/` folder.
 2. Add it as a path dependency:
 
 ```toml
 [dependencies]
-bevy_components_importer = { path = "bevy_components_importer-0.1.0" }
+bevy_components_importer = { path = "bevy_components_importer" }
 ```
 
 3. Register the plugin and spawn the exported level:

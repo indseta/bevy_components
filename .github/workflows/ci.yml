@@ -60,7 +60,7 @@ jobs:
                   echo "ADDON_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("addon/blender_manifest.toml", "rb"))["version"])')" >> "$GITHUB_ENV"
                   echo "IMPORTER_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("importer/Cargo.toml", "rb"))["package"]["version"])')" >> "$GITHUB_ENV"
             - name: Package importer
-              run: git archive --format=zip --prefix="bevy_components_importer-$IMPORTER_VERSION/" -o "dist/bevy_components_importer-$IMPORTER_VERSION.zip" HEAD:importer
+              run: git archive --format=zip --prefix="bevy_components_importer/" -o "dist/bevy_components_importer-$IMPORTER_VERSION.zip" HEAD:importer
             - name: Publish addon release
               run: |
                   tag="addon-v$ADDON_VERSION"
