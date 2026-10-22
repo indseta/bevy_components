@@ -2,6 +2,7 @@ import importlib.util
 import os
 import pathlib
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -114,7 +115,7 @@ class TestCommands(unittest.TestCase):
         self.assertEqual(command, ["ktx", "create", "--format", "R8G8B8_UNORM", "--assign-tf", "linear", "--assign-primaries", "none", "--encode", "uastc", "--uastc-quality", "2", "in.png", "out.ktx2"])
 
 
-def _fake_run(command):
+def _fake_run(command, **_options):
     pathlib.Path(command[-1]).write_bytes(pathlib.Path(command[-2]).read_bytes() + b" ktx2")
     return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -138,9 +139,9 @@ class TestEncode(unittest.TestCase):
     def test_encodes_textures_side_by_side(self):
         barrier = threading.Barrier(2, timeout=5)
 
-        def run(command):
+        def run(command, **options):
             barrier.wait()
-            return _fake_run(command)
+            return _fake_run(command, **options)
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=run), mock.patch.object(encoder.os, "cpu_count", return_value=8):
             results = encoder.encode("ktx", [_job(data=b"first"), _job(data=b"second")], SETTINGS, directory)
         self.assertEqual(results, [b"first ktx2", b"second ktx2"])
@@ -157,7 +158,7 @@ class TestEncode(unittest.TestCase):
     def test_failures_stop_the_remaining_textures(self):
         calls = []
 
-        def run(command):
+        def run(command, **_options):
             calls.append(command)
             time.sleep(0.05)
             return subprocess.CompletedProcess(command, 1, stdout="", stderr="error: broken")
@@ -171,6 +172,74 @@ class TestEncode(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=FileNotFoundError("ktx")):
             with self.assertRaisesRegex(encoder.EncoderError, "Could not run ktx"):
                 encoder.encode("ktx", [_job()], SETTINGS, directory)
+
+    def test_a_failure_stops_the_other_encoders(self):
+        def command(path, job, settings, source, output):
+            return [sys.executable, "-c", "import sys; sys.exit('error: broken')" if job.name == "broken" else "import time; time.sleep(60)"]
+        started = time.monotonic()
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "encode_command", side_effect=command), mock.patch.object(encoder.os, "cpu_count", return_value=8):
+            with self.assertRaisesRegex(encoder.EncoderError, "could not encode broken: error: broken"):
+                encoder.encode("ktx", [_job(name="slow"), _job(name="broken", data=b"other")], SETTINGS, directory)
+            self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
+        self.assertLess(time.monotonic() - started, 30)
+
+
+SLEEP = [sys.executable, "-c", "import time; time.sleep(60)"]
+
+
+class TestBackground(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.work = pathlib.Path(self.directory.name)
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_cancel_kills_the_process(self):
+        cancel = threading.Event()
+        timer = threading.Timer(0.3, cancel.set)
+        timer.start()
+        started = time.monotonic()
+        with self.assertRaises(encoder.EncodingCancelled):
+            encoder._run(SLEEP, cancel=cancel)
+        timer.join()
+        self.assertLess(time.monotonic() - started, 30)
+
+    def test_output_is_captured_while_waiting_for_cancel(self):
+        result = encoder._run([sys.executable, "-c", "import sys; print('out'); sys.exit('error: broken')"], cancel=threading.Event())
+        self.assertEqual((result.returncode, result.stdout, result.stderr), (1, "out\n", "error: broken\n"))
+
+    def test_results_and_progress(self):
+        with mock.patch.object(encoder, "_run", side_effect=_fake_run):
+            task = encoder.BackgroundEncode("ktx", [_job(data=b"first"), _job(data=b"second")], SETTINGS, self.work)
+            self.assertTrue(task.wait(30))
+        self.assertFalse(task.running)
+        self.assertEqual((task.done, task.total, task.results, task.error, task.cancelled), (2, 2, [b"first ktx2", b"second ktx2"], None, False))
+        self.assertEqual(list(self.work.iterdir()), [])
+
+    def test_errors_are_kept(self):
+        result = subprocess.CompletedProcess([], 1, stdout="", stderr="error: broken")
+        with mock.patch.object(encoder, "_run", return_value=result):
+            task = encoder.BackgroundEncode("ktx", [_job()], SETTINGS, self.work)
+            self.assertTrue(task.wait(30))
+        self.assertIsNone(task.results)
+        self.assertIsInstance(task.error, encoder.EncoderError)
+        self.assertIn("could not encode wood: error: broken", str(task.error))
+
+    def test_cancel_stops_running_and_waiting_textures(self):
+        with mock.patch.object(encoder, "encode_command", return_value=SLEEP), mock.patch.object(encoder.os, "cpu_count", return_value=4):
+            task = encoder.BackgroundEncode("ktx", [_job(data=bytes([index])) for index in range(5)], SETTINGS, self.work)
+            deadline = time.monotonic() + 30
+            while len(list(self.work.iterdir())) < 2 and time.monotonic() < deadline:
+                time.sleep(0.05)
+            self.assertTrue(task.running)
+            task.cancel()
+            self.assertTrue(task.wait(30))
+        self.assertTrue(task.cancelled)
+        self.assertIsInstance(task.error, encoder.EncodingCancelled)
+        self.assertIsNone(task.results)
+        self.assertEqual(task.done, 0)
+        self.assertEqual(list(self.work.iterdir()), [])
 
 
 class TestCache(unittest.TestCase):

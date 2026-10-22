@@ -4,6 +4,7 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -14,11 +15,17 @@ EXECUTABLE = "ktx.exe" if sys.platform == "win32" else "ktx"
 MAXIMUM_WORKERS = 4
 MAXIMUM_PIXELS = MAXIMUM_WORKERS * 4096 * 4096
 CACHE_LIMIT = 2 * 1024 ** 3
+POLL_INTERVAL = 0.1
+NICENESS = 10
 
 _versions = {}
 
 
 class EncoderError(Exception):
+    pass
+
+
+class EncodingCancelled(Exception):
     pass
 
 
@@ -42,9 +49,34 @@ def find_encoder(configured=""):
     return next((path for path in _candidates() if path.is_file()), None)
 
 
-def _run(command, **options):
+def _run(command, cancel=None, **options):
     flags = subprocess.CREATE_NO_WINDOW if sys.platform == "win32" else 0
-    return subprocess.run([str(part) for part in command], capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=flags, **options)
+    arguments = [str(part) for part in command]
+    if cancel is None:
+        return subprocess.run(arguments, capture_output=True, text=True, encoding="utf-8", errors="replace", creationflags=flags, **options)
+    if sys.platform == "win32":
+        flags |= subprocess.BELOW_NORMAL_PRIORITY_CLASS
+    with subprocess.Popen(arguments, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace", creationflags=flags) as process:
+        _lower_priority(process)
+        while True:
+            try:
+                stdout, stderr = process.communicate(timeout=POLL_INTERVAL)
+            except subprocess.TimeoutExpired:
+                if cancel.is_set():
+                    process.kill()
+                    process.communicate()
+                    raise EncodingCancelled() from None
+                continue
+            return subprocess.CompletedProcess(arguments, process.returncode, stdout, stderr)
+
+
+def _lower_priority(process):
+    if not hasattr(os, "setpriority"):
+        return
+    try:
+        os.setpriority(os.PRIO_PROCESS, process.pid, min(os.getpriority(os.PRIO_PROCESS, 0) + NICENESS, 19))
+    except OSError:
+        return
 
 
 def encoder_version(path):
@@ -103,22 +135,23 @@ def cache_key(path, job, settings):
     return digest.hexdigest()
 
 
-def _encode_job(path, job, settings, directory, index):
+def _encode_job(path, job, settings, directory, index, cancel):
+    if cancel.is_set():
+        raise EncodingCancelled()
     source = directory / f"texture_{index}{'.jpg' if job.mime_type == 'image/jpeg' else '.png'}"
     output = directory / f"texture_{index}.ktx2"
     source.write_bytes(job.data)
     try:
-        result = _run(encode_command(path, job, settings, source, output))
+        result = _run(encode_command(path, job, settings, source, output), cancel=cancel)
+        if result.returncode != 0 or not output.is_file():
+            message = (result.stderr or result.stdout).strip().splitlines()
+            raise EncoderError(f"KTX-Software could not encode {job.name}: {message[-1] if message else f'exit code {result.returncode}'}")
+        return output.read_bytes()
     except OSError as error:
         raise EncoderError(f"Could not run {path}: {error}") from error
     finally:
         source.unlink()
-    if result.returncode != 0 or not output.is_file():
-        message = (result.stderr or result.stdout).strip().splitlines()
-        raise EncoderError(f"KTX-Software could not encode {job.name}: {message[-1] if message else f'exit code {result.returncode}'}")
-    data = output.read_bytes()
-    output.unlink()
-    return data
+        output.unlink(missing_ok=True)
 
 
 def _read_cache(cache, key):
@@ -157,8 +190,9 @@ def prune_cache(cache, limit=CACHE_LIMIT):
         return
 
 
-def encode(path, jobs, settings, directory, progress=None, cache=None, check=None):
+def encode(path, jobs, settings, directory, progress=None, cache=None, check=None, cancel=None):
     directory = Path(directory)
+    cancel = threading.Event() if cancel is None else cancel
     keys = [cache_key(path, job, settings) for job in jobs]
     results = [_read_cache(cache, key) for key in keys]
     if check:
@@ -169,7 +203,7 @@ def encode(path, jobs, settings, directory, progress=None, cache=None, check=Non
         progress(done)
     executor = ThreadPoolExecutor(max_workers=workers([jobs[index] for index in pending]))
     try:
-        futures = {executor.submit(_encode_job, path, jobs[index], settings, directory, index): index for index in pending}
+        futures = {executor.submit(_encode_job, path, jobs[index], settings, directory, index, cancel): index for index in pending}
         for future in as_completed(futures):
             index = futures[future]
             results[index] = future.result()
@@ -179,7 +213,41 @@ def encode(path, jobs, settings, directory, progress=None, cache=None, check=Non
             if progress:
                 progress(done)
     finally:
+        cancel.set()
         executor.shutdown(cancel_futures=True)
     if cache is not None:
         prune_cache(cache)
     return results
+
+
+class BackgroundEncode:
+    def __init__(self, path, jobs, settings, directory, cache=None, check=None):
+        self.total = len(jobs)
+        self.done = 0
+        self.results = None
+        self.error = None
+        self.cancelled = False
+        self._cancel = threading.Event()
+        self._thread = threading.Thread(target=self._encode, args=(path, jobs, settings, directory, cache, check), name="bevy_components_encode", daemon=True)
+        self._thread.start()
+
+    @property
+    def running(self):
+        return self._thread.is_alive()
+
+    def cancel(self):
+        self.cancelled = True
+        self._cancel.set()
+
+    def wait(self, timeout=None):
+        self._thread.join(timeout)
+        return not self._thread.is_alive()
+
+    def _progress(self, done):
+        self.done = done
+
+    def _encode(self, path, jobs, settings, directory, cache, check):
+        try:
+            self.results = encode(path, jobs, settings, directory, progress=self._progress, cache=cache, check=check, cancel=self._cancel)
+        except Exception as error:
+            self.error = error

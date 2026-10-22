@@ -18,6 +18,10 @@ def redraw_viewports(_self=None, _context=None):
                 area.tag_redraw()
 
 
+def redraw_status_bars():
+    bpy.msgbus.publish_rna(key=(bpy.types.ViewLayer, "name"))
+
+
 def panel_expanded():
     return PANEL_EXPANDED
 
