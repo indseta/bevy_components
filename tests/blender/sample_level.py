@@ -1,5 +1,6 @@
 import json
 import math
+import os
 import sys
 import tempfile
 from pathlib import Path
@@ -162,3 +163,6 @@ if __name__ == "__main__":
     install_addon()
     build_sample_level()
     export_sample_level(Path(sys.argv[-1]) if sys.argv[-1].endswith(".glb") else FIXTURE)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(0)

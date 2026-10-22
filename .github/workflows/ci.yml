@@ -48,7 +48,7 @@ jobs:
             - name: Install Blender as a Python module
               run: pip install bpy==${{ matrix.blender }}
             - name: Run Blender tests
-              run: python -m unittest discover -s tests/blender -v
+              run: python tests/blender/run.py -v
     importer:
         name: Rust importer tests
         runs-on: ubuntu-latest
