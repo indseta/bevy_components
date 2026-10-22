@@ -1,0 +1,38 @@
+name: CI
+
+on:
+    push:
+    pull_request:
+    workflow_dispatch:
+
+jobs:
+    addon:
+        name: Python tests and extension ZIP
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-python@v5
+              with:
+                  python-version: '3.11'
+            - name: Check Python syntax
+              run: python -m compileall -q bevy_components scripts tests
+            - name: Run unit tests
+              run: python -m unittest discover -s tests -v
+            - name: Package Blender extension
+              run: python scripts/build_addon.py
+            - name: Upload installable extension
+              uses: actions/upload-artifact@v4
+              with:
+                  name: bevy-components-addon
+                  path: dist/*.zip
+    importer:
+        name: Rust importer check
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: dtolnay/rust-toolchain@stable
+            - uses: Swatinem/rust-cache@v2
+              with:
+                  workspaces: bevy_importer
+            - name: Check importer
+              run: cargo check --manifest-path bevy_importer/Cargo.toml

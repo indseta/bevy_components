@@ -1,0 +1,11 @@
+[package]
+name = "bevy_components_importer"
+version = "0.1.0"
+edition = "2024"
+description = "Import Blender-authored Bevy Components from glTF extras"
+
+[dependencies]
+bevy = "0.20"
+avian3d = { version = "0.8", features = ["collider-from-mesh"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

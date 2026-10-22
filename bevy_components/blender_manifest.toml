@@ -1,0 +1,12 @@
+schema_version = "1.0.0"
+id = "bevy_components"
+version = "0.2.0"
+name = "Bevy Components"
+tagline = "Author Bevy object components and export complete glTF levels"
+maintainer = "Ask Indset"
+type = "add-on"
+website = "https://github.com/indseta/bevy_components"
+tags = ["Import-Export", "Object"]
+blender_version_min = "4.2.0"
+license = ["SPDX:MIT"]
+copyright = ["2026 Ask Indset"]

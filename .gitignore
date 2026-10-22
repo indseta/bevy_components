@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.venv/
+.env
+.DS_Store
+*.blend1
+*.blend2
+*.blend@*
+*.blend~
+Thumbs.db
+bevy_importer/target/
+target/
+dist/
+*.zip
