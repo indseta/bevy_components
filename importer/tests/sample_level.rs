@@ -1,35 +1,10 @@
-use avian3d::prelude::*;
-use bevy::{app::PluginsState, asset::AssetPlugin, audio::AudioPlugin, camera::visibility::VisibilityRange, gilrs::GilrsPlugin, gltf::GltfExtras, log::LogPlugin, prelude::*, render::{RenderPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin};
-use bevy_components_importer::{BlenderBevyComponentsPlugin, BlenderCustomComponents};
-use serde_json::{Value, json};
-use std::{thread, time::Duration};
+mod common;
 
-fn load_sample_level() -> App {
-    let mut app = App::new();
-    app.add_plugins(DefaultPlugins.set(AssetPlugin { file_path: concat!(env!("CARGO_MANIFEST_DIR"), "/tests/assets").to_string(), ..default() }).set(RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() }).set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, close_when_requested: false, ..default() }).disable::<WinitPlugin>().disable::<AudioPlugin>().disable::<GilrsPlugin>().disable::<LogPlugin>());
-    app.add_plugins(PhysicsPlugins::default());
-    app.add_plugins(BlenderBevyComponentsPlugin);
-    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
-    while app.plugins_state() == PluginsState::Adding {
-        thread::sleep(Duration::from_millis(1));
-    }
-    app.finish();
-    app.cleanup();
-    let level = app.world().resource::<AssetServer>().load("sample_level.glb#Scene0");
-    app.world_mut().spawn(WorldAssetRoot(level));
-    for _ in 0..1000 {
-        app.update();
-        let mut custom_components = app.world_mut().query::<&BlenderCustomComponents>();
-        if custom_components.iter(app.world()).count() > 0 {
-            for _ in 0..10 {
-                app.update();
-            }
-            return app;
-        }
-        thread::sleep(Duration::from_millis(10));
-    }
-    panic!("Sample level did not load");
-}
+use avian3d::prelude::*;
+use bevy::{camera::visibility::VisibilityRange, gltf::GltfExtras, prelude::*};
+use bevy_components_importer::BlenderCustomComponents;
+use common::*;
+use serde_json::{Value, json};
 
 fn node(world: &mut World, name: &str) -> Entity {
     let mut nodes = world.query_filtered::<(Entity, &Name), Without<Mesh3d>>();
@@ -64,7 +39,7 @@ fn colliders(world: &mut World, name: &str) -> Vec<Entity> {
 
 #[test]
 fn visibility_ranges_are_set_on_meshes() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     let expected = [("crate", 20.0..25.0, 80.0..85.0, false), ("crate_copy", 20.0..25.0, 80.0..85.0, false), ("house", 80.0..85.0, 250.0..260.0, true), ("chimney", 80.0..85.0, 250.0..260.0, true), ("tree_lod0", 0.0..0.0, 20.0..25.0, false), ("tree_lod1", 20.0..25.0, 100.0..120.0, false)];
     for (name, start, end, use_aabb) in expected {
@@ -84,7 +59,7 @@ fn visibility_ranges_are_set_on_meshes() {
 
 #[test]
 fn colliders_match_exported_shapes() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     assert!(mesh_collider(world, "ground").shape().as_trimesh().is_some());
     assert!(mesh_collider(world, "house").shape().as_trimesh().is_some());
@@ -105,7 +80,7 @@ fn colliders_match_exported_shapes() {
 
 #[test]
 fn primitive_colliders_are_added_once_per_object() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone"] {
         let node = node(world, name);
@@ -119,7 +94,7 @@ fn primitive_colliders_are_added_once_per_object() {
 
 #[test]
 fn sensors_are_marked() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     for name in ["trigger_zone", "pickup_zone"] {
         let node = node(world, name);
@@ -131,7 +106,7 @@ fn sensors_are_marked() {
 
 #[test]
 fn rigid_bodies_own_their_colliders() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house")];
     for (name, kind, owner) in expected {
@@ -149,7 +124,7 @@ fn rigid_bodies_own_their_colliders() {
 
 #[test]
 fn empties_keep_positions() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     for (name, translation) in [("player_spawn", Vec3::new(2.0, 0.0, -3.0)), ("enemy_spawn", Vec3::new(-6.0, 0.0, 6.0))] {
         let node = node(world, name);
@@ -159,7 +134,7 @@ fn empties_keep_positions() {
 
 #[test]
 fn custom_components_keep_type_paths_and_data() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     let expected = [("player_spawn", vec![("my_game::PlayerSpawn", json!({}))]), ("enemy_spawn", vec![("my_game::EnemySpawn", json!({})), ("my_game::Wave", json!({"count": 3, "delay": 1.5}))]), ("lamp", vec![("my_game::Glow", json!({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"})), ("my_game::Flicker", json!(0.25))])];
     for (name, components) in expected {
@@ -175,7 +150,7 @@ fn custom_components_keep_type_paths_and_data() {
 
 #[test]
 fn only_component_data_is_exported() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     let world = app.world_mut();
     let mut extras = world.query::<(&Name, &GltfExtras)>();
     let mut count = 0;
@@ -189,7 +164,7 @@ fn only_component_data_is_exported() {
 
 #[test]
 fn dynamic_bodies_rest_on_the_ground() {
-    let mut app = load_sample_level();
+    let mut app = load_level(LEVEL);
     for _ in 0..120 {
         app.update();
     }

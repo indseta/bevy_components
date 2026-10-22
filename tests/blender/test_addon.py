@@ -1,4 +1,8 @@
+import hashlib
+import importlib.util
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -10,7 +14,7 @@ import bpy
 import gpu
 from mathutils import Matrix, Vector
 
-from sample_level import FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, export_sample_level, install_addon, read_gltf, select, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, export_sample_level, install_addon, read_gltf, select, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -83,6 +87,17 @@ def tearDownModule():
     uninstall_addon()
     if hasattr(bpy.types.Object, "bevy_component_data") or _operator_exists("bevy_components.add"):
         raise AssertionError("Bevy Components did not unregister cleanly")
+
+
+def _encoder_available():
+    spec = importlib.util.spec_from_file_location("bevy_encoder", Path(__file__).resolve().parents[2] / "addon" / "encoder.py")
+    encoder = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(encoder)
+    try:
+        encoder.check_encoder()
+    except encoder.EncoderError:
+        return False
+    return True
 
 
 def _operator_exists(idname):
@@ -175,6 +190,8 @@ class FakeLayout:
             return FakeLayout(self.test, self.calls, self)
         if name == "panel_prop":
             return FakeLayout(self.test, self.calls, self), FakeLayout(self.test, self.calls, self) if getattr(bound["data"], bound["property"]) else None
+        if name == "panel":
+            return FakeLayout(self.test, self.calls, self), FakeLayout(self.test, self.calls, self)
         return None
 
     def is_enabled(self):
@@ -185,6 +202,12 @@ class FakeLayout:
 
     def props(self):
         return [bound["property"] for name, bound, layout in self.calls if name == "prop"]
+
+    def alerts(self):
+        return [bound.get("text", "") for name, bound, layout in self.calls if name == "label" and layout.is_alert()]
+
+    def is_alert(self):
+        return getattr(self, "alert", False) or (self.parent is not None and self.parent.is_alert())
 
     def menus(self):
         return [bound["menu"] for name, bound, layout in self.calls if name == "menu"]
@@ -217,6 +240,7 @@ class TestRegistration(unittest.TestCase):
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.system.save_sync, bpy.app.handlers.save_pre)
+        self.assertEqual(bpy.context.preferences.addons[addon.__name__].preferences.ktx_path, "")
 
     def test_registers_with_restricted_blend_data(self):
         bpy.ops.preferences.addon_disable(module=addon.__name__)
@@ -490,6 +514,40 @@ class TestPanels(unittest.TestCase):
         addon.menu.export_menu(panel, bpy.context)
         self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb"])
 
+    def test_export_dialog_texture_compression(self):
+        properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
+        include = ["selected_only", "include_lights", "include_cameras", "include_animations", "texture_compression"]
+        expected = {
+            "DISABLED": include,
+            "ETC1S": include + ["etc1s_quality", "etc1s_effort"],
+            "UASTC": include + ["uastc_quality", "uastc_zstd"],
+            "AUTOMATIC": include + ["etc1s_quality", "etc1s_effort", "uastc_quality", "uastc_zstd"],
+        }
+        for mode, props in expected.items():
+            operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, texture_compression=mode, selected_only=False, include_lights=True, include_cameras=False, include_animations=False, etc1s_quality=128, etc1s_effort=2, uastc_quality=2, uastc_zstd=18)
+            addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+            self.assertEqual(operator.layout.props(), props, mode)
+            self.assertIn("Texture Compression", operator.layout.texts())
+            self.assertEqual(any(text.startswith("KTX-Software") for text in operator.layout.texts()), mode != "DISABLED", mode)
+
+    def test_preferences_show_encoder_status(self):
+        preferences = bpy.context.preferences.addons[addon.__name__].preferences
+        with tempfile.TemporaryDirectory() as directory:
+            preferences.ktx_path = str(Path(directory) / "missing" / "ktx")
+            try:
+                panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path=preferences.ktx_path)
+                addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
+            finally:
+                preferences.ktx_path = ""
+        self.assertEqual(panel.layout.props(), ["ktx_path"])
+        self.assertTrue(panel.layout.alerts()[0].startswith("KTX-Software was not found at "))
+        self.assertIn("Install KTX-Software 4.4 or newer", panel.layout.alerts()[1])
+        if addon.encoder.find_encoder() is not None:
+            panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="")
+            addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
+            self.assertEqual(panel.layout.alerts(), [])
+            self.assertTrue(any(text.startswith("KTX-Software 4.") for text in panel.layout.texts()))
+
 
 class TestViewport(unittest.TestCase):
     def setUp(self):
@@ -685,6 +743,179 @@ class TestExport(unittest.TestCase):
         finally:
             select(bpy.data.objects["lamp"])
             bpy.ops.bevy_components.remove(index=list(bpy.data.objects["lamp"].bevy_component_data.components).index(item))
+
+
+def _image_state():
+    return {image.name: (tuple(image.size), image.colorspace_settings.name, image.filepath, hashlib.sha256(image.packed_file.data).hexdigest() if image.packed_file else None) for image in bpy.data.images}
+
+
+def _texture_summary(gltf, binary):
+    images = []
+    for index, image in enumerate(gltf["images"]):
+        data, mime_type = addon.compression.image_payload(gltf, binary, index)
+        info = addon.compression.ktx2_info(data) if mime_type == "image/ktx2" else {}
+        images.append((image.get("name"), mime_type, *(info.get(key) for key in ("model", "width", "height", "levels", "transfer", "primaries"))))
+    return images
+
+
+def _sorted_texture_summary(gltf, binary):
+    return sorted(_texture_summary(gltf, binary))
+
+
+def _view_data(gltf, binary, index):
+    view = gltf["bufferViews"][index]
+    return binary[view.get("byteOffset", 0):view.get("byteOffset", 0) + view["byteLength"]]
+
+
+def _usages(gltf):
+    usages = {}
+    for material in gltf["materials"]:
+        for slot, info in addon.compression.texture_infos(material):
+            texture = gltf["textures"][info["index"]]
+            source = texture.get("source", texture.get("extensions", {}).get("KHR_texture_basisu", {}).get("source"))
+            usages.setdefault(source, set()).add((material["name"], slot, addon.compression.slot_usage(slot)))
+    return usages
+
+
+def _material_summary(gltf):
+    def resolve(value):
+        if isinstance(value, dict):
+            resolved = {key: resolve(child) for key, child in value.items()}
+            if isinstance(value.get("index"), int):
+                texture = gltf["textures"][value["index"]]
+                source = texture.get("source", texture.get("extensions", {}).get("KHR_texture_basisu", {}).get("source"))
+                resolved["index"] = (gltf["images"][source]["name"], gltf["samplers"][texture["sampler"]])
+            return resolved
+        if isinstance(value, list):
+            return [resolve(child) for child in value]
+        return value
+    return [resolve(material) for material in gltf["materials"]]
+
+
+@unittest.skipUnless(os.environ.get("BEVY_COMPONENTS_REQUIRE_KTX") or _encoder_available(), "KTX-Software is not installed")
+class TestTextureCompression(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        build_sample_level()
+        cls.images = _image_state()
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.exports = {}
+        for mode in ("DISABLED", "ETC1S", "UASTC", "AUTOMATIC"):
+            path = Path(cls.directory.name) / f"level_{mode.lower()}.glb"
+            export_sample_level(path, texture_compression=mode)
+            cls.exports[mode] = addon.compression.read_glb(path.read_bytes())
+        cls.compressed = {mode: cls.exports[mode] for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def test_compression_is_off_by_default(self):
+        gltf, binary = self.exports["DISABLED"]
+        self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsUsed", []))
+        self.assertEqual({image["mimeType"] for image in gltf["images"]}, {"image/png"})
+        self.assertIn(addon.compression.PNG_SIGNATURE, binary)
+
+    def test_textures_reference_embedded_ktx2(self):
+        for mode, (gltf, binary) in self.compressed.items():
+            self.assertIn("KHR_texture_basisu", gltf["extensionsUsed"], mode)
+            self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"], mode)
+            self.assertEqual(len(gltf["textures"]), 9, mode)
+            for texture in gltf["textures"]:
+                self.assertNotIn("source", texture, mode)
+                self.assertLess(texture["extensions"]["KHR_texture_basisu"]["source"], len(gltf["images"]), mode)
+            for image in gltf["images"]:
+                self.assertEqual(set(image), {"bufferView", "mimeType", "name"}, mode)
+                self.assertEqual(image["mimeType"], "image/ktx2", mode)
+                self.assertEqual(gltf["bufferViews"][image["bufferView"]]["byteOffset"] % 16, 0, mode)
+            self.assertNotIn(addon.compression.PNG_SIGNATURE, binary, mode)
+            self.assertEqual(gltf["buffers"], [{"byteLength": gltf["buffers"][0]["byteLength"]}], mode)
+
+    def test_shared_images_are_embedded_once(self):
+        for mode, (gltf, binary) in self.compressed.items():
+            names = sorted(image["name"] for image in gltf["images"])
+            self.assertEqual(names, ["ball_pixels", "lamp_emissive", "metal_color", "pillar_gradient", "wood_color", "wood_normal", "wood_orm", "wood_orm"], mode)
+            sources = [texture["extensions"]["KHR_texture_basisu"]["source"] for texture in gltf["textures"]]
+            self.assertEqual(len(sources) - len(set(sources)), 1, mode)
+
+    def test_embedded_ktx2_files_pass_khronos_validation(self):
+        path, _version = addon.encoder.check_encoder()
+        for mode, (gltf, binary) in self.compressed.items():
+            for index, image in enumerate(gltf["images"]):
+                file = Path(self.directory.name) / f"{mode}_{index}.ktx2"
+                file.write_bytes(addon.compression.image_payload(gltf, binary, index)[0])
+                result = subprocess.run([str(path), "validate", "--gltf-basisu", str(file)], capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, f"{mode} {image['name']}: {result.stdout}{result.stderr}")
+
+    def test_codecs_color_spaces_and_mipmaps(self):
+        for mode, (gltf, binary) in self.compressed.items():
+            usages = _usages(gltf)
+            for index, (name, _mime_type, model, width, height, levels, transfer, primaries) in enumerate(_texture_summary(gltf, binary)):
+                kinds = {usage for _material, _slot, usage in usages[index]}
+                self.assertEqual(len(kinds), 1, f"{mode} {name}")
+                usage = kinds.pop()
+                expected = {"ETC1S": "etc1s", "UASTC": "uastc"}.get(mode, "etc1s" if usage == "color" and name != "ball_pixels" else "uastc")
+                self.assertEqual(model, addon.compression.ETC1S_MODEL if expected == "etc1s" else addon.compression.UASTC_MODEL, f"{mode} {name}")
+                self.assertEqual((transfer, primaries), (2, 1) if usage == "color" else (1, 0), f"{mode} {name}")
+                self.assertEqual(levels, addon.compression.full_mip_count(width, height), f"{mode} {name}")
+                self.assertEqual((width, height), (32, 20) if name == "pillar_gradient" else (8, 8) if name == "ball_pixels" else (32, 32) if name == "lamp_emissive" else (64, 64), f"{mode} {name}")
+
+    def test_scene_matches_the_uncompressed_export(self):
+        plain, plain_binary = self.exports["DISABLED"]
+        for mode, (gltf, binary) in self.compressed.items():
+            self.assertEqual(_node_summary(gltf), _node_summary(plain), mode)
+            for key in ("scenes", "meshes", "accessors", "samplers", "extensions"):
+                self.assertEqual(gltf.get(key), plain.get(key), f"{mode} {key}")
+            self.assertEqual(_material_summary(gltf), _material_summary(plain), mode)
+            self.assertIn("KHR_texture_transform", json.dumps(gltf["materials"]), mode)
+            self.assertEqual(gltf["materials"][1]["occlusionTexture"]["texCoord"], 1, mode)
+            for accessor in plain["accessors"]:
+                self.assertEqual(_view_data(gltf, binary, accessor["bufferView"]), _view_data(plain, plain_binary, accessor["bufferView"]), mode)
+
+    def test_blender_data_is_unchanged(self):
+        self.assertEqual(_image_state(), self.images)
+        self.assertEqual(bpy.data.images["wood_orm"].colorspace_settings.name, "Non-Color")
+
+    def test_fixtures_are_current(self):
+        for mode, path in COMPRESSED_FIXTURES.items():
+            self.assertTrue(path.is_file(), f"Missing {path}, run tests/blender/sample_level.py to create it")
+            gltf, binary = addon.compression.read_glb(path.read_bytes())
+            fresh, fresh_binary = self.compressed[mode]
+            self.assertEqual(_node_summary(gltf), _node_summary(fresh), f"{path.name} is out of date, run tests/blender/sample_level.py to regenerate it")
+            self.assertEqual(_sorted_texture_summary(gltf, binary), _sorted_texture_summary(fresh, fresh_binary), f"{path.name} is out of date, run tests/blender/sample_level.py to regenerate it")
+
+
+class TestTextureCompressionErrors(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+        build_sample_level()
+        self.directory = tempfile.TemporaryDirectory()
+        self.path = Path(self.directory.name) / "level.glb"
+        self.preferences = bpy.context.preferences.addons[addon.__name__].preferences
+
+    def tearDown(self):
+        self.preferences.ktx_path = ""
+        self.directory.cleanup()
+
+    def test_missing_encoder_cancels_before_export(self):
+        self.preferences.ktx_path = str(Path(self.directory.name) / "missing" / "ktx")
+        with self.assertRaisesRegex(RuntimeError, "KTX-Software was not found at .*Install KTX-Software 4.4 or newer"):
+            bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="AUTOMATIC")
+        self.assertFalse(self.path.exists())
+
+    def test_encoder_failures_keep_the_previous_file(self):
+        self.path.write_bytes(b"previous level")
+        with mock.patch.object(addon.operator, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.operator, "encode", side_effect=addon.encoder.EncoderError("KTX-Software could not encode wood_color: broken input")):
+            with self.assertRaisesRegex(RuntimeError, "Texture compression failed: KTX-Software could not encode wood_color: broken input"):
+                bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="ETC1S")
+        self.assertEqual(self.path.read_bytes(), b"previous level")
+        self.assertEqual(sorted(path.name for path in Path(self.directory.name).iterdir()), ["level.glb"])
+
+    def test_invalid_encoder_output_is_rejected(self):
+        with mock.patch.object(addon.operator, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.operator, "encode", side_effect=lambda path, jobs, *args, **options: [b"not ktx2"] * len(jobs)):
+            with self.assertRaisesRegex(RuntimeError, "the encoder wrote an invalid KTX2 file"):
+                bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="UASTC")
+        self.assertFalse(self.path.exists())
 
 
 if __name__ == "__main__":

@@ -1,3 +1,7 @@
+import mimetypes
+import tempfile
+from pathlib import Path
+
 import bpy
 from bpy.app.handlers import persistent
 
@@ -101,6 +105,21 @@ def sync_changed(self, context):
 def save_sync(_scene):
     for obj in bpy.data.objects:
         sync_object(obj)
+
+
+def image_to_png(data, mime_type):
+    with tempfile.TemporaryDirectory(prefix="bevy_components_") as directory:
+        source = Path(directory) / f"source{mimetypes.guess_extension(mime_type) or '.image'}"
+        target = Path(directory) / "image.png"
+        source.write_bytes(data)
+        image = bpy.data.images.load(str(source), check_existing=False)
+        try:
+            image.filepath_raw = str(target)
+            image.file_format = "PNG"
+            image.save()
+        finally:
+            bpy.data.images.remove(image)
+        return target.read_bytes()
 
 
 class glTF2ExportUserExtension:
