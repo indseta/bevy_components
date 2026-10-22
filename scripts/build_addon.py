@@ -13,7 +13,7 @@ def build():
     for path in files:
         if not path.is_file():
             raise FileNotFoundError(path)
-    output = ROOT / "dist" / f"bevy_components-{version}.zip"
+    output = ROOT / "dist" / f"bevy_components_{version.replace('.', '_')}.zip"
     output.parent.mkdir(exist_ok=True)
     with ZipFile(output, "w", compression=ZIP_DEFLATED) as archive:
         for path in files:
