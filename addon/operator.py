@@ -12,6 +12,7 @@ class BEVY_OT_add_component(bpy.types.Operator):
     bl_label = "Add Bevy Component"
     bl_description = "Search for a component preset and attach it to the active object"
     bl_options = {"REGISTER", "UNDO"}
+    bl_property = "component_type"
 
     component_type: EnumProperty(name="Component", items=COMPONENT_TYPES)
 
