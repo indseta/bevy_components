@@ -1,6 +1,6 @@
 import bpy
 
-from .operator import BEVY_OT_add_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate
+from .operator import BEVY_OT_add_component, BEVY_OT_cancel_export, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate, running_export
 from .property import COMPONENT_LABELS
 from .system import component_index, find_definition
 
@@ -107,3 +107,13 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
 
 def export_menu(self, context):
     self.layout.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Level (.glb)")
+
+
+def export_status(self, context):
+    task = running_export()
+    if task is None:
+        return
+    row = self.layout.row(align=True)
+    row.ui_units_x = 12
+    row.progress(factor=task.done / max(task.total, 1), type="BAR", text=f"Compressing textures {task.done}/{task.total}")
+    row.operator(BEVY_OT_cancel_export.bl_idname, text="", icon="X", emboss=False)
