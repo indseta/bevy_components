@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "bevy_components"
-version = "0.3.3"
+version = "0.3.4"
 name = "Bevy Components"
 tagline = "Author Bevy object components and export complete glTF levels"
 maintainer = "Ask Indset"

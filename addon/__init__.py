@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Bevy Components",
     "author": "Ask Indset",
-    "version": (0, 3, 3),
+    "version": (0, 3, 4),
     "blender": (4, 2, 0),
     "location": "Properties > Object > Bevy Components, Properties > Scene > Bevy Custom Components, 3D Viewport > Sidebar > Bevy, 3D Viewport > Overlays",
     "description": "Add Bevy components to objects, preview them in the viewport and export levels as GLB",
