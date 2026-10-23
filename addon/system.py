@@ -455,6 +455,7 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_component_previews")
         _remove_extra(gltf2_scene, "bevy_component_definitions")
         _remove_extra(gltf2_scene, "bevy_bake_settings")
+        _remove_extra(gltf2_scene, "bevy_bsn_export")
         world = getattr(blender_scene, "world", None)
         if world is not None and hasattr(world, "bevy_ambient_light") and world.bevy_ambient_light.enabled:
             color, brightness = ambient_light(world)

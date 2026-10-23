@@ -7,7 +7,8 @@ from pathlib import Path, PurePosixPath
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, visibility_range_problems
+from .bsn import BsnError, custom_literal, inside
+from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .reference import SCENE_EXTENSIONS, read_scenes
@@ -77,6 +78,28 @@ def check_objects(objects, destination=None, animations=True):
 def check_object(obj, objects):
     objects = list(objects)
     return _object_issues(obj, children_map(objects), set(objects)) + _visibility_range_issues(objects, obj)
+
+
+def check_bsn(objects, root):
+    issues = []
+    for obj in objects:
+        for item in components_for(obj):
+            if item.component_type == "CUSTOM" and not component_errors(item):
+                component = serialize_component(item)
+                try:
+                    custom_literal(component["type_path"], component["data"])
+                except BsnError as error:
+                    issues.append(Issue("ERROR", obj, item, str(error)))
+            elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
+                path = file_path(item.scene_file)
+                if path.suffix.lower() != ".glb" and not inside(path, root):
+                    issues.append(Issue("ERROR", obj, item, f"{path.name} is outside {root.name}, and the export only copies .glb files in. Move it into {root.name}"))
+        if obj.type == "MESH" and any(modifier.type == "ARMATURE" for modifier in obj.modifiers):
+            issues.append(Issue("WARNING", obj, None, "BSN scenes leave out skins, so the mesh does not follow its armature"))
+        shape_keys = getattr(obj.data, "shape_keys", None) if obj.type == "MESH" else None
+        if shape_keys is not None and len(shape_keys.key_blocks) > 1:
+            issues.append(Issue("WARNING", obj, None, "BSN scenes leave out shape key weights"))
+    return issues
 
 
 def _object_issues(obj, children, exported, destination=None, animations=True):

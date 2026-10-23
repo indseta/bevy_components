@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_scene.glb"
 SOUNDS = FIXTURE.parent / "sounds"
 COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_scene_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
+BSN_FIXTURE = ROOT / "importer" / "tests" / "bsn" / "sample_scene.rs"
+BSN_ASSETS = FIXTURE.parent / "bsn"
 PROP = Path("props") / "windmill.glb"
 REPOSITORY = "bevy_components_test"
 RAMP_CENTER = (0, 8, 2)
@@ -575,6 +577,14 @@ def export_sample_scene(path, **options):
     return read_gltf(path)
 
 
+def export_bsn_scene(path, assets_folder="", **options):
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    result = bpy.ops.export_scene.bevy_components_bsn(filepath=str(path), assets_folder=str(assets_folder), **{"include_animations": True, **options})
+    if "FINISHED" not in result:
+        raise RuntimeError(f"Export failed: {result}")
+    return Path(path).read_text(encoding="utf-8")
+
+
 def export_props(directory):
     build_windmill()
     return export_sample_scene(Path(directory) / PROP)
@@ -593,6 +603,7 @@ if __name__ == "__main__":
         export_sample_scene(FIXTURE)
         for mode, path in COMPRESSED_FIXTURES.items():
             export_sample_scene(path, texture_compression=mode)
+        export_bsn_scene(BSN_FIXTURE, BSN_ASSETS)
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)

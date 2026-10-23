@@ -8,6 +8,7 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, lighting_jobs, unwrap_lightmap
+from .bsn import BsnError, asset_root, binary_crate, cargo_project, default_assets_folder, inside, load_path, node_components, scene_source, snake_case, strip_components, write_if_changed
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
@@ -15,7 +16,7 @@ from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
 from .system import accepts, apply_definitions, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
-from .validation import body_kind, check_objects, count, describe, draw_issues, draw_message, issue_summary
+from .validation import body_kind, check_bsn, check_objects, count, describe, draw_issues, draw_message, issue_summary
 
 TEXTURE_COMPRESSION = [
     ("DISABLED", "Disabled", "Export ordinary embedded textures"),
@@ -641,14 +642,80 @@ class BEVY_OT_cancel_export(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
-    bl_idname = "export_scene.bevy_components_glb"
-    bl_label = "Bevy Scene (.glb)"
-    bl_description = "Export the scene and its Bevy components as one GLB file"
-    bl_options = {"REGISTER"}
+def _draw_include(operator, layout):
+    header, body = layout.panel("BEVY_export_include")
+    header.label(text="Include")
+    if body:
+        body.prop(operator, "selected_only")
+        body.prop(operator, "include_lights")
+        body.prop(operator, "include_cameras")
+        body.prop(operator, "include_animations")
 
-    filename_ext = ".glb"
-    filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
+
+def _draw_compression(operator, layout, context):
+    header, body = layout.panel("BEVY_export_texture_compression")
+    header.label(text="Texture Compression")
+    if body:
+        body.prop(operator, "texture_compression", text="Mode")
+        if operator.texture_compression in {"ETC1S", "AUTOMATIC"}:
+            column = body.column(align=True)
+            column.prop(operator, "etc1s_quality")
+            column.prop(operator, "etc1s_effort", text="Effort")
+        if operator.texture_compression in {"UASTC", "AUTOMATIC"}:
+            column = body.column(align=True)
+            column.prop(operator, "uastc_quality")
+            column.prop(operator, "uastc_zstd", text="Supercompression")
+        if operator.texture_compression != "DISABLED":
+            draw_encoder_status(body, context)
+
+
+def _draw_checks(operator, layout, context, key, find):
+    checks = getattr(operator, "_checks", None)
+    if checks is None or checks[0] != key:
+        checks = (key, find())
+        operator._checks = checks
+    issues = checks[1]
+    header, body = layout.panel("BEVY_export_checks")
+    header.label(text="Checks")
+    if issues:
+        header.label(text=issue_summary(issues), icon="CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR")
+    if body:
+        if issues:
+            draw_issues(body, [(issue.level, issue.obj.name, issue.message) for issue in issues], 6, "in Validate All Objects", width=context.region.width if context.region else 300)
+        else:
+            body.label(text="No problems found", icon="CHECKMARK")
+
+
+def _exported_objects(operator, context):
+    return context.selected_objects if operator.selected_only else bpy.data.objects
+
+
+def _bsn_paths(operator):
+    rust_file = _export_path(operator.filepath)
+    if rust_file is None:
+        return None, None, None
+    folder = _export_path(operator.assets_folder) if operator.assets_folder.strip() else default_assets_folder(rust_file)
+    return rust_file, folder, folder / f"{rust_file.stem}.glb"
+
+
+def _bsn_issues(operator, objects):
+    _rust_file, folder, glb = _bsn_paths(operator)
+    issues = check_objects(objects, destination=glb, animations=operator.include_animations)
+    if glb is not None:
+        issues.extend(check_bsn(objects, asset_root(folder)))
+    return issues
+
+
+def _blend_relative(path):
+    if not bpy.data.filepath:
+        return str(path)
+    try:
+        return bpy.path.relpath(str(path))
+    except ValueError:
+        return str(path)
+
+
+class _SceneExport(ExportHelper):
     selected_only: BoolProperty(name="Selected Objects Only", default=False)
     include_lights: BoolProperty(name="Include Lights", default=True)
     include_cameras: BoolProperty(name="Include Cameras", default=False)
@@ -673,47 +740,6 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             return False
         return True
 
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        header, body = layout.panel("BEVY_export_include")
-        header.label(text="Include")
-        if body:
-            body.prop(self, "selected_only")
-            body.prop(self, "include_lights")
-            body.prop(self, "include_cameras")
-            body.prop(self, "include_animations")
-        header, body = layout.panel("BEVY_export_texture_compression")
-        header.label(text="Texture Compression")
-        if body:
-            body.prop(self, "texture_compression", text="Mode")
-            if self.texture_compression in {"ETC1S", "AUTOMATIC"}:
-                column = body.column(align=True)
-                column.prop(self, "etc1s_quality")
-                column.prop(self, "etc1s_effort", text="Effort")
-            if self.texture_compression in {"UASTC", "AUTOMATIC"}:
-                column = body.column(align=True)
-                column.prop(self, "uastc_quality")
-                column.prop(self, "uastc_zstd", text="Supercompression")
-            if self.texture_compression != "DISABLED":
-                draw_encoder_status(body, context)
-        key = (self.selected_only, self.include_animations, self.filepath)
-        checks = getattr(self, "_checks", None)
-        if checks is None or checks[0] != key:
-            checks = (key, check_objects(context.selected_objects if self.selected_only else bpy.data.objects, destination=_export_path(self.filepath), animations=self.include_animations))
-            self._checks = checks
-        issues = checks[1]
-        header, body = layout.panel("BEVY_export_checks")
-        header.label(text="Checks")
-        if issues:
-            header.label(text=issue_summary(issues), icon="CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR")
-        if body:
-            if issues:
-                draw_issues(body, [(issue.level, issue.obj.name, issue.message) for issue in issues], 6, "in Validate All Objects", width=context.region.width if context.region else 300)
-            else:
-                body.label(text="No problems found", icon="CHECKMARK")
-
     def invoke(self, context, event):
         self._interactive = True
         return ExportHelper.invoke(self, context, event)
@@ -722,9 +748,9 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         if not hasattr(bpy.ops.export_scene, "gltf"):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
             return {"CANCELLED"}
-        objects = context.selected_objects if self.selected_only else bpy.data.objects
-        destination = _export_path(self.filepath)
-        issues = check_objects(objects, destination=destination, animations=self.include_animations)
+        objects = _exported_objects(self, context)
+        destination = self._destination()
+        issues = self._check(objects)
         errors = [issue for issue in issues if issue.level == "ERROR"]
         if errors:
             self.report({"ERROR"}, f"Cannot export: {describe(errors[0])}")
@@ -739,7 +765,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 return {"CANCELLED"}
         for obj in objects:
             sync_object(obj, destination.parent if destination else None)
-        if encoder is None and not _has_probes(objects):
+        if encoder is None and self._direct(objects):
             result = self._export_gltf(Path(self.filepath))
             if "FINISHED" in result:
                 self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}")
@@ -787,9 +813,9 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         if "FINISHED" not in result:
             return result
         try:
-            gltf, binary = embed_files(*read_glb(path.read_bytes()), read=_read_file)
+            gltf, binary = self._prepare(*read_glb(path.read_bytes()))
         except OSError as error:
-            self.report({"ERROR"}, f"Could not embed {Path(error.filename or '').name or 'a probe file'} in the scene: {error.strerror}")
+            self.report({"ERROR"}, self._read_error.format(name=Path(error.filename or "").name or "a probe file", reason=error.strerror))
             return {"CANCELLED"}
         if encoder is None:
             self._scene = (gltf, binary, [])
@@ -851,24 +877,177 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 return self._failed(problem)
         before = sum(len(data) for data in {job.image: job.data for job in jobs}.values())
         gltf, binary = embed_textures(gltf, binary, jobs, encoded)
-        output = Path(self.filepath)
-        staging = output.with_name(f".{output.name}.tmp")
-        try:
-            staging.write_bytes(write_glb(gltf, binary))
-            os.replace(staging, output)
-        except OSError as error:
-            staging.unlink(missing_ok=True)
-            self.report({"ERROR"}, f"Could not write {output}: {error}")
+        summary = self._write(gltf, binary)
+        if summary is None:
             return {"CANCELLED"}
         resized = sorted({job.name for job in jobs if job.resized})
         if resized:
             self.report({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need")
         if jobs:
-            self.report({"INFO"}, f"Exported Bevy scene with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {self.filepath}")
+            self.report({"INFO"}, f"Exported Bevy scene with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {summary}")
         else:
-            self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}")
+            self.report({"INFO"}, f"Exported Bevy scene: {summary}")
         self._report_warnings()
         return {"FINISHED"}
+
+
+class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
+    bl_idname = "export_scene.bevy_components_glb"
+    bl_label = "Bevy Scene (.glb)"
+    bl_description = "Export the scene and its Bevy components as one GLB file"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".glb"
+    filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
+    _read_error = "Could not embed {name} in the scene: {reason}"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        _draw_include(self, layout)
+        _draw_compression(self, layout, context)
+        _draw_checks(self, layout, context, (self.selected_only, self.include_animations, self.filepath), lambda: check_objects(_exported_objects(self, context), destination=_export_path(self.filepath), animations=self.include_animations))
+
+    def _destination(self):
+        return _export_path(self.filepath)
+
+    def _check(self, objects):
+        return check_objects(objects, destination=self._destination(), animations=self.include_animations)
+
+    def _direct(self, objects):
+        return not _has_probes(objects)
+
+    def _prepare(self, gltf, binary):
+        return embed_files(gltf, binary, read=_read_file)
+
+    def _write(self, gltf, binary):
+        output = Path(self.filepath)
+        try:
+            write_if_changed(output, write_glb(gltf, binary))
+        except OSError as error:
+            self.report({"ERROR"}, f"Could not write {output}: {error}")
+            return None
+        return self.filepath
+
+
+class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
+    bl_idname = "export_scene.bevy_components_bsn"
+    bl_label = "Bevy Scene (BSN)"
+    bl_description = "Export the scene as a Rust file of bsn! scenes and an assets folder with its GLB, ready to build in a Bevy project"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".rs"
+    filter_glob: StringProperty(default="*.rs", options={"HIDDEN"})
+    assets_folder: StringProperty(name="Assets Folder", description="Folder in your game's assets folder for the scene's GLB and the files it needs. Empty uses assets/scenes/<file name> next to Cargo.toml", subtype="DIR_PATH")
+    prefab_functions: BoolProperty(name="Prefab Functions", description="Write objects that share a combination of components, such as a mesh with a rigid body and collider, as object_ functions below setup() and use them there. Off writes every object out in full inside setup()", default=True)
+
+    _read_error = "Could not copy {name} into the assets folder: {reason}"
+    _files = None
+    _copies = ()
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        rust_file, folder, glb = _bsn_paths(self)
+        header, body = layout.panel("BEVY_export_bsn")
+        header.label(text="Scene")
+        if body:
+            body.prop(self, "assets_folder")
+            body.prop(self, "prefab_functions")
+            if glb is not None:
+                root = asset_root(folder)
+                width = context.region.width if context.region else 300
+                if root == folder and folder.name.lower() != "assets":
+                    draw_message(body, f"{folder.name} is not inside an assets folder, so the scene loads its files by paths that start at {folder.name}", "ERROR", width)
+                else:
+                    draw_message(body, f"The game loads the GLB as {load_path(glb, root)}", "INFO", width)
+        _draw_include(self, layout)
+        _draw_compression(self, layout, context)
+        _draw_checks(self, layout, context, (self.selected_only, self.include_animations, self.filepath, self.assets_folder), lambda: _bsn_issues(self, _exported_objects(self, context)))
+
+    def invoke(self, context, event):
+        settings = context.scene.bevy_bsn_export
+        if settings.rust_file.strip():
+            self.filepath = bpy.path.abspath(settings.rust_file)
+            self.assets_folder = settings.assets_folder
+            self.prefab_functions = settings.prefab_functions
+        elif not self.filepath and bpy.data.filepath:
+            self.filepath = str(Path(bpy.data.filepath).with_name(snake_case(Path(bpy.data.filepath).stem) + self.filename_ext))
+        return _SceneExport.invoke(self, context, event)
+
+    def _destination(self):
+        return _bsn_paths(self)[2]
+
+    def _check(self, objects):
+        return _bsn_issues(self, objects)
+
+    def _direct(self, objects):
+        return False
+
+    def _prepare(self, gltf, binary):
+        _rust_file, folder, glb = _bsn_paths(self)
+        root = asset_root(folder)
+        self._files = {}
+        self._copies = []
+        taken = {glb.name}
+        for node in gltf.get("nodes", []):
+            for component in node_components(node):
+                if component.get("type") == "scene_reference":
+                    raw = component.get("path") or ""
+                    source = Path(os.path.normpath(glb.parent / raw))
+                    if raw and not inside(source, root) and source.is_file():
+                        self._files[raw] = self._place(source, folder, root, taken)
+                elif component.get("file"):
+                    raw = component["file"]
+                    source = Path(os.path.abspath(bpy.path.abspath(raw)))
+                    self._files[raw] = load_path(source, root) if inside(source, root) else self._place(source, folder, root, taken)
+        self._copies = [(target, source.read_bytes()) for target, source in self._copies]
+        return gltf, binary
+
+    def _place(self, source, folder, root, taken):
+        for target, copied in self._copies:
+            if copied == source:
+                return load_path(target, root)
+        name = source.name
+        number = 2
+        while name.lower() in taken:
+            name = f"{source.stem}_{number}{source.suffix}"
+            number += 1
+        taken.add(name.lower())
+        target = folder / name
+        self._copies.append((target, source))
+        return load_path(target, root)
+
+    def _write(self, gltf, binary):
+        rust_file, folder, glb = _bsn_paths(self)
+        root = asset_root(folder)
+        try:
+            source, warnings = scene_source(gltf, load_path(glb, root), rust_file.stem, prefabs=self.prefab_functions, files=self._files, crate=binary_crate(cargo_project(rust_file)))
+        except BsnError as error:
+            self.report({"ERROR"}, f"Cannot write the scene: {error}")
+            return None
+        strip_components(gltf)
+        written = 0
+        try:
+            written += write_if_changed(glb, write_glb(gltf, binary))
+            for target, data in self._copies:
+                written += write_if_changed(target, data)
+            written += write_if_changed(rust_file, source.encode("utf-8"))
+        except OSError as error:
+            self.report({"ERROR"}, f"Could not write {Path(error.filename or '').name or 'the scene'}: {error.strerror or error}")
+            return None
+        for warning in warnings:
+            print("Bevy Components:", warning)
+        if warnings:
+            self.report({"WARNING"}, f"{count(len(warnings), 'part')} of the scene left out of the BSN file: {warnings[0]}")
+        settings = bpy.context.scene.bevy_bsn_export
+        settings.rust_file = _blend_relative(rust_file)
+        settings.assets_folder = _blend_relative(folder) if self.assets_folder.strip() else ""
+        settings.prefab_functions = self.prefab_functions
+        files = 2 + len(self._copies)
+        return f"{rust_file} ({count(written, 'file')} of {files} changed)"
 
 
 class BEVY_OT_unwrap_lightmap(bpy.types.Operator):

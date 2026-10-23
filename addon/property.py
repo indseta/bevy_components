@@ -221,6 +221,12 @@ class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
     lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the scene exports its lamps, since Bevy already lights meshes with them", default=False)
 
 
+class BEVY_PG_bsn_export(bpy.types.PropertyGroup):
+    rust_file: StringProperty(name="Rust File", description="Rust file that the last BSN export wrote, which the next one writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
+    assets_folder: StringProperty(name="Assets Folder", description="Assets folder that the last BSN export wrote, empty for the default next to Cargo.toml", subtype="DIR_PATH", options=PATH_OPTIONS)
+    prefab_functions: BoolProperty(name="Prefab Functions", description="Whether the last BSN export wrote shared objects as object_ functions", default=True)
+
+
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport while the Components panel in Properties is expanded, never exported", default=True, update=redraw_viewports)
     scope: EnumProperty(name="Draw On", items=[
