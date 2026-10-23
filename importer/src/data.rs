@@ -101,6 +101,10 @@ pub enum ExportedComponent {
         intensity: f32,
         texture: Option<usize>,
     },
+    Lightmap {
+        bicubic: bool,
+        texture: Option<usize>,
+    },
     #[serde(other)]
     Unsupported,
 }

@@ -102,7 +102,7 @@ The fields export as the JSON object that serde reads into a struct with the sam
 glTF already carries a light's color, power, spot cone and Custom Distance range. Add a **Light** component (under Rendering) to a light for the rest:
 
 - shadows from the light's own **Shadow** checkbox, plus contact shadows, depth and normal bias, and for sun lights the shadow cascades
-- **Volumetric** for light shafts through Fog Volumes, and **Baked** for lights already baked into lightmaps, so they only add reflections there
+- **Volumetric** for light shafts through Fog Volumes, and **Baked** to bake the light into lightmaps, so it only adds reflections on lightmapped meshes
 - an **Intensity** in Bevy's lumens or lux, in place of Blender's watts at 683 lm/W
 
 Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` feature and cast no shadows. Contact shadows need `ContactShadows` and a depth prepass on the camera. The viewport draws how far each light reaches, 20 m unless Custom Distance is on.
@@ -121,18 +121,21 @@ The export embeds each probe's `.ktx2` file in the GLB, so the level stays one f
 
 ## Baked lighting
 
-The addon bakes Reflection Probes and Irradiance Volumes with Cycles, a static alternative to Godot's VoxelGI.
+The addon bakes lightmaps, Reflection Probes and Irradiance Volumes with Cycles, a static alternative to Godot's VoxelGI.
 
-1. Size the probe's box, then set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
-2. Click **Bake** on the component to bake that probe, or pick **Bake Lighting...** in the components dropdown to bake every probe in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default.
+1. Add a **Lightmap** (under Rendering) to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
+2. Click **Bake** on a component to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default.
 
-A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; probes that already finished keep their new files. Each probe's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.
+A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; bakes that already finished keep their new files. Each component's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.
 
-- Irradiance volumes hold the light that bounces off surfaces and the light from the sky and emissive materials. They leave out the light lamps shine straight at them, since Bevy lights meshes with the exported lamps itself. Turn on **Direct Lamp Light** for lamps you do not export.
-- Bevy adds its ambient light on top of irradiance volumes, so turn off **Bevy Ambient Light** in the World properties when volumes cover the level, or the sky lights it twice.
-- A probe's **Intensity** starts at 683, which converts Blender's light units the way the glTF export converts lamps, so baked light matches them.
+- A lightmap holds the light from the sky and emissive materials and the light that bounces between surfaces. Bevy lights the mesh with the exported lamps as usual, except lamps whose Light component is **Baked**: their direct light and shadows go into the lightmap, and Bevy only adds their reflections.
+- Turn on **Bevy Ambient Light** and its **Baked** option in the World properties, so Bevy keeps its ambient light off lightmapped meshes.
+- Lightmaps are 4 bytes per pixel, so a 512 px lightmap adds 1 MB to the level. Unwrap again after changing a lightmap's **Bake Size**, so its UV islands stay a few pixels apart. Apply modifiers first: the bake renders them, but the export leaves them out.
+- Lightmapped meshes skip irradiance volumes, which light the moving objects instead. Irradiance volumes leave out the light lamps shine straight at them, since Bevy lights meshes with the exported lamps itself. Turn on **Direct Lamp Light** for lamps you do not export.
+- Bevy adds its ambient light on top of irradiance volumes, so turn off **Bevy Ambient Light** when volumes cover the level and nothing is lightmapped, or the sky lights it twice.
+- A probe's **Intensity** starts at 683, which converts Blender's light units the way the glTF export converts lamps, so baked light matches them. Lightmaps are stored at that scale already.
 - Let each box reach a little past the floors and walls it should light, since Bevy skips surfaces right on its edge. A Reflection Probe renders its cubemap from the center of its box, so keep that spot clear of meshes.
-- The bake uses your Cycles settings, such as the device, light bounces and denoising, and skips objects that are disabled in renders.
+- The bake uses your Cycles settings, such as the device and light bounces, and skips objects that are disabled in renders. Only reflection probes are denoised, so raise the samples if a lightmap looks grainy.
 
 ## Texture compression
 

@@ -237,6 +237,14 @@ def serialize_component(item, locate=_portable):
             "intensity": _float32(item.probe_intensity),
             "file": item.probe_file or None,
         }
+    if kind == "LIGHTMAP":
+        if getattr(getattr(item, "id_data", None), "type", "MESH") != "MESH":
+            return None
+        return {
+            "type": "lightmap",
+            "bicubic": bool(item.lightmap_bicubic),
+            "file": item.probe_file or None,
+        }
     if kind == "LIGHT":
         return _serialize_light(item, getattr(item, "id_data", None))
     if kind == "CUSTOM":

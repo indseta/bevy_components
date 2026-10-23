@@ -8,12 +8,14 @@ from .metadata import EXTRAS_KEY
 FILE_KINDS = {
     "REFLECTION_PROBE": "CUBEMAP",
     "IRRADIANCE_VOLUME": "VOXELS",
+    "LIGHTMAP": "LIGHTMAP",
 }
 FILE_LABELS = {
     "CUBEMAP": "Cubemap",
     "VOXELS": "Voxels",
+    "LIGHTMAP": "Lightmap",
 }
-FILE_COMPONENTS = {"reflection_probe", "irradiance_volume"}
+FILE_COMPONENTS = {"reflection_probe", "irradiance_volume", "lightmap"}
 HEADER_LENGTH = 65536
 BASIS_FORMAT = 0
 FIRST_BLOCK_FORMAT = 131
@@ -24,10 +26,14 @@ LINEAR_FILTER = 9729
 CLAMP_TO_EDGE = 33071
 ALIGNMENT = 16
 RGBA16F = 97
-HALF_FLOAT_CHANNELS = (0, 1, 2, 15)
+RGB9E5 = 123
 FLOAT_SAMPLE = 0xC0
-SAMPLE_LOWER = 0xBF800000
-SAMPLE_UPPER = 0x3F800000
+EXPONENT_SAMPLE = 0x20
+HALF_FLOAT_LIMITS = (0xBF800000, 0x3F800000)
+MANTISSA_LIMITS = (0, 0x2100)
+EXPONENT_LIMITS = (15, 31)
+HALF_FLOAT_SAMPLES = tuple((index * 16, 15, channel | FLOAT_SAMPLE, *HALF_FLOAT_LIMITS) for index, channel in enumerate((0, 1, 2, 15)))
+SHARED_EXPONENT_SAMPLES = tuple(sample for channel in range(3) for sample in ((channel * 9, 8, channel, *MANTISSA_LIMITS), (27, 4, channel | EXPONENT_SAMPLE, *EXPONENT_LIMITS)))
 WRITER = b"KTXwriter\0Bevy Components\0"
 
 
@@ -45,6 +51,10 @@ def check_texture(data, kind):
         if width != height or width & (width - 1) or width > MAX_CUBEMAP_SIZE:
             return "ERROR", f"is {width} × {height}, but Bevy only filters square cubemaps whose size is a power of two, such as 256"
         summary = f"{width} × {width} cubemap"
+    elif kind == "LIGHTMAP":
+        if info["faces"] != 1 or info["layers"] > 1 or depth > 1:
+            return "ERROR", "is not a 2D texture"
+        summary = f"{width} × {height} lightmap"
     else:
         if info["faces"] != 1 or info["layers"] > 1 or depth < 1:
             return "ERROR", "is not a 3D texture"
@@ -57,16 +67,24 @@ def check_texture(data, kind):
 
 
 def ktx2_rgba16f(width, height, data, depth=0, faces=1):
-    samples = b"".join(struct.pack("<HBB4xII", index * 16, 15, channel | FLOAT_SAMPLE, SAMPLE_LOWER, SAMPLE_UPPER) for index, channel in enumerate(HALF_FLOAT_CHANNELS))
-    block = struct.pack("<IHH4B4x8B", 0, 2, 24 + len(samples), 1, 1, 1, 0, 8, 0, 0, 0, 0, 0, 0, 0) + samples
+    return _ktx2(RGBA16F, 2, 8, HALF_FLOAT_SAMPLES, width, height, data, depth, faces)
+
+
+def ktx2_rgb9e5(width, height, data):
+    return _ktx2(RGB9E5, 4, 4, SHARED_EXPONENT_SAMPLES, width, height, data)
+
+
+def _ktx2(vk_format, type_size, texel_size, samples, width, height, data, depth=0, faces=1):
+    packed = b"".join(struct.pack("<HBB4xII", *sample) for sample in samples)
+    block = struct.pack("<IHH4B4x8B", 0, 2, 24 + len(packed), 1, 1, 1, 0, texel_size, 0, 0, 0, 0, 0, 0, 0) + packed
     dfd = struct.pack("<I", 4 + len(block)) + block
     kvd = struct.pack("<I", len(WRITER)) + WRITER
     kvd += b"\0" * (-len(kvd) % 4)
     dfd_offset = 80 + 24
     kvd_offset = dfd_offset + len(dfd)
     data_offset = kvd_offset + len(kvd)
-    data_offset += -data_offset % 8
-    header = KTX2_IDENTIFIER + struct.pack("<9I", RGBA16F, 2, width, height, depth, 0, faces, 1, 0)
+    data_offset += -data_offset % texel_size
+    header = KTX2_IDENTIFIER + struct.pack("<9I", vk_format, type_size, width, height, depth, 0, faces, 1, 0)
     header += struct.pack("<IIIIQQ", dfd_offset, len(dfd), kvd_offset, len(kvd), 0, 0)
     header += struct.pack("<QQQ", data_offset, len(data), len(data))
     body = header + dfd + kvd

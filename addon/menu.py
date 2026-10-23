@@ -60,7 +60,7 @@ class BEVY_MT_component_add_rendering(bpy.types.Menu):
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE", "SHADOWS", "LIGHT", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME"))
+        _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE", "SHADOWS", "LIGHT", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "LIGHTMAP"))
 
 
 class BEVY_MT_component_add_audio(bpy.types.Menu):

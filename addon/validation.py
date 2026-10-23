@@ -11,7 +11,7 @@ from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, visibi
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, children_map, component_of, components_for, file_path, has_faces, inherited, level_path, mesh_sources, object_actions, subtree
+from .system import MESH_TYPES, children_map, component_of, components_for, file_path, has_faces, inherited, level_path, lightmap_uv_map, mesh_sources, object_actions, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -25,6 +25,7 @@ SHAPE_LABELS = {
 MISSING_FILES = {
     "REFLECTION_PROBE": "No cubemap, so the probe adds no reflections",
     "IRRADIANCE_VOLUME": "No voxel texture, so the volume adds no light",
+    "LIGHTMAP": "No lightmap baked yet, so the mesh gets no baked light",
 }
 TEXTURE_CACHE_LIMIT = 256
 
@@ -99,6 +100,8 @@ def _object_issues(obj, children, exported, level=None, animations=True):
             issues.extend(_scene_reference_issues(obj, item, level))
         elif item.component_type == "ANIMATION":
             issues.extend(Issue("WARNING", obj, item, message) for message in _animation_warnings(obj, item, children, animations))
+        elif item.component_type == "LIGHTMAP":
+            issues.extend(_lightmap_issues(obj, item))
         elif item.component_type in FILE_KINDS:
             check = texture_check(obj, item)
             if check.level is not None:
@@ -273,6 +276,21 @@ def _animation_warnings(obj, item, children, animations):
     if not animations:
         warnings.append("Include Animations is off in the export, so nothing plays")
     return warnings
+
+
+def _lightmap_issues(obj, item):
+    if obj.type != "MESH":
+        return [Issue("WARNING", obj, item, "Only meshes use lightmaps, so it is not exported")]
+    issues = []
+    if lightmap_uv_map(obj) is None:
+        issues.append(Issue("WARNING", obj, item, "No second UV map, which Bevy reads lightmaps with. Click Unwrap Lightmap UVs"))
+    modifier = next((modifier for modifier in obj.modifiers if modifier.show_render), None)
+    if modifier is not None:
+        issues.append(Issue("WARNING", obj, item, f"Bake includes the {modifier.name} modifier but the export leaves it out, so the lightmap may not fit. Apply the modifier"))
+    check = texture_check(obj, item)
+    if check.level is not None:
+        issues.append(Issue(check.level, obj, item, check.message))
+    return issues
 
 
 def _light_warnings(obj, item):

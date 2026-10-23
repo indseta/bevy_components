@@ -16,6 +16,7 @@ probe = importlib.import_module("bevy_probe_addon.probe")
 compression = importlib.import_module("bevy_probe_addon.compression")
 
 RGBA16F = 97
+RGB9E5 = 123
 BC6H = 143
 
 
@@ -68,6 +69,13 @@ class TestTextureChecks(unittest.TestCase):
         self.assertIsNone(probe.voxel_counts(_ktx2()))
         self.assertIsNone(probe.voxel_counts(b"not ktx2"))
 
+    def test_lightmaps(self):
+        self.assertEqual(probe.check_texture(_ktx2(512, 256, faces=1), "LIGHTMAP"), (None, "512 × 256 lightmap"))
+        self.assertEqual(probe.check_texture(_ktx2(), "LIGHTMAP"), ("ERROR", "is not a 2D texture"))
+        self.assertEqual(probe.check_texture(_volume(), "LIGHTMAP"), ("ERROR", "is not a 2D texture"))
+        self.assertEqual(probe.check_texture(_ktx2(faces=1, layers=3), "LIGHTMAP"), ("ERROR", "is not a 2D texture"))
+        self.assertEqual(probe.check_texture(_ktx2(64, 64, faces=1, vk_format=BC6H), "LIGHTMAP"), ("WARNING", "64 × 64 lightmap in a block-compressed format, so the level fails to load on GPUs without it"))
+
     def test_formats_bevy_cannot_load_everywhere(self):
         self.assertEqual(probe.check_texture(_ktx2(vk_format=0), "CUBEMAP")[0], "ERROR")
         self.assertEqual(probe.check_texture(_ktx2(vk_format=BC6H), "CUBEMAP"), ("WARNING", "16 × 16 cubemap in a block-compressed format, so the level fails to load on GPUs without it"))
@@ -96,6 +104,17 @@ class TestWriting(unittest.TestCase):
             self.assertEqual(_parts(written)[3] % 8, 0, name)
             self.assertEqual(len(written), _parts(written)[3] + len(pixels), name)
 
+    def test_rgb9e5_matches_ktx_software(self):
+        reference = (ASSETS / "ground_lightmap.ktx2").read_bytes()
+        header, dfd, pixels, _offset = _parts(reference)
+        written = probe.ktx2_rgb9e5(16, 16, pixels)
+        self.assertEqual(_parts(written)[:3], (header, dfd, pixels))
+        self.assertEqual(_parts(written)[3] % 4, 0)
+        self.assertEqual(len(written), _parts(written)[3] + len(pixels))
+        self.assertEqual(probe.check_texture(written, "LIGHTMAP"), (None, "16 × 16 lightmap"))
+        info = compression.ktx2_info(written)
+        self.assertEqual((info["format"], info["model"], info["primaries"], info["transfer"], info["levels"], info["supercompression"]), (RGB9E5, 1, 1, 1, 1, 0))
+
     def test_written_probes_pass_the_checks(self):
         self.assertEqual(probe.check_texture(probe.ktx2_rgba16f(32, 32, bytes(32 * 32 * 8 * 6), faces=6), "CUBEMAP"), (None, "32 × 32 cubemap"))
         self.assertEqual(probe.check_texture(probe.ktx2_rgba16f(8, 8, bytes(8 * 8 * 24 * 8), depth=24), "VOXELS"), (None, "8 × 4 × 8 voxels"))
@@ -107,20 +126,21 @@ class TestEmbedding(unittest.TestCase):
     def test_files_become_textures_once(self):
         cubemap = _ktx2() + b"c"
         voxels = _volume() + b"v"
-        files = {"/levels/room.ktx2": cubemap, "/levels/gi.ktx2": voxels}
+        lightmap = _ktx2(faces=1) + b"l"
+        files = {"/levels/room.ktx2": cubemap, "/levels/gi.ktx2": voxels, "/levels/floor.ktx2": lightmap}
         reads = []
-        gltf, binary = _level([{"type": "reflection_probe", "size": [1, 1, 1], "file": "/levels/room.ktx2"}, {"type": "custom", "type_path": "game::Tag", "data": {"file": "kept"}}], [{"type": "irradiance_volume", "file": "/levels/gi.ktx2"}, {"type": "reflection_probe", "file": "/levels/room.ktx2"}], [{"type": "reflection_probe", "file": None}])
+        gltf, binary = _level([{"type": "reflection_probe", "size": [1, 1, 1], "file": "/levels/room.ktx2"}, {"type": "custom", "type_path": "game::Tag", "data": {"file": "kept"}}], [{"type": "irradiance_volume", "file": "/levels/gi.ktx2"}, {"type": "reflection_probe", "file": "/levels/room.ktx2"}], [{"type": "reflection_probe", "file": None}, {"type": "lightmap", "bicubic": False, "file": "/levels/floor.ktx2"}])
         self.assertTrue(probe.needs_embedding(gltf))
         gltf, binary = probe.embed_files(gltf, binary, lambda path: reads.append(path) or files[path])
-        self.assertEqual(reads, ["/levels/room.ktx2", "/levels/gi.ktx2"])
+        self.assertEqual(reads, ["/levels/room.ktx2", "/levels/gi.ktx2", "/levels/floor.ktx2"])
         self.assertEqual(_components(gltf, 0), [{"type": "reflection_probe", "size": [1, 1, 1], "texture": 1}, {"type": "custom", "type_path": "game::Tag", "data": {"file": "kept"}}])
         self.assertEqual(_components(gltf, 1), [{"type": "irradiance_volume", "texture": 2}, {"type": "reflection_probe", "texture": 1}])
-        self.assertEqual(_components(gltf, 2), [{"type": "reflection_probe", "texture": None}])
+        self.assertEqual(_components(gltf, 2), [{"type": "reflection_probe", "texture": None}, {"type": "lightmap", "bicubic": False, "texture": 3}])
         self.assertNotIn("extras", gltf["nodes"][3])
-        self.assertEqual(gltf["textures"][1:], [{"sampler": 1, "source": 1}, {"sampler": 1, "source": 2}])
+        self.assertEqual(gltf["textures"][1:], [{"sampler": 1, "source": 1}, {"sampler": 1, "source": 2}, {"sampler": 1, "source": 3}])
         self.assertEqual(gltf["samplers"][1], {"magFilter": 9729, "minFilter": 9729, "wrapS": 33071, "wrapT": 33071})
-        self.assertEqual(gltf["images"][1:], [{"bufferView": 1, "mimeType": "image/ktx2", "name": "room"}, {"bufferView": 2, "mimeType": "image/ktx2", "name": "gi"}])
-        for image, data in ((1, cubemap), (2, voxels)):
+        self.assertEqual(gltf["images"][1:], [{"bufferView": 1, "mimeType": "image/ktx2", "name": "room"}, {"bufferView": 2, "mimeType": "image/ktx2", "name": "gi"}, {"bufferView": 3, "mimeType": "image/ktx2", "name": "floor"}])
+        for image, data in ((1, cubemap), (2, voxels), (3, lightmap)):
             self.assertEqual(compression.image_payload(gltf, binary, image), (data, "image/ktx2"))
             self.assertEqual(gltf["bufferViews"][image]["byteOffset"] % 16, 0)
         self.assertEqual(binary[:5], b"\x89PNG!")

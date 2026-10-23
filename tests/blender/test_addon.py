@@ -18,7 +18,7 @@ import gpu
 import numpy
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, PROP, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -35,6 +35,7 @@ EXPECTED_COMPONENTS = {
     "ground": [
         {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
         STATIC_BODY,
+        {"type": "lightmap", "bicubic": True, "texture": "ground_lightmap"},
     ],
     "crate": [
         {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [2.0, 2.0, 2.0], "friction": 0.8, "restitution": 0.1}},
@@ -222,7 +223,7 @@ EXPECTED_COMPONENTS = {
         {**DEFAULT_LIGHT, "kind": "area", "intensity": 34150.0, "color": [1.0, 1.0, 1.0], "size": [2.0, 1.0], "shadows": False},
     ],
 }
-PROBE_IMAGES = {"probe_cubemap", "irradiance_volume"}
+LIGHTING_IMAGES = {"probe_cubemap", "irradiance_volume", "ground_lightmap"}
 BEVY_FROM_BLENDER = Matrix(((1, 0, 0), (0, 0, 1), (0, -1, 0)))
 SIDE_COLORS = {
     (1, 0, 0): (1.0, 0.0, 0.0),
@@ -452,7 +453,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
         self.assertTrue(hasattr(bpy.types.World, "bevy_ambient_light"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bake_settings"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "export_scene.bevy_components_glb"):
+        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
@@ -795,6 +796,59 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=1), {"FINISHED"})
         self.assertEqual(_stored(other)["components"], [_stored(self.obj)["components"][1]])
 
+    def test_lightmaps_are_stored_on_meshes(self):
+        item = add_component(self.obj, "LIGHTMAP")
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "lightmap", "bicubic": False, "file": None}])
+        item.lightmap_bicubic = True
+        item.probe_file = str(LIGHTMAP)
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "lightmap", "bicubic": True, "file": str(LIGHTMAP)}])
+        self.assertEqual(bpy.ops.bevy_components.reset(index=0), {"FINISHED"})
+        self.assertEqual((item.lightmap_resolution, item.lightmap_bicubic, item.probe_file), ("512", False, ""))
+        for obj in (add_empty("holder", (0, 0, 0)), add_light("lamp", "POINT", (0, 0, 0))):
+            select(obj)
+            self.assertEqual(bpy.ops.bevy_components.add(component_type="LIGHTMAP"), {"CANCELLED"})
+            self.assertEqual(len(obj.bevy_component_data.components), 0)
+        holder = bpy.data.objects["holder"]
+        holder.bevy_component_data.components.add().component_type = "LIGHTMAP"
+        addon.system.sync_object(holder)
+        self.assertEqual(_stored(holder)["components"], [])
+
+    def test_unwrap_lightmap_fills_the_second_uv_map(self):
+        mesh = self.obj.data
+        mesh.uv_layers.new(name="second")
+        mesh.uv_layers.new(name="detail")
+        first, detail = (numpy.array([tuple(loop.uv) for loop in mesh.uv_layers[name].data]) for name in ("UVMap", "detail"))
+        mesh.polygons[0].hide = True
+        mesh.polygons[1].select = False
+        flags = [(polygon.hide, polygon.select) for polygon in mesh.polygons]
+        add_component(self.obj, "LIGHTMAP", lightmap_resolution="128")
+        select(self.obj)
+        self.assertEqual(bpy.ops.bevy_components.unwrap_lightmap(), {"FINISHED"})
+        self.assertEqual(([layer.name for layer in mesh.uv_layers], mesh.uv_layers.active_index, mesh.uv_layers["UVMap"].active_render), (["UVMap", "second", "detail"], 0, True))
+        self.assertTrue(numpy.array_equal(first, [tuple(loop.uv) for loop in mesh.uv_layers["UVMap"].data]))
+        self.assertTrue(numpy.array_equal(detail, [tuple(loop.uv) for loop in mesh.uv_layers["detail"].data]))
+        self.assertEqual([(polygon.hide, polygon.select) for polygon in mesh.polygons], flags)
+        islands = [numpy.array([tuple(mesh.uv_layers["second"].data[index].uv) for index in polygon.loop_indices]) for polygon in mesh.polygons]
+        self.assertTrue(all(0.0 <= island.min() and island.max() <= 1.0 for island in islands))
+        boxes = [(island.min(axis=0), island.max(axis=0)) for island in islands]
+        gaps = [max((low_b - high_a).max(), (low_a - high_b).max()) for index, (low_a, high_a) in enumerate(boxes) for low_b, high_b in boxes[index + 1:]]
+        self.assertGreaterEqual(min(gaps), 3.5 / 128)
+        bare = bpy.data.objects.new("bare", bpy.data.meshes.new("bare"))
+        bare.data.from_pydata([(0, 0, 0), (1, 0, 0), (1, 1, 0), (0, 1, 0)], [], [(0, 1, 2, 3)])
+        bpy.context.scene.collection.objects.link(bare)
+        select(bare)
+        self.assertEqual(bpy.ops.bevy_components.unwrap_lightmap(), {"FINISHED"})
+        self.assertEqual([layer.name for layer in bare.data.uv_layers], ["UVMap", "lightmap"])
+        self.assertEqual(addon.system.lightmap_uv_map(bare).name, "lightmap")
+        select(add_empty("holder", (0, 0, 0)))
+        self.assertFalse(bpy.ops.bevy_components.unwrap_lightmap.poll())
+        select(bare)
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            self.assertFalse(bpy.ops.bevy_components.unwrap_lightmap.poll())
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+
     def test_lights_are_stored(self):
         self.assertEqual(bpy.ops.bevy_components.add(component_type="LIGHT"), {"CANCELLED"})
         self.assertEqual(len(self.obj.bevy_component_data.components), 0)
@@ -960,7 +1014,7 @@ class TestPanels(unittest.TestCase):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "LIGHT": False, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "LIGHT": False, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "LIGHTMAP": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_audio.draw(menu, _menu_context(self.obj))
@@ -969,6 +1023,7 @@ class TestPanels(unittest.TestCase):
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_rendering.draw(menu, _menu_context(lamp))
         self.assertTrue(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Light"])
+        self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Lightmap"])
         add_component(lamp, "LIGHT")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_rendering.draw(menu, _menu_context(lamp))
@@ -1205,6 +1260,23 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertIn("16 × 16 cubemap", panel.layout.texts())
+
+    def test_lightmap_card(self):
+        item = add_component(self.obj, "LIGHTMAP")
+        layout = self._draw_card(self.obj)
+        self.assertEqual(layout.props(), ["enabled", "probe_file", "lightmap_resolution", "lightmap_bicubic"])
+        self.assertEqual([bound["text"] for name, bound, child in layout.calls if name == "prop" and bound["property"] == "probe_file"], ["Lightmap"])
+        self.assertEqual(layout.operators()[-2:], ["bevy_components.unwrap_lightmap", "bevy_components.bake_lighting"])
+        self.assertEqual([(properties.object_name, properties.index) for text, properties, enabled in layout.buttons() if text == "Bake"], [("subject", 0)])
+        self.assertIn("None", layout.alerts())
+        self.assertIn("No second UV map, which Bevy reads lightmaps with. Click Unwrap Lightmap UVs", " ".join(layout.texts()))
+        self.assertIn("No lightmap baked yet, so the mesh gets no baked light", " ".join(layout.texts()))
+        bpy.ops.bevy_components.unwrap_lightmap()
+        item.probe_file = str(LIGHTMAP)
+        layout = self._draw_card(self.obj)
+        self.assertEqual(layout.alerts(), [])
+        self.assertIn("lightmap", layout.texts())
+        self.assertIn("16 × 16 lightmap", layout.texts())
 
     def _draw_card(self, obj):
         select(obj)
@@ -1768,6 +1840,14 @@ class TestViewport(unittest.TestCase):
         self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
         self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [])
         self.settings.audio_ranges = True
+
+    def test_lightmap_labels(self):
+        item = add_component(self.obj, "LIGHTMAP")
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Lightmap · not baked"])
+        item.probe_file = str(LIGHTMAP)
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Lightmap · 16 × 16"])
+        item.probe_file = str(CUBEMAP)
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Lightmap · file problem, see its card"])
 
     def test_shadow_and_audio_labels(self):
         shadows = add_component(self.obj, "SHADOWS")
@@ -2358,6 +2438,24 @@ class TestValidation(unittest.TestCase):
         issues = addon.validation.check_objects(bpy.data.objects, animations=False)
         self.assertEqual([addon.validation.describe(issue) for issue in issues], ["blade: Include Animations is off in the export, so nothing plays", "mill: Include Animations is off in the export, so nothing plays"])
 
+    def test_lightmaps(self):
+        floor = add_mesh(bpy.ops.mesh.primitive_plane_add, "floor")
+        item = add_component(floor, "LIGHTMAP")
+        self.assertEqual(self._messages(), ["floor: No second UV map, which Bevy reads lightmaps with. Click Unwrap Lightmap UVs", "floor: No lightmap baked yet, so the mesh gets no baked light"])
+        bpy.ops.bevy_components.unwrap_lightmap()
+        item.probe_file = str(LIGHTMAP)
+        self.assertEqual(self._messages(), [])
+        item.probe_file = str(CUBEMAP)
+        self.assertEqual(self._messages(), ["floor: probe_cubemap.ktx2 is not a 2D texture"])
+        item.probe_file = str(LIGHTMAP)
+        modifier = floor.modifiers.new("Bevel", "BEVEL")
+        self.assertEqual(self._messages(), ["floor: Bake includes the Bevel modifier but the export leaves it out, so the lightmap may not fit. Apply the modifier"])
+        modifier.show_render = False
+        self.assertEqual(self._messages(), [])
+        holder = add_empty("holder", (0, 0, 0))
+        holder.bevy_component_data.components.add().component_type = "LIGHTMAP"
+        self.assertEqual(self._messages(), ["holder: Only meshes use lightmaps, so it is not exported"])
+
     def test_light_probe_files(self):
         reflection = add_component(add_empty("probe", (0, 0, 0)), "REFLECTION_PROBE")
         irradiance = add_component(add_empty("volume", (0, 0, 0)), "IRRADIANCE_VOLUME")
@@ -2659,6 +2757,20 @@ def _ktx2_pixels(path):
     return numpy.frombuffer(data[offset:offset + length], dtype="<f2").astype(numpy.float32).reshape(6 if info["faces"] == 6 else info["depth"], info["height"], info["width"], 4)
 
 
+def _lightmap_pixels(path):
+    data = Path(bpy.path.abspath(path)).read_bytes()
+    info = addon.compression.ktx2_info(data)
+    offset, length = struct.unpack_from("<QQ", data, 80)
+    packed = numpy.frombuffer(data[offset:offset + length], dtype="<u4").reshape(info["height"], info["width"])
+    channels = numpy.stack([(packed >> shift) & 511 for shift in (0, 9, 18)], axis=-1).astype(numpy.float64)
+    return channels * 2.0 ** ((packed >> 27).astype(numpy.float64) - 24)[..., None]
+
+
+def _lightmap_texel(obj, polygon, size):
+    u, v = numpy.mean([tuple(obj.data.uv_layers[1].data[index].uv) for index in polygon.loop_indices], axis=0)
+    return min(int((1 - v) * size), size - 1), min(int(u * size), size - 1)
+
+
 def _bevy_lookup(obj, item, direction):
     probe = BEVY_FROM_BLENDER @ obj.matrix_world.to_3x3() @ BEVY_FROM_BLENDER.transposed() @ Matrix.Diagonal(item.volume_size)
     local = probe.inverted() @ BEVY_FROM_BLENDER @ Vector(direction)
@@ -2733,6 +2845,90 @@ class TestBakeLighting(unittest.TestCase):
         operator._jobs = operator._find_jobs(context)
         self.assertEqual(operator._start(context, self.settings, _fake_blender(self.directory.name)), {"RUNNING_MODAL"})
         return operator
+
+    def _lightmapped(self, name="floor", resolution="64", grid=True):
+        if grid:
+            bpy.ops.mesh.primitive_grid_add(x_subdivisions=8, y_subdivisions=8, size=4)
+        else:
+            bpy.ops.mesh.primitive_plane_add(size=40)
+        floor = bpy.context.object
+        floor.name = name
+        item = add_component(floor, "LIGHTMAP", lightmap_resolution=resolution)
+        bpy.ops.bevy_components.unwrap_lightmap()
+        return floor, item
+
+    def test_lightmaps_hold_light_where_bevy_samples_it(self):
+        _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "red", size=1, location=(3, 0, 0.5)), (1.0, 0.0, 0.0))
+        _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "green", size=1, location=(0, 3, 0.5)), (0.0, 1.0, 0.0))
+        floor, item = self._lightmapped()
+        self.settings.samples = 32
+        before = (len(bpy.data.materials), len(bpy.data.images), len(floor.material_slots), [obj.name for obj in bpy.context.selected_objects], bpy.context.view_layer.objects.active)
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="floor", index=0), {"FINISHED"})
+        self.assertEqual(item.probe_file, "//baked_lighting/floor_lightmap.ktx2")
+        self.assertEqual((len(bpy.data.materials), len(bpy.data.images), len(floor.material_slots), [obj.name for obj in bpy.context.selected_objects], bpy.context.view_layer.objects.active), before)
+        pixels = _lightmap_pixels(item.probe_file)
+        self.assertEqual(pixels.shape, (64, 64, 3))
+        centers = numpy.array([tuple(floor.matrix_world @ polygon.center) for polygon in floor.data.polygons])
+        values = numpy.array([pixels[_lightmap_texel(floor, polygon, 64)] for polygon in floor.data.polygons])
+        for channel, axis in ((0, 0), (1, 1)):
+            near = values[centers[:, axis] > 1.0, channel].mean()
+            far = values[centers[:, axis] < -1.0, channel].mean()
+            self.assertGreater(near, 2 * far, f"channel {channel} is {near:.3g} near its light and {far:.3g} away from it")
+        self.assertGreater(values[:, 0].max(), 10.0)
+        self.assertLess(values[:, 2].max(), 1.0)
+
+    def test_lightmaps_bake_the_direct_light_of_lamps_marked_baked(self):
+        floor, item = self._lightmapped(resolution="128", grid=False)
+        material, shader = add_material("floor")
+        floor.data.materials.append(material)
+        nodes = (len(material.node_tree.nodes), material.node_tree.nodes.active)
+        sun = add_light("sun", "SUN", (0, 0, 10), energy=3.0)
+        light = add_component(sun, "LIGHT")
+        lightmaps = {}
+        for baked in (False, True):
+            light.light_baked = baked
+            self.assertEqual(addon.bake.lighting_jobs(self.scene.objects, self.settings.folder)[0]["baked_lamps"], ["sun"] if baked else [])
+            self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+            lightmaps[baked] = _lightmap_pixels(item.probe_file)[32:96, 32:96]
+        self.assertLess(lightmaps[False].max(), 5.0)
+        self.assertAlmostEqual(float(lightmaps[True].mean()) / (3.0 / math.pi * 683), 1.0, delta=0.05)
+        self.assertFalse(sun.hide_render)
+        self.assertEqual((len(material.node_tree.nodes), material.node_tree.nodes.active, [slot.material for slot in floor.material_slots]), (*nodes, [material]))
+
+    def test_lightmaps_need_a_second_uv_map(self):
+        floor = add_mesh(bpy.ops.mesh.primitive_plane_add, "floor")
+        add_component(floor, "LIGHTMAP")
+        message = "floor has no second UV map for its lightmap. Click Unwrap Lightmap UVs on its Lightmap"
+        with self.assertRaisesRegex(RuntimeError, message):
+            bpy.ops.bevy_components.bake_lighting()
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertIn(message, " ".join(operator.layout.texts()))
+        self.assertFalse(self.folder.exists())
+        select(add_empty("holder", (0, 0, 0)))
+        bpy.data.objects["holder"].bevy_component_data.components.add().component_type = "LIGHTMAP"
+        self.assertEqual([job["object"] for job in addon.bake.lighting_jobs(self.scene.objects, self.settings.folder)], ["floor"])
+
+    def test_dialog_explains_what_lightmaps_hold(self):
+        self._lightmapped(resolution="128")
+        self._probe("room", "REFLECTION_PROBE")
+        self._probe("hall", "REFLECTION_PROBE")
+        self._probe("gi", "IRRADIANCE_VOLUME")
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        texts = " ".join(operator.layout.texts())
+        self.assertIn("Bakes 1 lightmap, 2 reflection probes and 1 irradiance volume", operator.layout.texts())
+        self.assertIn("Lightmaps hold sky light, bounced light and the direct light of lamps marked Baked in their Light component, none here. Bevy lights the meshes with the other lamps", texts)
+        self.assertIn("Bevy's ambient light adds to the sky light baked into lightmaps. Turn on Bevy Ambient Light and its Baked option in World properties", texts)
+        add_component(add_light("sun", "SUN", (0, 0, 10)), "LIGHT", light_baked=True)
+        add_component(add_light("window", "AREA", (0, 0, 3)), "LIGHT", light_baked=True)
+        self.scene.world.bevy_ambient_light.enabled = True
+        self.scene.world.bevy_ambient_light.baked = True
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        texts = " ".join(operator.layout.texts())
+        self.assertIn("in their Light component, 1 lamp here.", texts)
+        self.assertNotIn("ambient light", texts.lower())
 
     def test_cubemaps_hold_what_bevy_samples_in_each_direction(self):
         for direction, color in SIDE_COLORS.items():
@@ -2813,9 +3009,10 @@ class TestBakeLighting(unittest.TestCase):
     def test_baked_files_pass_khronos_validation(self):
         _room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
         _gi, volume = self._probe("gi", "IRRADIANCE_VOLUME", bake_voxels=(3, 2, 1))
+        _floor, lightmap = self._lightmapped(resolution="128")
         self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
         path, _version = addon.encoder.check_encoder()
-        for item in (reflection, volume):
+        for item in (reflection, volume, lightmap):
             result = subprocess.run([str(path), "validate", bpy.path.abspath(item.probe_file)], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, f"{item.probe_file}: {result.stdout}{result.stderr}")
 
@@ -2825,7 +3022,7 @@ class TestBakeLighting(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="second", index=0), {"FINISHED"})
         self.assertEqual((first.probe_file, second.probe_file), ("", "//baked_lighting/second_irradiance.ktx2"))
         self.assertEqual([path.name for path in self.folder.iterdir()], ["second_irradiance.ktx2"])
-        with self.assertRaisesRegex(RuntimeError, "No enabled Reflection Probes or Irradiance Volumes to bake"):
+        with self.assertRaisesRegex(RuntimeError, "No enabled Lightmaps, Reflection Probes or Irradiance Volumes to bake"):
             bpy.ops.bevy_components.bake_lighting(object_name="second", index=1)
 
     def test_needs_a_folder_and_object_mode(self):
@@ -2864,7 +3061,7 @@ class TestBakeLighting(unittest.TestCase):
             raise RuntimeError("Cycles ran out of memory")
 
         with mock.patch.object(addon.operator, "bake_jobs", failing):
-            with self.assertRaisesRegex(RuntimeError, "Baking lighting failed after 1 probe: Cycles ran out of memory"):
+            with self.assertRaisesRegex(RuntimeError, "Baking lighting failed after 1 reflection probe: Cycles ran out of memory"):
                 bpy.ops.bevy_components.bake_lighting()
         self.assertEqual((first.probe_file, second.probe_file), ("//baked_lighting/first_reflection.ktx2", ""))
 
@@ -2872,7 +3069,7 @@ class TestBakeLighting(unittest.TestCase):
         operator = _bake_operator(layout=FakeLayout(self))
         addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
         self.assertEqual(operator.layout.props(), ["samples", "folder", "lamp_direct"])
-        self.assertIn("No enabled Reflection Probes or Irradiance Volumes in this scene", " ".join(operator.layout.texts()))
+        self.assertIn("No enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", " ".join(operator.layout.texts()))
         self._probe("room", "REFLECTION_PROBE")
         self._probe("hall", "REFLECTION_PROBE")
         self._probe("gi", "IRRADIANCE_VOLUME")
@@ -2891,6 +3088,7 @@ class TestBakeLighting(unittest.TestCase):
     def test_background_bakes_render_a_saved_copy(self):
         _room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
         gi, volume = self._probe("gi", "IRRADIANCE_VOLUME", bake_voxels=(2, 1, 2))
+        _floor, lightmap = self._lightmapped(resolution="128")
         context = self._context()
         operator = self._start(context)
         scratch = Path(operator._directory.name)
@@ -2900,9 +3098,10 @@ class TestBakeLighting(unittest.TestCase):
         self.assertEqual(json.loads((scratch / "bake.json").read_text(encoding="utf-8"))["jobs"], operator._jobs)
         bpy.data.objects.remove(gi)
         self.assertEqual(_wait_for(operator, context), {"FINISHED"})
-        self.assertEqual(operator.reports, [("INFO", "Baked 1 probe into //baked_lighting/")])
-        self.assertEqual(reflection.probe_file, "//baked_lighting/room_reflection.ktx2")
-        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ["gi_irradiance.ktx2", "room_reflection.ktx2"])
+        self.assertEqual(operator.reports, [("INFO", "Baked 1 lightmap and 1 reflection probe into //baked_lighting/")])
+        self.assertEqual((reflection.probe_file, lightmap.probe_file), ("//baked_lighting/room_reflection.ktx2", "//baked_lighting/floor_lightmap.ktx2"))
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ["floor_lightmap.ktx2", "gi_irradiance.ktx2", "room_reflection.ktx2"])
+        self.assertEqual(addon.probe.check_texture((self.folder / "floor_lightmap.ktx2").read_bytes(), "LIGHTMAP"), (None, "128 × 128 lightmap"))
         self.assertEqual(addon.probe.check_texture((self.folder / "gi_irradiance.ktx2").read_bytes(), "VOXELS"), (None, "2 × 1 × 2 voxels"))
         context.window_manager.event_timer_remove.assert_called_once_with("timer")
         self.assertEqual(addon.operator._bakes, {})
@@ -2935,6 +3134,20 @@ class TestBakeLighting(unittest.TestCase):
         self.assertRegex(operator.reports[0][1], "^Baking lighting failed: .*taken")
 
 
+class TestSharedExponents(unittest.TestCase):
+    def test_values_survive_the_round_trip(self):
+        values = 10 ** numpy.random.default_rng(7).uniform(-4, 4.8, (4096, 3))
+        values = numpy.concatenate((values, [[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [65408.0, 1.0, 0.0], [90000.0, -5.0, numpy.nan], [1e-9, 0.0, 0.0]]))
+        packed = numpy.frombuffer(addon.bake.shared_exponents(values), dtype="<u4")
+        self.assertEqual(int(packed[-4]), 256 | 256 << 9 | 256 << 18 | 16 << 27)
+        self.assertEqual(int(packed[-5]), 0)
+        self.assertTrue(((packed >> 27) <= 31).all())
+        decoded = numpy.stack([(packed >> shift) & 511 for shift in (0, 9, 18)], axis=-1) * 2.0 ** ((packed >> 27).astype(numpy.float64) - 24)[..., None]
+        expected = numpy.clip(numpy.nan_to_num(values), 0.0, 65408.0)
+        self.assertTrue(numpy.array_equal(decoded[-3], [65408.0, 0.0, 0.0]))
+        self.assertTrue((numpy.abs(decoded - expected) <= expected.max(axis=-1, keepdims=True) * 2.0 ** -9 + 2.0 ** -24).all())
+
+
 class TestBackgroundBake(unittest.TestCase):
     def _run(self, script, total, **options):
         task = addon.bake.BackgroundBake([sys.executable, "-c", script], total, **options)
@@ -2946,13 +3159,13 @@ class TestBackgroundBake(unittest.TestCase):
         task = self._run("print('BEVY_BAKE_SAMPLES 8 32'); print('BEVY_BAKE_PROGRESS 1'); print('BEVY_BAKE_SAMPLES 16 32'); print('BEVY_BAKE_PROGRESS 2')", 2)
         self.assertEqual((task.done, task.fraction, task.error, task.cancelled), (2, 0.0, None, False))
         task = self._run("print('BEVY_BAKE_PROGRESS 1'); print('BEVY_BAKE_SAMPLES 8 32')", 2)
-        self.assertEqual((task.done, task.fraction, task.error), (1, 0.25, "Blender stopped after 1 of 2 probes: no output"))
+        self.assertEqual((task.done, task.fraction, task.error), (1, 0.25, "Blender stopped after baking 1 of 2: no output"))
 
     def test_failures_are_reported(self):
         cases = (
             ("print('BEVY_BAKE_ERROR No space left on device'); raise SystemExit(1)", "No space left on device"),
             ("print('Segmentation fault'); raise SystemExit(139)", "Blender stopped with exit code 139: Segmentation fault"),
-            ("print('BEVY_BAKE_PROGRESS 1'); print('Blender quit')", "Blender stopped after 1 of 2 probes: Blender quit"),
+            ("print('BEVY_BAKE_PROGRESS 1'); print('Blender quit')", "Blender stopped after baking 1 of 2: Blender quit"),
         )
         for script, error in cases:
             self.assertEqual(self._run(script, 2).error, error, script)
@@ -3052,18 +3265,18 @@ class TestTextureCompression(unittest.TestCase):
     def test_compression_is_off_by_default(self):
         gltf, binary = self.exports["DISABLED"]
         self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsUsed", []))
-        self.assertEqual({image["mimeType"] for image in gltf["images"] if image["name"] not in PROBE_IMAGES}, {"image/png"})
-        self.assertEqual({image["mimeType"] for image in gltf["images"] if image["name"] in PROBE_IMAGES}, {"image/ktx2"})
+        self.assertEqual({image["mimeType"] for image in gltf["images"] if image["name"] not in LIGHTING_IMAGES}, {"image/png"})
+        self.assertEqual({image["mimeType"] for image in gltf["images"] if image["name"] in LIGHTING_IMAGES}, {"image/ktx2"})
         self.assertIn(addon.compression.PNG_SIGNATURE, binary)
 
     def test_textures_reference_embedded_ktx2(self):
         for mode, (gltf, binary) in self.compressed.items():
             self.assertIn("KHR_texture_basisu", gltf["extensionsUsed"], mode)
             self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"], mode)
-            self.assertEqual(len(gltf["textures"]), 11, mode)
+            self.assertEqual(len(gltf["textures"]), 12, mode)
             for texture in gltf["textures"]:
                 if "source" in texture:
-                    self.assertIn(gltf["images"][texture["source"]]["name"], PROBE_IMAGES, mode)
+                    self.assertIn(gltf["images"][texture["source"]]["name"], LIGHTING_IMAGES, mode)
                     self.assertNotIn("extensions", texture, mode)
                     continue
                 self.assertLess(texture["extensions"]["KHR_texture_basisu"]["source"], len(gltf["images"]), mode)
@@ -3077,7 +3290,7 @@ class TestTextureCompression(unittest.TestCase):
     def test_shared_images_are_embedded_once(self):
         for mode, (gltf, binary) in self.compressed.items():
             names = sorted(image["name"] for image in gltf["images"])
-            self.assertEqual(names, ["ball_pixels", "irradiance_volume", "lamp_emissive", "metal_color", "pillar_gradient", "probe_cubemap", "wood_color", "wood_normal", "wood_orm", "wood_orm"], mode)
+            self.assertEqual(names, ["ball_pixels", "ground_lightmap", "irradiance_volume", "lamp_emissive", "metal_color", "pillar_gradient", "probe_cubemap", "wood_color", "wood_normal", "wood_orm", "wood_orm"], mode)
             sources = [texture["extensions"]["KHR_texture_basisu"]["source"] for texture in gltf["textures"] if "source" not in texture]
             self.assertEqual(len(sources) - len(set(sources)), 1, mode)
 
@@ -3087,14 +3300,14 @@ class TestTextureCompression(unittest.TestCase):
             for index, image in enumerate(gltf["images"]):
                 file = Path(self.directory.name) / f"{mode}_{index}.ktx2"
                 file.write_bytes(addon.compression.image_payload(gltf, binary, index)[0])
-                result = subprocess.run([str(path), "validate", *(() if image["name"] in PROBE_IMAGES else ("--gltf-basisu",)), str(file)], capture_output=True, text=True)
+                result = subprocess.run([str(path), "validate", *(() if image["name"] in LIGHTING_IMAGES else ("--gltf-basisu",)), str(file)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, f"{mode} {image['name']}: {result.stdout}{result.stderr}")
 
     def test_codecs_color_spaces_and_mipmaps(self):
         for mode, (gltf, binary) in self.compressed.items():
             usages = _usages(gltf)
             for index, (name, _mime_type, model, width, height, levels, transfer, primaries) in enumerate(_texture_summary(gltf, binary)):
-                if name in PROBE_IMAGES:
+                if name in LIGHTING_IMAGES:
                     continue
                 kinds = {usage for _material, _slot, usage in usages[index]}
                 self.assertEqual(len(kinds), 1, f"{mode} {name}")

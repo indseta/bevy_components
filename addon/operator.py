@@ -7,14 +7,14 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
-from .bake import BackgroundBake, bake_command, bake_jobs, probe_jobs
+from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, lighting_jobs, unwrap_lightmap
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
-from .system import accepts, apply_definitions, asset_path, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .system import accepts, apply_definitions, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import body_kind, check_objects, count, describe, draw_issues, draw_message, issue_summary
 
 TEXTURE_COMPRESSION = [
@@ -24,6 +24,10 @@ TEXTURE_COMPRESSION = [
     ("AUTOMATIC", "Automatic", "UASTC for normal maps, data textures such as metallic-roughness and pixel art with Closest sampling, ETC1S for other color textures"),
 ]
 PROGRESS_INTERVAL = 0.1
+ACCEPTED_OBJECTS = {
+    "LIGHT": "light",
+    "LIGHTMAP": "mesh",
+}
 IDENTITY_PROPERTIES = {
     "CUSTOM": {"custom_type"},
     "SCENE_REFERENCE": {"scene_file"},
@@ -107,6 +111,10 @@ def _has_probes(objects):
     return any(item.component_type in FILE_KINDS for obj in objects for item in components_for(obj))
 
 
+def _missing_uv_maps(jobs):
+    return [job["object"] for job in jobs if job["kind"] == "LIGHTMAP" and not job["uv_map"]]
+
+
 def _show_scene_properties(context):
     areas = [context.area] if context.area and context.area.type == "PROPERTIES" else [area for area in context.screen.areas if area.type == "PROPERTIES"] if context.screen else []
     for area in areas[:1]:
@@ -131,7 +139,7 @@ class BEVY_OT_add_component(bpy.types.Operator):
         items = obj.bevy_component_data.components
         defined = self.component_type == "CUSTOM" and self.type_path
         if not accepts(obj, self.component_type):
-            self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} only works on light objects")
+            self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} only works on {ACCEPTED_OBJECTS[self.component_type]} objects")
             return {"CANCELLED"}
         if self.component_type != "CUSTOM" and any(existing.component_type == self.component_type for existing in items):
             self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} is already on {obj.name}")
@@ -863,10 +871,40 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         return {"FINISHED"}
 
 
+class BEVY_OT_unwrap_lightmap(bpy.types.Operator):
+    bl_idname = "bevy_components.unwrap_lightmap"
+    bl_label = "Unwrap Lightmap UVs"
+    bl_description = "Unwrap the mesh into its second UV map, which Bevy reads lightmaps with, adding the map when the mesh has fewer than two. Islands are spaced a few pixels apart at the lightmap's Bake Size"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if obj is None or obj.type != "MESH" or obj.library is not None or obj.data.library is not None:
+            cls.poll_message_set("Select a mesh of this file to unwrap")
+            return False
+        if context.mode != "OBJECT":
+            cls.poll_message_set("Switch to Object Mode to unwrap lightmap UVs")
+            return False
+        return True
+
+    def execute(self, context):
+        obj = context.object
+        item = component_of(obj, "LIGHTMAP")
+        size = int(item.lightmap_resolution) if item is not None else 512
+        try:
+            layer = unwrap_lightmap(context.view_layer, obj, size)
+        except RuntimeError as error:
+            self.report({"ERROR"}, f"Could not unwrap {obj.name}: {error}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Unwrapped {obj.name} into UV map {layer.name} for a {size} px lightmap")
+        return {"FINISHED"}
+
+
 class BEVY_OT_cancel_bake(bpy.types.Operator):
     bl_idname = "bevy_components.cancel_bake"
     bl_label = "Cancel Bake"
-    bl_description = "Stop baking lighting. Probes that already finished keep their new files"
+    bl_description = "Stop baking lighting. Lightmaps and probes that already finished keep their new files"
 
     @classmethod
     def poll(cls, context):
@@ -882,7 +920,7 @@ class BEVY_OT_cancel_bake(bpy.types.Operator):
 class BEVY_OT_bake_lighting(bpy.types.Operator):
     bl_idname = "bevy_components.bake_lighting"
     bl_label = "Bake Lighting"
-    bl_description = "Render every enabled Reflection Probe and Irradiance Volume in the scene with Cycles and save them as KTX2 files, in the background while you keep working"
+    bl_description = "Render every enabled Lightmap, Reflection Probe and Irradiance Volume in the scene with Cycles and save them as KTX2 files, in the background while you keep working"
     bl_options = {"REGISTER", "UNDO"}
 
     object_name: StringProperty(name="Object", options={"HIDDEN", "SKIP_SAVE"})
@@ -908,7 +946,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
     @classmethod
     def description(cls, context, properties):
         if properties.object_name:
-            return "Render this probe with Cycles and save it as a KTX2 file, in the background while you keep working. Samples and folder are set in Bake Lighting"
+            return "Render this component's lighting with Cycles and save it as a KTX2 file, in the background while you keep working. Samples and folder are set in Bake Lighting"
         return cls.bl_description
 
     def draw(self, context):
@@ -922,16 +960,25 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         width = context.region.width if context.region else 300
         jobs = self._find_jobs(context)
         if not jobs:
-            draw_message(layout, "No enabled Reflection Probes or Irradiance Volumes in this scene", icon="ERROR", width=width)
+            draw_message(layout, "No enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", icon="ERROR", width=width)
             return
         if settings.folder.startswith("//") and not bpy.data.filepath:
             draw_message(layout, "Save the .blend file first, or pick a folder that does not start with //", icon="ERROR", width=width)
-        volumes = sum(1 for job in jobs if job["kind"] == "VOXELS")
+        missing = _missing_uv_maps(jobs)
+        if missing:
+            draw_message(layout, f"{missing[0]} has no second UV map for its lightmap. Click Unwrap Lightmap UVs on its Lightmap", icon="ERROR", width=width)
         row = layout.row()
         row.active = False
-        row.label(text=f"Bakes {' and '.join(count(number, word) for number, word in ((len(jobs) - volumes, 'reflection probe'), (volumes, 'irradiance volume')) if number)}", icon="INFO")
+        row.label(text=f"Bakes {bake_summary(jobs)}", icon="INFO")
         world = context.scene.world
-        if volumes and world is not None and world.bevy_ambient_light.enabled:
+        ambient = world.bevy_ambient_light if world is not None else None
+        lightmaps = [job for job in jobs if job["kind"] == "LIGHTMAP"]
+        if lightmaps:
+            lamps = len(lightmaps[0]["baked_lamps"])
+            draw_message(layout, f"Lightmaps hold sky light, bounced light and the direct light of lamps marked Baked in their Light component, {count(lamps, 'lamp') if lamps else 'none'} here. Bevy lights the meshes with the other lamps", icon="INFO", width=width)
+            if ambient is None or not ambient.enabled or not ambient.baked:
+                draw_message(layout, "Bevy's ambient light adds to the sky light baked into lightmaps. Turn on Bevy Ambient Light and its Baked option in World properties", icon="INFO", width=width)
+        elif any(job["kind"] == "VOXELS" for job in jobs) and ambient is not None and ambient.enabled:
             draw_message(layout, "Bevy Ambient Light adds to the sky light baked into irradiance volumes. Turn it off in World properties unless the level needs it outside the volumes", icon="INFO", width=width)
 
     def invoke(self, context, event):
@@ -952,7 +999,11 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         self._jobs = self._find_jobs(context)
         self._folder = settings.folder
         if not self._jobs:
-            self.report({"ERROR"}, "No enabled Reflection Probes or Irradiance Volumes to bake")
+            self.report({"ERROR"}, "No enabled Lightmaps, Reflection Probes or Irradiance Volumes to bake")
+            return {"CANCELLED"}
+        missing = _missing_uv_maps(self._jobs)
+        if missing:
+            self.report({"ERROR"}, f"{missing[0]} has no second UV map for its lightmap. Click Unwrap Lightmap UVs on its Lightmap")
             return {"CANCELLED"}
         if self._interactive and context.window is not None and bpy.app.binary_path:
             return self._start(context, settings, bpy.app.binary_path)
@@ -977,7 +1028,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         self._stop_background(context)
         stored = self._store_files(self._task.done)
         if self._task.cancelled:
-            self.report({"INFO"}, f"Cancelled baking lighting after {count(stored, 'probe')}" if stored else "Cancelled baking lighting")
+            self.report({"INFO"}, f"Cancelled baking lighting after {bake_summary(stored)}" if stored else "Cancelled baking lighting")
             result = {"FINISHED"} if stored else {"CANCELLED"}
         elif self._task.error is not None:
             result = self._failed(self._task.error, stored)
@@ -994,7 +1045,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
 
     def _find_jobs(self, context):
         settings = context.scene.bevy_bake_settings
-        return probe_jobs(context.scene.objects, settings.folder, only=(self.object_name, self.index) if self.object_name else None)
+        return lighting_jobs(context.scene.objects, settings.folder, only=(self.object_name, self.index) if self.object_name else None)
 
     def _start(self, context, settings, binary):
         self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_bake_")
@@ -1019,6 +1070,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
             timer, _directory = _bakes.pop(self._task)
             context.window_manager.event_timer_remove(timer)
         redraw_status_bars()
+        redraw_properties()
 
     def _release(self):
         self._directory.cleanup()
@@ -1026,19 +1078,19 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         self._task = None
 
     def _store_files(self, done):
-        stored = 0
+        stored = []
         for job in self._jobs[:done]:
             obj = bpy.data.objects.get(job["object"])
             items = obj.bevy_component_data.components if obj is not None and obj.library is None else ()
             if job["index"] < len(items) and FILE_KINDS.get(items[job["index"]].component_type) == job["kind"]:
                 items[job["index"]].probe_file = job["file"]
-                stored += 1
+                stored.append(job)
         return stored
 
     def _failed(self, error, stored):
-        self.report({"ERROR"}, f"Baking lighting failed after {count(stored, 'probe')}: {error}" if stored else f"Baking lighting failed: {error}")
+        self.report({"ERROR"}, f"Baking lighting failed after {bake_summary(stored)}: {error}" if stored else f"Baking lighting failed: {error}")
         return {"FINISHED"} if stored else {"CANCELLED"}
 
     def _finish(self, stored):
-        self.report({"INFO"}, f"Baked {count(stored, 'probe')} into {self._folder}")
+        self.report({"INFO"}, f"Baked {bake_summary(stored)} into {self._folder}")
         return {"FINISHED"}

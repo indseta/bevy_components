@@ -2,7 +2,7 @@ use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, Col
 use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 use std::iter;
-use crate::{component::*, data::*, joint::*, light, texture::GltfTextures};
+use crate::{component::*, data::*, joint::*, light, lightmap, texture::GltfTextures};
 
 const MAX_CUBEMAP_SIZE: u32 = 8192;
 const CUBE_FACES: u32 = 6;
@@ -120,6 +120,13 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         continue;
                     };
                     commands.spawn((Name::new("Irradiance Volume"), LightProbe { falloff: Vec3::from_array(falloff) }, IrradianceVolume { voxels, intensity, affects_lightmapped_meshes: true }, Transform::from_scale(Vec3::from_array(size)), ChildOf(entity)));
+                }
+                ExportedComponent::Lightmap { bicubic, texture } => {
+                    let Some(image) = texture_handle(textures, texture) else {
+                        warn!("No lightmap embedded for {:?}", name);
+                        continue;
+                    };
+                    commands.entity(entity).insert(lightmap::PendingLightmap { image, bicubic });
                 }
                 ExportedComponent::Unsupported => warn!("Unsupported Bevy component on {:?}", name),
             }

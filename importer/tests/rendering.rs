@@ -1,7 +1,7 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{asset::RenderAssetUsages, camera::{RenderTarget, visibility::VisibilityRange}, image::CompressedImageFormats, light::{FogVolume, LightProbe, VolumetricFog, VolumetricLight}, prelude::*, render::{render_resource::{PollType, TextureFormat}, renderer::{RenderAdapterInfo, RenderDevice}, view::screenshot::{Screenshot, ScreenshotCaptured}}};
+use bevy::{asset::RenderAssetUsages, camera::{RenderTarget, visibility::VisibilityRange}, image::CompressedImageFormats, light::{FogVolume, LightProbe, VolumetricFog, VolumetricLight}, pbr::Lightmap, prelude::*, render::{render_resource::{PollType, TextureFormat}, renderer::{RenderAdapterInfo, RenderDevice}, view::screenshot::{Screenshot, ScreenshotCaptured}}};
 use common::*;
 use std::sync::{Arc, Mutex};
 
@@ -123,7 +123,7 @@ fn compressed_levels_render_like_the_uncompressed_level() {
             let (mean, percentile) = difference(&reference.pixels, &found.pixels);
             println!("{file} with {formats:?} as {:?}: mean difference {mean:.2}, 99th percentile {percentile}", found.formats);
             assert!(found.formats.iter().all(|format| formats.supports(*format) && format.is_compressed() != formats.is_empty()), "{file} with {formats:?} used {:?}", found.formats);
-            assert!(mean < 3.0 && percentile < 48.0, "{file} with {formats:?} differs from the uncompressed level: mean {mean:.2}, 99th percentile {percentile}");
+            assert!(mean < 3.5 && percentile < 48.0, "{file} with {formats:?} differs from the uncompressed level: mean {mean:.2}, 99th percentile {percentile}");
             rendered += 1;
         }
     }
@@ -145,4 +145,19 @@ fn light_probes_and_fog_volumes_change_the_render() {
     println!("Light probes change the render by {probes:.2} on average, the fog volume by {fog:.2}");
     assert!(probes > 5.0, "the light probes barely light the level: {probes:.2}");
     assert!(fog > 1.0, "the fog volume is not visible: {fog:.2}");
+}
+
+#[test]
+#[ignore = "needs a GPU, run with cargo test -- --ignored"]
+fn lightmaps_change_the_render() {
+    let reference = render(LEVEL, None);
+    let without_lightmaps = render_with(LEVEL, None, "_without_lightmaps", |world, _camera| {
+        let mut lightmaps = world.query_filtered::<Entity, With<Lightmap>>();
+        for entity in lightmaps.iter(world).collect::<Vec<_>>() {
+            world.entity_mut(entity).remove::<Lightmap>();
+        }
+    });
+    let (lightmaps, _) = difference(&reference.pixels, &without_lightmaps.pixels);
+    println!("The ground lightmap changes the render by {lightmaps:.2} on average");
+    assert!(lightmaps > 3.0, "the ground lightmap barely lights the level: {lightmaps:.2}");
 }

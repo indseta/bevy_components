@@ -19,6 +19,7 @@ COMPONENT_TYPES = [
     ("FOG_VOLUME", "Fog Volume", "Box of volumetric fog, seen by cameras with VolumetricFog once a light has VolumetricLight", "OUTLINER_OB_VOLUME", 20),
     ("REFLECTION_PROBE", "Reflection Probe", "Box whose meshes reflect a cubemap embedded in the level", "LIGHTPROBE_SPHERE", 21),
     ("IRRADIANCE_VOLUME", "Irradiance Volume", "Box of light samples, from a 3D texture embedded in the level, that light the meshes inside it", "LIGHTPROBE_VOLUME", 22),
+    ("LIGHTMAP", "Lightmap", "Light baked into a texture embedded in the level, which lights this static mesh through its second UV map", "SHADING_TEXTURE", 23),
 ]
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
@@ -47,6 +48,7 @@ JOINT_TYPES = [
 JOINT_LABELS = {identifier: name for identifier, name, _description, _icon, _number in JOINT_TYPES}
 
 BAKE_SIZES = (64, 128, 256, 512, 1024)
+LIGHTMAP_SIZES = (64, 128, 256, 512, 1024, 2048)
 AXES = [
     ("X", "X", "Bevy's X axis"),
     ("Y", "Y (Up)", "Bevy's Y axis, which points up"),
@@ -156,13 +158,15 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     fog_light_intensity: FloatProperty(name="Light Intensity", description="Scales the light inside the fog, an artistic control that is not physically based", default=1.0, min=0.0, soft_max=10.0, update=sync_changed)
     probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so baked lighting matches the exported lamps", default=683.0, min=0.0, soft_max=100000.0, update=sync_changed)
     probe_parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the box walls, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
-    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the level: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the level: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume, a 2D texture for a Lightmap", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
     bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the level") for size in BAKE_SIZES], default="256")
     bake_voxels: IntVectorProperty(name="Voxels", description="Light samples that Bake places along the box's X, Y (up) and Z axes", size=3, default=(8, 4, 8), min=1, max=64)
+    lightmap_resolution: EnumProperty(name="Bake Size", description="Size of the lightmap that Bake renders. Unwrap the lightmap UVs again after changing it, so their islands stay a few pixels apart", items=[(str(size), f"{size} px", f"{size} × {size} pixels, which adds {size * size * 4 / 2 ** 20:.2g} MB to the level") for size in LIGHTMAP_SIZES], default="512")
+    lightmap_bicubic: BoolProperty(name="Bicubic Sampling", description="Smooth the lightmap's pixels with bicubic filtering, which costs a little more on the GPU and can leak light across nearby UV islands", default=False, update=sync_changed)
 
     light_use_intensity: BoolProperty(name="Set Intensity", description="Use this brightness in Bevy instead of the one converted from the light's power at 683 lumens per watt", default=False, update=light_intensity_toggled)
     light_intensity: FloatProperty(name="Intensity", description="Brightness in Bevy, in lumens for point, spot and area lights and in lux for sun lights", default=1000.0, min=0.0, soft_max=1000000.0, precision=1, update=sync_changed)
-    light_baked: BoolProperty(name="Baked", description="The light is already baked into lightmaps, so on meshes with a lightmap it only adds reflections", default=False, update=sync_changed)
+    light_baked: BoolProperty(name="Baked", description="Bake Lighting bakes this light's direct light into lightmaps, so on meshes with a lightmap Bevy only adds its reflections", default=False, update=sync_changed)
     light_volumetric: BoolProperty(name="Volumetric", description="Light up fog volumes with light shafts. Needs Shadows, and VolumetricFog on the game's camera", default=False, update=sync_changed)
     light_contact_shadows: BoolProperty(name="Contact Shadows", description="Add screen-space shadows where objects touch. Needs ContactShadows and a depth prepass on the game's camera", default=False, update=sync_changed)
     light_use_bias: BoolProperty(name="Custom Bias", description="Tune the shadow map instead of using Bevy's defaults for this kind of light", default=False, update=light_bias_toggled)

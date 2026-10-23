@@ -31,6 +31,10 @@ CUBEMAP_FACES = (
 )
 IRRADIANCE_VOLUME = PROBE_ASSETS / "irradiance_volume.ktx2"
 VOXELS = (2, 2, 2)
+LIGHTMAP = PROBE_ASSETS / "ground_lightmap.ktx2"
+LIGHTMAP_SIZE = 16
+LIGHTMAP_WARM = (900.0, 700.0, 450.0)
+LIGHTMAP_COOL = (120.0, 140.0, 200.0)
 AMBIENT_SIDES = (
     (0.4, 0.3, 0.25),
     (0.5, 0.35, 0.3),
@@ -313,6 +317,20 @@ def _irradiance_slice(depth):
     return rows
 
 
+def _shared_exponent(color):
+    largest = max(color)
+    exponent = max(-16, math.floor(math.log2(largest))) + 16 if largest > 0 else 0
+    if math.floor(largest / 2 ** (exponent - 24) + 0.5) >= 512:
+        exponent += 1
+    red, green, blue = (math.floor(value / 2 ** (exponent - 24) + 0.5) for value in color)
+    return struct.pack("<I", red | green << 9 | blue << 18 | exponent << 27)
+
+
+def _lightmap_texel(x, y):
+    weight = max(0.0, 1.0 - 2 * math.hypot((x + 0.5) / LIGHTMAP_SIZE - 0.5, (y + 0.5) / LIGHTMAP_SIZE - 0.5))
+    return tuple(cool + (warm - cool) * weight for warm, cool in zip(LIGHTMAP_WARM, LIGHTMAP_COOL))
+
+
 def make_probe_textures(ktx):
     PROBE_ASSETS.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="bevy_components_") as directory:
@@ -327,6 +345,9 @@ def make_probe_textures(ktx):
         common = [str(ktx), "create", "--raw", "--format", "R16G16B16A16_SFLOAT", "--assign-tf", "linear"]
         subprocess.run([*common, "--width", str(CUBEMAP_SIZE), "--height", str(CUBEMAP_SIZE), "--cubemap", *map(str, faces), str(CUBEMAP)], check=True)
         subprocess.run([*common, "--width", str(VOXELS[0]), "--height", str(VOXELS[1] * 2), "--depth", str(VOXELS[2] * 3), *map(str, slices), str(IRRADIANCE_VOLUME)], check=True)
+        lightmap = Path(directory) / "lightmap.raw"
+        lightmap.write_bytes(b"".join(_shared_exponent(_lightmap_texel(x, y)) for y in range(LIGHTMAP_SIZE) for x in range(LIGHTMAP_SIZE)))
+        subprocess.run([str(ktx), "create", "--raw", "--format", "E5B9G9R9_UFLOAT_PACK32", "--assign-tf", "linear", "--width", str(LIGHTMAP_SIZE), "--height", str(LIGHTMAP_SIZE), str(lightmap), str(LIGHTMAP)], check=True)
 
 
 def layers(*numbers):
@@ -379,6 +400,9 @@ def build_sample_level(directory=FIXTURE.parent):
     ground = add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=20)
     add_component(ground, "COLLIDER", collider_shape="TRIMESH")
     add_component(ground, "RIGID_BODY", rigid_body_kind="STATIC")
+    add_component(ground, "LIGHTMAP", lightmap_resolution="128", lightmap_bicubic=True, probe_file=str(LIGHTMAP))
+    select(ground)
+    bpy.ops.bevy_components.unwrap_lightmap()
 
     crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2, location=(3, -2, 1), rotation=(0, 0, math.radians(30)))
     add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_friction=0.8, collider_restitution=0.1)

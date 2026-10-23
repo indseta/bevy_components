@@ -1,7 +1,7 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
+use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
 use bevy_components_importer::{BlenderCustomComponents, GltfTextures};
 use common::*;
 use serde::Deserialize;
@@ -320,6 +320,67 @@ fn light_probes_need_usable_textures() {
     assert!(probes.iter().all(|probe| matches!(world.get::<ParallaxCorrection>(*probe), Some(ParallaxCorrection::None))));
     assert_eq!(world.get::<GeneratedEnvironmentMapLight>(probes[0]).map(|light| (light.environment_map.id(), light.intensity)), Some((cubemaps[0].id(), 100.0)));
     assert!(world.get::<GeneratedEnvironmentMapLight>(probes[1]).is_none());
+}
+
+fn shared_exponent_texel(image: &Image, x: usize, y: usize) -> Vec3 {
+    let width = image.texture_descriptor.size.width as usize;
+    let data = image.data.as_ref().expect("lightmap pixels");
+    let offset = (y * width + x) * 4;
+    let packed = u32::from_le_bytes(data[offset..offset + 4].try_into().expect("four bytes"));
+    let scale = 2.0_f32.powi((packed >> 27) as i32 - 24);
+    return Vec3::new((packed & 511) as f32, (packed >> 9 & 511) as f32, (packed >> 18 & 511) as f32) * scale;
+}
+
+fn lightmap_extras(texture: Value) -> GltfExtras {
+    return light_extras(json!([{"type": "lightmap", "bicubic": false, "texture": texture}]));
+}
+
+#[test]
+fn lightmaps_light_meshes_from_embedded_textures() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let ground = mesh(world, "ground");
+    let lightmap = world.get::<Lightmap>(ground).expect("ground has a lightmap").clone();
+    assert_eq!((lightmap.uv_rect, lightmap.bicubic_sampling), (Rect::new(0.0, 0.0, 1.0, 1.0), true));
+    let mesh_handle = world.get::<Mesh3d>(ground).expect("ground has a mesh").0.clone();
+    assert!(world.resource::<Assets<Mesh>>().get(&mesh_handle).expect("the mesh is loaded").attribute(Mesh::ATTRIBUTE_UV_1).is_some());
+    let image = world.resource::<Assets<Image>>().get(&lightmap.image).expect("the lightmap is loaded");
+    assert_eq!((image.texture_descriptor.size, image.texture_descriptor.format), (Extent3d { width: 16, height: 16, depth_or_array_layers: 1 }, TextureFormat::Rgb9e5Ufloat));
+    let center = shared_exponent_texel(image, 8, 8);
+    let corner = shared_exponent_texel(image, 0, 0);
+    assert!(center.x > 800.0 && center.x > center.z, "the center of the ground lightmap is {center}");
+    assert!(corner.x < 200.0 && corner.z > corner.x, "the corner of the ground lightmap is {corner}");
+    let mut lightmaps = world.query::<&Lightmap>();
+    assert_eq!(lightmaps.iter(world).count(), 1);
+}
+
+#[test]
+fn lightmaps_need_a_mesh_with_two_uv_maps() {
+    let mut app = LevelApp::default().build();
+    let world = app.world_mut();
+    let image = world.resource_mut::<Assets<Image>>().add(Image::default());
+    let plain = Mesh::from(Plane3d::default());
+    let uvs = plain.attribute(Mesh::ATTRIBUTE_UV_0).expect("planes have UVs").clone();
+    let mut meshes = world.resource_mut::<Assets<Mesh>>();
+    let plain = meshes.add(plain.clone());
+    let unwrapped = meshes.add(Mesh::from(Plane3d::default()).with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, uvs));
+    let mut spawn = |name: &str, texture: Value, mesh: &Handle<Mesh>| -> Entity {
+        let node = world.spawn((Name::new(name.to_string()), Transform::default(), lightmap_extras(texture), GltfTextures(vec![image.clone()]))).id();
+        return world.spawn((Mesh3d(mesh.clone()), Transform::default(), ChildOf(node))).id();
+    };
+    let lit = spawn("lit", json!(0), &unwrapped);
+    let one_uv_map = spawn("one_uv_map", json!(0), &plain);
+    let missing = spawn("missing", json!(3), &unwrapped);
+    let world = app.world_mut();
+    let meshless = world.spawn((Name::new("meshless"), Transform::default(), lightmap_extras(json!(0)), GltfTextures(vec![image.clone()]))).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    assert_eq!(world.get::<Lightmap>(lit).map(|lightmap| (lightmap.image.id(), lightmap.bicubic_sampling)), Some((image.id(), false)));
+    assert!(world.get::<Lightmap>(one_uv_map).is_none());
+    assert!(world.get::<Lightmap>(missing).is_none());
+    assert!(world.get::<Lightmap>(meshless).is_none());
 }
 
 #[test]

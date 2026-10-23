@@ -23,6 +23,13 @@ def redraw_viewports(_self=None, _context=None):
                 area.tag_redraw()
 
 
+def redraw_properties():
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            if area.type == "PROPERTIES":
+                area.tag_redraw()
+
+
 def redraw_status_bars():
     bpy.msgbus.publish_rna(key=(bpy.types.ViewLayer, "name"))
 
@@ -79,7 +86,16 @@ def inherited(obj, kind):
 
 
 def accepts(obj, kind):
-    return kind != "LIGHT" or light_of(obj) is not None
+    if kind == "LIGHT":
+        return light_of(obj) is not None
+    if kind == "LIGHTMAP":
+        return getattr(obj, "type", None) == "MESH"
+    return True
+
+
+def lightmap_uv_map(obj):
+    layers = obj.data.uv_layers if getattr(obj, "type", None) == "MESH" else ()
+    return layers[1] if len(layers) > 1 else None
 
 
 def children_map(objects):

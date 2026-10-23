@@ -429,7 +429,17 @@ def _label_lines(obj, settings, children):
     light = component_of(obj, "LIGHT")
     if light and settings.lights:
         descriptions.append(light_label(obj, light))
+    lightmap = component_of(obj, "LIGHTMAP")
+    if lightmap and obj.type == "MESH":
+        descriptions.append(_lightmap_label(obj, lightmap))
     return descriptions + _joint_label(obj, settings)
+
+
+def _lightmap_label(obj, item):
+    if not item.probe_file.strip():
+        return "Lightmap · not baked"
+    check = texture_check(obj, item)
+    return f"Lightmap · {check.message.removesuffix(' lightmap')}" if check.level is None else "Lightmap · file problem, see its card"
 
 
 def _joint_label(obj, settings):

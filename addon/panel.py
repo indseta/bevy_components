@@ -4,9 +4,9 @@ import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
-from .system import ambient_light, panel_body_drawn, panel_header_drawn, world_background, world_color
+from .system import ambient_light, lightmap_uv_map, panel_body_drawn, panel_header_drawn, world_background, world_color
 from .validation import check_object, draw_message, texture_check
 
 
@@ -209,6 +209,18 @@ def _draw_probe(layout, obj, index, item, text):
     layout.prop(item, "probe_intensity")
     if item.component_type == "REFLECTION_PROBE":
         layout.prop(item, "probe_parallax")
+    _draw_texture(layout, obj, item, text)
+    if item.component_type == "REFLECTION_PROBE":
+        layout.prop(item, "bake_resolution")
+    else:
+        column = layout.column(align=True)
+        column.prop(item, "bake_voxels", index=0, text="Bake Voxels X")
+        column.prop(item, "bake_voxels", index=1, text="Y (Up)")
+        column.prop(item, "bake_voxels", index=2, text="Z")
+    _draw_bake_button(layout, obj, index)
+
+
+def _draw_texture(layout, obj, item, text):
     check = texture_check(obj, item)
     row = layout.row()
     row.alert = check.level == "ERROR"
@@ -219,13 +231,9 @@ def _draw_probe(layout, obj, index, item, text):
         row.label(text=check.message, icon="INFO")
     elif check.level == "ERROR":
         draw_message(layout, check.message, icon="CANCEL", width=bpy.context.region.width if bpy.context.region else 300)
-    if item.component_type == "REFLECTION_PROBE":
-        layout.prop(item, "bake_resolution")
-    else:
-        column = layout.column(align=True)
-        column.prop(item, "bake_voxels", index=0, text="Bake Voxels X")
-        column.prop(item, "bake_voxels", index=1, text="Y (Up)")
-        column.prop(item, "bake_voxels", index=2, text="Z")
+
+
+def _draw_bake_button(layout, obj, index):
     button = layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake", icon="RENDER_STILL")
     button.object_name = obj.name
     button.index = index
@@ -237,6 +245,20 @@ def _draw_reflection_probe(layout, obj, index, item):
 
 def _draw_irradiance_volume(layout, obj, index, item):
     _draw_probe(layout, obj, index, item, "Voxels")
+
+
+def _draw_lightmap(layout, obj, index, item):
+    if obj.type != "MESH":
+        return
+    _draw_texture(layout, obj, item, "Lightmap")
+    layout.prop(item, "lightmap_resolution")
+    layout.prop(item, "lightmap_bicubic")
+    uv_map = lightmap_uv_map(obj)
+    row = _labeled_row(layout, "UV Map")
+    row.alert = uv_map is None
+    row.label(text=uv_map.name if uv_map is not None else "None")
+    layout.operator(BEVY_OT_unwrap_lightmap.bl_idname, icon="UV")
+    _draw_bake_button(layout, obj, index)
 
 
 def _draw_light(layout, obj, index, item):
@@ -346,6 +368,7 @@ DRAWERS = {
     "FOG_VOLUME": _draw_fog_volume,
     "REFLECTION_PROBE": _draw_reflection_probe,
     "IRRADIANCE_VOLUME": _draw_irradiance_volume,
+    "LIGHTMAP": _draw_lightmap,
 }
 
 

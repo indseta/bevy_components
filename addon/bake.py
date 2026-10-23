@@ -14,7 +14,9 @@ import bpy
 import numpy
 from mathutils import Matrix
 
-from .probe import FILE_KINDS, ktx2_rgba16f
+from .metadata import WATTS_TO_LUMENS
+from .probe import FILE_KINDS, ktx2_rgb9e5, ktx2_rgba16f
+from .system import component_of, lightmap_uv_map
 
 PACKAGE = "bevy_components_bake"
 PROGRESS_PREFIX = "BEVY_BAKE_PROGRESS"
@@ -26,7 +28,13 @@ SUPERSAMPLING = 2
 FACE_SCALE = 0.02
 PANORAMA_SCALE = 4
 NICENESS = 10
-FILE_SUFFIXES = {"CUBEMAP": "reflection", "VOXELS": "irradiance"}
+FILE_SUFFIXES = {"CUBEMAP": "reflection", "VOXELS": "irradiance", "LIGHTMAP": "lightmap"}
+JOB_WORDS = {"LIGHTMAP": "lightmap", "CUBEMAP": "reflection probe", "VOXELS": "irradiance volume"}
+LIGHTMAP_MARGIN = 2
+LIGHTMAP_GAP = 4
+LIGHTMAP_ANGLE = math.radians(66)
+LIGHTMAP_UV_MAP = "lightmap"
+SHARED_EXPONENT_MAX = 65408.0
 DIRECTIONS = numpy.array(((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0), (0, 1, 0)), dtype=numpy.float64)
 TANGENTS = numpy.array(((0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)), dtype=numpy.float64)
 CORNERS = numpy.array(((-1, -1), (1, -1), (1, 1), (-1, 1)), dtype=numpy.float64)
@@ -56,26 +64,40 @@ def _probe_file(folder, name):
     return folder + name if folder.endswith(("/", "\\")) else f"{folder}/{name}"
 
 
-def probe_jobs(objects, folder, only=None):
+def _baked_lamps(objects):
+    return sorted(obj.name for obj in objects if obj.type == "LIGHT" and obj.data.type != "AREA" and (item := component_of(obj, "LIGHT")) is not None and item.light_baked)
+
+
+def lighting_jobs(objects, folder, only=None):
+    objects = list(objects)
     jobs = []
     taken = set()
     for obj in sorted(objects, key=lambda obj: obj.name):
         if obj.library or not hasattr(obj, "bevy_component_data"):
             continue
         for index, item in enumerate(obj.bevy_component_data.components):
-            if not item.enabled or item.component_type not in FILE_KINDS:
+            if not item.enabled or item.component_type not in FILE_KINDS or (item.component_type == "LIGHTMAP" and obj.type != "MESH"):
                 continue
             kind = FILE_KINDS[item.component_type]
             name = _file_name(obj, kind, taken)
             if only is not None and only != (obj.name, index):
                 continue
-            job = {"object": obj.name, "index": index, "kind": kind, "matrix": [list(row) for row in box_matrix(obj, item)], "path": str(Path(bpy.path.abspath(folder)) / name), "file": _probe_file(folder, name)}
-            if kind == "CUBEMAP":
-                job["resolution"] = int(item.bake_resolution)
+            job = {"object": obj.name, "index": index, "kind": kind, "path": str(Path(bpy.path.abspath(folder)) / name), "file": _probe_file(folder, name)}
+            if kind == "LIGHTMAP":
+                uv_map = lightmap_uv_map(obj)
+                job.update(resolution=int(item.lightmap_resolution), uv_map=uv_map.name if uv_map else None, baked_lamps=_baked_lamps(objects))
+            elif kind == "CUBEMAP":
+                job.update(matrix=[list(row) for row in box_matrix(obj, item)], resolution=int(item.bake_resolution))
             else:
-                job["counts"] = list(item.bake_voxels)
+                job.update(matrix=[list(row) for row in box_matrix(obj, item)], counts=list(item.bake_voxels))
             jobs.append(job)
     return jobs
+
+
+def bake_summary(jobs):
+    numbers = [(sum(1 for job in jobs if job["kind"] == kind), word) for kind, word in JOB_WORDS.items()]
+    parts = [f"{number} {word}" if number == 1 else f"{number} {word}s" for number, word in numbers if number]
+    return " and ".join(parts) if len(parts) < 3 else f"{', '.join(parts[:-1])} and {parts[-1]}"
 
 
 def cube_directions(size):
@@ -135,6 +157,16 @@ def half_floats(values):
     return numpy.ascontiguousarray(values, dtype="<f2").tobytes()
 
 
+def shared_exponents(values):
+    colors = numpy.clip(numpy.nan_to_num(numpy.asarray(values, dtype=numpy.float64)[..., :3]), 0.0, SHARED_EXPONENT_MAX)
+    largest = colors.max(axis=-1)
+    exponents = numpy.floor(numpy.log2(numpy.maximum(largest, 2.0 ** -16))) + 16
+    exponents += numpy.floor(largest / 2.0 ** (exponents - 24) + 0.5) >= 512
+    mantissas = numpy.floor(colors / 2.0 ** (exponents - 24)[..., None] + 0.5).astype(numpy.uint32)
+    packed = mantissas[..., 0] | mantissas[..., 1] << 9 | mantissas[..., 2] << 18 | exponents.astype(numpy.uint32) << 27
+    return numpy.ascontiguousarray(packed, dtype="<u4").tobytes()
+
+
 def _image_pixels(image):
     pixels = numpy.empty(image.size[0] * image.size[1] * 4, dtype=numpy.float32)
     image.pixels.foreach_get(pixels)
@@ -171,10 +203,72 @@ def _selection(view_layer, active):
         view_layer.objects.active = previous
 
 
-def _bake_pixels(view_layer, obj, image, pass_filter):
+def _flags(collection, name):
+    values = numpy.empty(len(collection), dtype=bool)
+    collection.foreach_get(name, values)
+    return values
+
+
+def unwrap_lightmap(view_layer, obj, size):
+    mesh = obj.data
+    layers = mesh.uv_layers
+    if not len(layers):
+        layers.new(name="UVMap")
+    if len(layers) < 2:
+        layers.new(name=LIGHTMAP_UV_MAP, do_init=False)
+    states = [(collection, name, _flags(collection, name)) for collection in (mesh.vertices, mesh.edges, mesh.polygons) for name in ("select", "hide")]
+    with _selection(view_layer, obj), _changed((layers, "active_index", 1)):
+        for collection, name, _values in states:
+            collection.foreach_set(name, numpy.full(len(collection), name == "select", dtype=bool))
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            bpy.ops.uv.smart_project(angle_limit=LIGHTMAP_ANGLE, margin_method="FRACTION", island_margin=LIGHTMAP_GAP / size, area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+    for collection, name, values in states:
+        collection.foreach_set(name, values)
+    mesh.update()
+    return layers[1]
+
+
+def _bake_pixels(view_layer, obj, image, pass_filter, margin=0, uv_layer=""):
     with _selection(view_layer, obj):
-        bpy.ops.object.bake(type="DIFFUSE", pass_filter=pass_filter, margin=0, use_clear=True, target="IMAGE_TEXTURES", use_selected_to_active=False)
+        bpy.ops.object.bake(type="DIFFUSE", pass_filter=pass_filter, margin=margin, margin_type="EXTEND", use_clear=True, target="IMAGE_TEXTURES", use_selected_to_active=False, uv_layer=uv_layer)
     return _image_pixels(image)
+
+
+@contextmanager
+def _bake_target(obj, image):
+    material = bpy.data.materials.new("bevy_bake_lightmap")
+    added = not obj.material_slots
+    if added:
+        obj.data.materials.append(material)
+    empty = [slot for slot in obj.material_slots if slot.material is None]
+    for slot in empty:
+        slot.material = material
+    materials = list({slot.material for slot in obj.material_slots})
+    nodes = []
+    try:
+        with _changed(*((target, "use_nodes", True) for target in materials if not target.use_nodes)):
+            for target in materials:
+                tree = target.node_tree.nodes
+                node = tree.new("ShaderNodeTexImage")
+                node.image = image
+                nodes.append((tree, node, tree.active))
+                tree.active = node
+            try:
+                yield
+            finally:
+                for tree, node, previous in nodes:
+                    tree.remove(node)
+                    if previous is not None:
+                        tree.active = previous
+    finally:
+        for slot in empty:
+            slot.material = None
+        if added:
+            obj.data.materials.clear()
+        bpy.data.materials.remove(material)
 
 
 def bake_voxels(scene, view_layer, job, lamp_direct):
@@ -225,6 +319,23 @@ def bake_voxels(scene, view_layer, job, lamp_direct):
     return ktx2_rgba16f(counts[0], 2 * counts[1], half_floats(values), depth=3 * counts[2])
 
 
+def bake_lightmap(scene, view_layer, job):
+    obj = scene.objects[job["object"]]
+    if not job["uv_map"] or job["uv_map"] not in obj.data.uv_layers:
+        raise RuntimeError(f"{obj.name} has no second UV map for its lightmap")
+    size = job["resolution"]
+    image = bpy.data.images.new("bevy_bake_lightmap", size, size, alpha=True, float_buffer=True)
+    try:
+        with _bake_target(obj, image):
+            pixels = _bake_pixels(view_layer, obj, image, {"INDIRECT"}, LIGHTMAP_MARGIN, job["uv_map"])
+            lamps = [lamp for lamp in scene.objects if lamp.type == "LIGHT" and not lamp.hide_render and lamp.name not in job["baked_lamps"]]
+            with _changed(*((lamp, "hide_render", True) for lamp in lamps)):
+                pixels = pixels + _bake_pixels(view_layer, obj, image, {"DIRECT"}, LIGHTMAP_MARGIN, job["uv_map"])
+    finally:
+        bpy.data.images.remove(image)
+    return ktx2_rgb9e5(size, size, shared_exponents(pixels[::-1] * WATTS_TO_LUMENS))
+
+
 def bake_cubemap(scene, view_layer, job):
     size = job["resolution"]
     matrix = Matrix(job["matrix"])
@@ -266,7 +377,12 @@ def _render_changes(scene, camera, size, path):
 def bake_jobs(scene, view_layer, jobs, samples, lamp_direct):
     with _changed((scene.render, "engine", "CYCLES"), (scene.cycles, "samples", samples)):
         for job in jobs:
-            data = bake_cubemap(scene, view_layer, job) if job["kind"] == "CUBEMAP" else bake_voxels(scene, view_layer, job, lamp_direct)
+            if job["kind"] == "LIGHTMAP":
+                data = bake_lightmap(scene, view_layer, job)
+            elif job["kind"] == "CUBEMAP":
+                data = bake_cubemap(scene, view_layer, job)
+            else:
+                data = bake_voxels(scene, view_layer, job, lamp_direct)
             path = Path(job["path"])
             path.parent.mkdir(parents=True, exist_ok=True)
             staging = path.with_name(f".{path.name}.tmp")
@@ -336,7 +452,7 @@ class BackgroundBake:
         if code != 0:
             self.error = f"Blender stopped with exit code {code}: {self._output[-1] if self._output else 'no output'}"
         elif self.done < self.total:
-            self.error = f"Blender stopped after {self.done} of {self.total} probes: {self._output[-1] if self._output else 'no output'}"
+            self.error = f"Blender stopped after baking {self.done} of {self.total}: {self._output[-1] if self._output else 'no output'}"
 
     def _parse(self, output):
         for line in output:
