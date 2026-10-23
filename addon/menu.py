@@ -49,7 +49,7 @@ class BEVY_MT_component_add_physics(bpy.types.Menu):
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("COLLIDER", "RIGID_BODY"))
+        _draw_add_items(self.layout, context.object, ("COLLIDER", "RIGID_BODY", "JOINT"))
 
 
 class BEVY_MT_component_add_rendering(bpy.types.Menu):

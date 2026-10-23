@@ -12,8 +12,8 @@ from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
-from .system import apply_definitions, asset_path, copy_component, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
-from .validation import check_objects, count, describe, draw_issues, issue_summary
+from .system import apply_definitions, asset_path, copy_component, copy_to_object, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .validation import body_kind, check_objects, count, describe, draw_issues, issue_summary
 
 TEXTURE_COMPRESSION = [
     ("DISABLED", "Disabled", "Export ordinary embedded textures"),
@@ -107,6 +107,8 @@ class BEVY_OT_add_component(bpy.types.Operator):
         item.component_type = self.component_type
         if defined:
             item.custom_type = self.type_path
+        if self.component_type == "JOINT" and body_kind(obj) is not None:
+            item.joint_body2 = obj
         sync_object(obj)
         redraw_viewports()
         return {"FINISHED"}
@@ -184,7 +186,7 @@ class BEVY_OT_copy_component_to_selected(bpy.types.Operator):
                 continue
             destination = obj.bevy_component_data.components
             target = next((item for item in destination if item.component_type == source.component_type and (source.component_type != "CUSTOM" or item.custom_type == source.custom_type)), None)
-            copy_component(source, destination.add() if target is None else target)
+            copy_to_object(source, destination.add() if target is None else target, obj)
             sync_object(obj)
             count += 1
         redraw_viewports()
@@ -211,7 +213,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
         item = items[self.index]
         custom = item.component_type == "CUSTOM"
         typed = custom and item.use_fields
-        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers"} | ({"custom_type"} if custom else set()) | ({"use_fields"} if typed else set())
+        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers", "show_velocity", "show_dynamics"} | ({"custom_type"} if custom else set()) | ({"use_fields"} if typed else set())
         for field in item.bl_rna.properties:
             if field.identifier not in kept and field.type != "COLLECTION" and not field.is_readonly:
                 item.property_unset(field.identifier)
@@ -522,7 +524,7 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
             destination = obj.bevy_component_data.components
             destination.clear()
             for item in source.bevy_component_data.components:
-                copy_component(item, destination.add())
+                copy_to_object(item, destination.add(), obj)
             sync_object(obj)
             count += 1
         redraw_viewports()

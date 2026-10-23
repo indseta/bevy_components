@@ -54,19 +54,20 @@ def draw_issues(layout, rows, limit, more, select=False, width=300):
 def check_objects(objects):
     objects = list(objects)
     children = children_map(objects)
+    exported = set(objects)
     issues = []
     for obj in objects:
-        issues.extend(_object_issues(obj, children))
+        issues.extend(_object_issues(obj, children, exported))
     issues.extend(_visibility_range_issues(objects))
     return issues
 
 
 def check_object(obj, objects):
     objects = list(objects)
-    return _object_issues(obj, children_map(objects)) + _visibility_range_issues(objects, obj)
+    return _object_issues(obj, children_map(objects), set(objects)) + _visibility_range_issues(objects, obj)
 
 
-def _object_issues(obj, children):
+def _object_issues(obj, children, exported):
     issues = []
     custom_types = set()
     for item in components_for(obj):
@@ -81,6 +82,8 @@ def _object_issues(obj, children):
             issues.extend(Issue("WARNING", obj, item, message) for message in _shadows_warnings(obj, item, children))
         elif item.component_type == "AUDIO_PLAYER":
             issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item))
+        elif item.component_type == "JOINT":
+            issues.extend(Issue("WARNING", obj, item, message) for message in _joint_warnings(obj, item, exported))
         elif item.component_type == "CUSTOM" and item.custom_type.strip():
             if not TYPE_PATH.fullmatch(item.custom_type):
                 issues.append(Issue("WARNING", obj, item, f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
@@ -117,6 +120,39 @@ def _rigid_body_warnings(obj, item, children):
     parent, body = inherited(obj.parent, "RIGID_BODY")
     if body is not None and body.rigid_body_kind != "STATIC":
         warnings.append(f"Moves on its own instead of with {parent.name}. Remove this Rigid Body to make {parent.name} one compound body")
+    if item.rigid_body_kind == "DYNAMIC" and all(item.rigid_body_lock_translation) and all(item.rigid_body_lock_rotation):
+        warnings.append("Every axis is locked, so the body never moves. Use a Static or Kinematic body instead")
+    return warnings
+
+
+def body_kind(obj):
+    body = component_of(obj, "RIGID_BODY")
+    if body is not None:
+        return body.rigid_body_kind
+    _parent, inherited_body = inherited(obj.parent, "RIGID_BODY")
+    if component_of(obj, "COLLIDER") is not None and inherited_body is None:
+        return "STATIC"
+    return None
+
+
+def _joint_warnings(obj, item, exported):
+    bodies = [body for body in (item.joint_body1, item.joint_body2) if body is not None]
+    if not bodies:
+        return ["Connects nothing. Pick Body 1, Body 2 or both"]
+    if len(bodies) == 2 and bodies[0] == bodies[1]:
+        return [f"Connects {bodies[0].name} to itself"]
+    warnings = []
+    kinds = []
+    for body in bodies:
+        kind = body_kind(body)
+        kinds.append(kind)
+        if body not in exported:
+            warnings.append(f"{body.name} is not exported with this level, so the joint holds nothing")
+        elif kind is None:
+            parent, _owner = inherited(body.parent, "RIGID_BODY")
+            warnings.append(f"{body.name} is part of {parent.name}'s body, so pick {parent.name}" if parent is not None else f"{body.name} has no Rigid Body or Collider, so the joint holds nothing")
+    if not warnings and all(kind == "STATIC" for kind in kinds):
+        warnings.append("Both ends are static, so the joint does nothing" if len(bodies) == 2 else f"{bodies[0].name} is static, so pinning it does nothing")
     return warnings
 
 

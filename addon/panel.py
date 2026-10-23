@@ -3,7 +3,7 @@ import json
 import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
-from .metadata import FIELD_VALUES, invalid_names, validate_items
+from .metadata import FIELD_VALUES, invalid_names, joint_limits_inverted, validate_items
 from .operator import BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .system import panel_body_drawn, panel_header_drawn
@@ -84,15 +84,81 @@ def _draw_collider(layout, obj, index, item):
         body.label(text="Collides with nothing", icon="INFO")
 
 
+def _draw_axes(layout, item, prop, text):
+    row = layout.row(heading=text, align=True)
+    for axis, label in enumerate(("X", "Y (Up)", "Z")):
+        row.prop(item, prop, index=axis, text=label, toggle=True)
+
+
+def _draw_vector(layout, item, prop, text, locked):
+    column = layout.column(align=True)
+    for axis, label in enumerate((f"{text} X", "Y (Up)", "Z")):
+        row = column.row(align=True)
+        row.active = not locked[axis]
+        row.prop(item, prop, index=axis, text=label)
+
+
 def _draw_rigid_body(layout, obj, index, item):
     layout.prop(item, "rigid_body_kind")
-    if item.rigid_body_kind != "DYNAMIC":
+    if item.rigid_body_kind == "STATIC":
         return
-    row = layout.row(heading="Mass")
-    row.prop(item, "rigid_body_use_mass", text="")
-    mass = row.row()
-    mass.active = item.rigid_body_use_mass
-    mass.prop(item, "rigid_body_mass", text="")
+    dynamic = item.rigid_body_kind == "DYNAMIC"
+    if dynamic:
+        row = layout.row(heading="Mass")
+        row.prop(item, "rigid_body_use_mass", text="")
+        mass = row.row()
+        mass.active = item.rigid_body_use_mass
+        mass.prop(item, "rigid_body_mass", text="")
+        layout.prop(item, "rigid_body_gravity_scale")
+    header, body = layout.panel_prop(item, "show_velocity")
+    header.label(text="Initial Velocity")
+    if body is not None:
+        _draw_vector(body, item, "rigid_body_linear_velocity", "Velocity", item.rigid_body_lock_translation if dynamic else (False, False, False))
+        _draw_vector(body, item, "rigid_body_angular_velocity", "Spin", item.rigid_body_lock_rotation if dynamic else (False, False, False))
+    if not dynamic:
+        return
+    header, body = layout.panel_prop(item, "show_dynamics")
+    header.label(text="Dynamics")
+    if body is None:
+        return
+    column = body.column(align=True)
+    column.prop(item, "rigid_body_linear_damping", text="Damping Linear")
+    column.prop(item, "rigid_body_angular_damping", text="Angular")
+    _draw_axes(body, item, "rigid_body_lock_translation", "Lock Position")
+    _draw_axes(body, item, "rigid_body_lock_rotation", "Lock Rotation")
+    body.prop(item, "rigid_body_ccd")
+
+
+def _draw_joint(layout, obj, index, item):
+    layout.prop(item, "joint_kind")
+    column = layout.column(align=True)
+    column.prop(item, "joint_body1", placeholder="World")
+    column.prop(item, "joint_body2", placeholder="World")
+    kind = item.joint_kind
+    if kind != "FIXED":
+        layout.prop(item, "joint_axis", expand=True)
+        if kind == "SPHERICAL":
+            row = layout.row(heading="Swing Limit")
+            row.prop(item, "joint_use_swing", text="")
+            swing = row.row()
+            swing.active = item.joint_use_swing
+            swing.prop(item, "joint_swing", text="")
+        layout.prop(item, "joint_use_limits", text="Twist Limits" if kind == "SPHERICAL" else "Limits")
+        column = layout.column(align=True)
+        column.active = item.joint_use_limits
+        column.alert = joint_limits_inverted(item)
+        unit = "distance" if kind == "PRISMATIC" else "angle"
+        column.prop(item, f"joint_{unit}_min")
+        column.prop(item, f"joint_{unit}_max")
+        if column.alert:
+            layout.label(text="Min must not be above Max", icon="ERROR")
+        column = layout.column(align=True)
+        column.prop(item, "joint_linear_damping", text="Damping Linear")
+        column.prop(item, "joint_angular_damping", text="Angular")
+    layout.prop(item, "joint_collide")
+    if (item.joint_body1 is None) != (item.joint_body2 is None):
+        pinned = item.joint_body1 or item.joint_body2
+        draw_message(layout, f"Pins {pinned.name} to this spot in the level", icon="INFO")
 
 
 def _draw_shadows(layout, obj, index, item):
@@ -151,6 +217,7 @@ DRAWERS = {
     "SHADOWS": _draw_shadows,
     "AUDIO_PLAYER": _draw_audio_player,
     "CUSTOM": _draw_custom,
+    "JOINT": _draw_joint,
 }
 
 
@@ -310,6 +377,8 @@ class BEVY_PT_overlay(bpy.types.Panel):
         split = layout.split()
         column = split.column()
         column.prop(settings, "colliders")
+        column.prop(settings, "joints")
+        column.prop(settings, "velocities")
         column.prop(settings, "visibility_ranges")
         column.prop(settings, "audio_ranges")
         column = split.column()

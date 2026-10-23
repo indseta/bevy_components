@@ -1,7 +1,7 @@
-use avian3d::prelude::{Collider, CollisionLayers, Friction, LayerMask, Mass, NoAutoMass, Restitution, RigidBody, Sensor};
-use bevy::{audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, prelude::*};
+use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionLayers, Friction, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
+use bevy::{audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, math::Affine3A, prelude::*};
 use serde_json::Value;
-use crate::{component::*, data::*};
+use crate::{component::*, data::*, joint::*};
 
 pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>) {
     for (entity, extras, name) in &nodes {
@@ -23,8 +23,8 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         let mut components = ImportedComponents::default();
         let mut custom = BlenderCustomComponents::default();
         let mut rigid_body = None;
-        let mut mass = None;
         let mut audio = None;
+        let mut joint = None;
 
         for component in exported.components {
             match component {
@@ -43,23 +43,48 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         warn!("Unsupported collider shape on {:?}", name);
                     }
                 }
-                ExportedComponent::RigidBody { kind, mass: body_mass } => {
-                    rigid_body = match kind.as_str() {
-                        "static" => Some(RigidBody::Static),
-                        "dynamic" => Some(RigidBody::Dynamic),
-                        "kinematic" => Some(RigidBody::Kinematic),
+                ExportedComponent::RigidBody { kind, mass, gravity_scale, linear_damping, angular_damping, lock_translation, lock_rotation, ccd, linear_velocity, angular_velocity } => {
+                    let body = match kind.as_str() {
+                        "static" => RigidBody::Static,
+                        "dynamic" => RigidBody::Dynamic,
+                        "kinematic" => RigidBody::Kinematic,
                         _ => {
                             warn!("Unsupported rigid body type on {:?}", name);
-                            None
+                            continue;
                         }
                     };
-                    mass = match body_mass {
+                    let mass = match mass {
                         Some(value) if value <= 0.0 => {
                             warn!("Invalid mass on {:?}", name);
                             None
                         }
-                        _ => body_mass,
+                        _ => mass,
                     };
+                    let ccd = match ccd.as_deref() {
+                        None | Some("default") => None,
+                        Some("all") => Some(SweptCcd::new().with_filter(CcdFilter::ALL)),
+                        Some("off") => Some(SweptCcd::new().with_filter(CcdFilter::NONE)),
+                        Some(_) => {
+                            warn!("Unsupported continuous collision setting on {:?}", name);
+                            None
+                        }
+                    };
+                    let locked_axes = (lock_translation.is_some() || lock_rotation.is_some()).then(|| locked_axes(lock_translation.unwrap_or_default(), lock_rotation.unwrap_or_default()));
+                    let linear_velocity = linear_velocity.map(|velocity| unlocked(velocity, lock_translation));
+                    let angular_velocity = angular_velocity.map(|velocity| unlocked(velocity, lock_rotation));
+                    rigid_body = Some(RigidBodySpec { body, mass, gravity_scale, linear_damping, angular_damping, locked_axes, ccd, linear_velocity, angular_velocity });
+                }
+                ExportedComponent::Joint { kind, body1, body2, axis, angle_limits, distance_limits, swing_limit, linear_damping, angular_damping, collide } => {
+                    let Some(kind) = JointKind::from_str(&kind) else {
+                        warn!("Unsupported joint type on {:?}", name);
+                        continue;
+                    };
+                    if body1.is_none() && body2.is_none() {
+                        warn!("Joint on {:?} connects no bodies", name);
+                        continue;
+                    }
+                    let axis = axis.map(Vec3::from).and_then(Vec3::try_normalize).unwrap_or(Vec3::Y);
+                    joint = Some(JointSpec { kind, body1, body2, axis, angle_limits, distance_limits, swing_limit, linear_damping: linear_damping.unwrap_or_default(), angular_damping: angular_damping.unwrap_or_default(), collide });
                 }
                 ExportedComponent::Shadows { cast, receive } => components.shadows = Some(ShadowSettings { cast, receive }),
                 ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance } => {
@@ -89,13 +114,13 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         if let Some(audio) = audio {
             commands.entity(entity).insert(audio);
         }
-        if let Some(body) = rigid_body {
-            commands.entity(entity).insert(body);
-            if let Some(mass) = mass {
-                commands.entity(entity).insert((Mass(mass), NoAutoMass));
-            }
+        if let Some(spec) = rigid_body {
+            insert_rigid_body(&mut commands.entity(entity), &spec);
         } else if has_collider {
             commands.entity(entity).insert(DefaultStaticBody);
+        }
+        if let Some(spec) = joint {
+            commands.entity(entity).insert(PendingJoint(spec));
         }
     }
 }
@@ -107,6 +132,54 @@ pub fn apply_default_bodies(mut commands: Commands, candidates: Query<Entity, Wi
         if !parents.iter_ancestors(entity).any(|ancestor| bodies.contains(ancestor)) {
             target.insert(RigidBody::Static);
         }
+    }
+}
+
+pub fn build_joints(mut commands: Commands, joints: Query<(Entity, &PendingJoint, Option<&Name>)>, names: Query<(Entity, &Name), Without<Mesh3d>>, parents: Query<&ChildOf>, transforms: Query<&Transform>, bodies: Query<(), With<RigidBody>>) {
+    for (entity, pending, name) in &joints {
+        commands.entity(entity).remove::<PendingJoint>();
+        let spec = &pending.0;
+        let label = name.map_or("joint".to_string(), |name| name.as_str().to_string());
+        let pose = world_pose(entity, &parents, &transforms);
+        let (_scale, rotation, translation) = pose.to_scale_rotation_translation();
+        let joint_pose = Isometry3d::new(translation, rotation);
+        let mut ends = Vec::new();
+        for target in [&spec.body1, &spec.body2] {
+            let Some(target) = target else {
+                ends.push(None);
+                continue;
+            };
+            let Some(body) = find_body(target, entity, &names, &parents) else {
+                warn!("Joint on {:?} found no object named {}", name, target);
+                break;
+            };
+            if !bodies.contains(body) {
+                warn!("Joint on {:?} connects {}, which has no rigid body", name, target);
+            }
+            ends.push(Some(body));
+        }
+        if ends.len() < 2 {
+            continue;
+        }
+        let mut connected = [Entity::PLACEHOLDER; 2];
+        let mut frames = [Isometry3d::IDENTITY; 2];
+        for (index, end) in ends.into_iter().enumerate() {
+            if let Some(body) = end {
+                connected[index] = body;
+                frames[index] = local_frame(joint_pose, world_pose(body, &parents, &transforms));
+                continue;
+            }
+            let root = parents.iter_ancestors(entity).last();
+            let anchor = Affine3A::from_rotation_translation(rotation, translation);
+            let local = root.map_or(anchor, |root| world_pose(root, &parents, &transforms).inverse() * anchor);
+            let mut spawned = commands.spawn((Name::new(format!("{label} anchor")), RigidBody::Static, Transform::from_matrix(Mat4::from(local))));
+            if let Some(root) = root {
+                spawned.insert(ChildOf(root));
+            }
+            connected[index] = spawned.id();
+        }
+        let mut joint = commands.spawn((Name::new(format!("{label} joint")), ChildOf(entity)));
+        insert_joint(&mut joint, spec, connected, frames);
     }
 }
 
@@ -187,6 +260,43 @@ fn insert_collider(target: &mut EntityCommands, collider: Collider, spec: &Colli
     if let Some(layers) = spec.layers {
         target.insert(layers);
     }
+}
+
+fn insert_rigid_body(target: &mut EntityCommands, spec: &RigidBodySpec) {
+    target.insert(spec.body);
+    if let Some(mass) = spec.mass {
+        target.insert((Mass(mass), NoAutoMass));
+    }
+    if let Some(scale) = spec.gravity_scale {
+        target.insert(GravityScale(scale));
+    }
+    if let Some(damping) = spec.linear_damping {
+        target.insert(LinearDamping(damping));
+    }
+    if let Some(damping) = spec.angular_damping {
+        target.insert(AngularDamping(damping));
+    }
+    if let Some(axes) = spec.locked_axes {
+        target.insert(axes);
+    }
+    if let Some(ccd) = spec.ccd {
+        target.insert(ccd);
+    }
+    if let Some(velocity) = spec.linear_velocity {
+        target.insert(LinearVelocity(velocity));
+    }
+    if let Some(velocity) = spec.angular_velocity {
+        target.insert(AngularVelocity(velocity));
+    }
+}
+
+fn locked_axes(translation: [bool; 3], rotation: [bool; 3]) -> LockedAxes {
+    return LockedAxes::from_bits(translation.into_iter().chain(rotation).fold(0, |bits, locked| (bits << 1) | u8::from(locked)));
+}
+
+fn unlocked(vector: [f32; 3], locks: Option<[bool; 3]>) -> Vec3 {
+    let locks = locks.unwrap_or_default();
+    return Vec3::from_array(std::array::from_fn(|axis| if locks[axis] { 0.0 } else { vector[axis] }));
 }
 
 fn primitive_collider(spec: &ColliderSpec) -> Option<Collider> {

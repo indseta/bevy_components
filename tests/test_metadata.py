@@ -14,6 +14,16 @@ def item(**kwargs):
     return types.SimpleNamespace(**kwargs)
 
 
+def body(**kwargs):
+    values = {"component_type": "RIGID_BODY", "rigid_body_kind": "STATIC", "rigid_body_use_mass": False, "rigid_body_mass": 1.0, "rigid_body_gravity_scale": 1.0, "rigid_body_linear_damping": 0.0, "rigid_body_angular_damping": 0.0, "rigid_body_lock_translation": (False, False, False), "rigid_body_lock_rotation": (False, False, False), "rigid_body_ccd": "DEFAULT", "rigid_body_linear_velocity": (0.0, 0.0, 0.0), "rigid_body_angular_velocity": (0.0, 0.0, 0.0)}
+    return item(**{**values, **kwargs})
+
+
+def joint(**kwargs):
+    values = {"component_type": "JOINT", "joint_kind": "REVOLUTE", "joint_body1": None, "joint_body2": None, "joint_axis": "Y", "joint_use_limits": False, "joint_angle_min": -1.0, "joint_angle_max": 1.0, "joint_distance_min": -2.0, "joint_distance_max": 2.0, "joint_use_swing": False, "joint_swing": 0.5, "joint_linear_damping": 0.0, "joint_angular_damping": 0.0, "joint_collide": False}
+    return item(**{**values, **kwargs})
+
+
 def field(name, field_type, value):
     values = {"float_value": 0.0, "int_value": 0, "bool_value": False, "string_value": "", "vector_value": (0.0, 0.0, 0.0), "color_value": (1.0, 1.0, 1.0, 1.0)}
     values[metadata.FIELD_VALUES[field_type]] = value
@@ -43,8 +53,8 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual((result["memberships"], result["filters"]), (0, 2**32 - 1))
 
     def test_rigid_body_mass(self):
-        component = item(component_type="RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=False, rigid_body_mass=12.5)
-        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "rigid_body", "kind": "dynamic", "mass": None})
+        component = body(rigid_body_kind="DYNAMIC", rigid_body_mass=12.5)
+        self.assertIsNone(json.loads(metadata.serialize_items([component]))["components"][0]["mass"])
         component.rigid_body_use_mass = True
         self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0]["mass"], 12.5)
         for kind in ("STATIC", "KINEMATIC"):
@@ -61,6 +71,53 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "audio_player", "path": "sounds/fire.ogg", "volume": 0.7, "loop": True, "autoplay": False, "spatial": True, "distance": 2.5})
         component.audio_path = ""
         self.assertEqual(metadata.component_errors(component), [])
+
+    def test_rigid_body_tuning(self):
+        component = body(rigid_body_kind="DYNAMIC", rigid_body_gravity_scale=-0.5, rigid_body_linear_damping=0.25, rigid_body_angular_damping=2.0, rigid_body_lock_translation=(False, True, False), rigid_body_lock_rotation=(True, False, True), rigid_body_ccd="ALL", rigid_body_linear_velocity=(1.0, 2.0, 3.0), rigid_body_angular_velocity=(0.0, 1.5, 0.0))
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "rigid_body", "kind": "dynamic", "mass": None, "gravity_scale": -0.5, "linear_damping": 0.25, "angular_damping": 2.0, "lock_translation": [False, True, False], "lock_rotation": [True, False, True], "ccd": "all", "linear_velocity": [1.0, 2.0, 3.0], "angular_velocity": [0.0, 1.5, 0.0]})
+        component.rigid_body_kind = "KINEMATIC"
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "rigid_body", "kind": "kinematic", "mass": None, "gravity_scale": None, "linear_damping": None, "angular_damping": None, "lock_translation": None, "lock_rotation": None, "ccd": None, "linear_velocity": [1.0, 2.0, 3.0], "angular_velocity": [0.0, 1.5, 0.0]})
+        component.rigid_body_kind = "STATIC"
+        exported = json.loads(metadata.serialize_items([component]))["components"][0]
+        self.assertEqual({key: value for key, value in exported.items() if value is not None}, {"type": "rigid_body", "kind": "static"})
+
+    def test_locked_axes_cancel_initial_velocity(self):
+        component = body(rigid_body_kind="DYNAMIC", rigid_body_lock_translation=(False, True, False), rigid_body_lock_rotation=(True, True, True), rigid_body_linear_velocity=(1.0, 2.0, 3.0), rigid_body_angular_velocity=(4.0, 5.0, 6.0))
+        self.assertEqual(metadata.initial_velocities(component), ([1.0, 0.0, 3.0], [0.0, 0.0, 0.0]))
+        component.rigid_body_kind = "KINEMATIC"
+        self.assertEqual(metadata.initial_velocities(component), ([1.0, 2.0, 3.0], [4.0, 5.0, 6.0]))
+
+    def test_joint(self):
+        frame = item(name="frame")
+        door = item(name="door")
+        component = joint(joint_body1=frame, joint_body2=door, joint_use_limits=True, joint_angle_min=0.0, joint_angle_max=1.5, joint_angular_damping=0.5)
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "joint", "kind": "revolute", "body1": "frame", "body2": "door", "axis": [0.0, 1.0, 0.0], "angle_limits": [0.0, 1.5], "distance_limits": None, "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.5, "collide": False})
+        self.assertEqual(metadata.validate_items([component]), [])
+
+    def test_joint_types_export_their_own_settings(self):
+        component = joint(joint_body2=item(name="link"), joint_axis="X", joint_use_limits=True, joint_use_swing=True, joint_collide=True)
+        expected = {
+            "FIXED": {"axis": None, "angle_limits": None, "distance_limits": None, "swing_limit": None, "linear_damping": None, "angular_damping": None},
+            "REVOLUTE": {"axis": [1.0, 0.0, 0.0], "angle_limits": [-1.0, 1.0], "distance_limits": None, "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.0},
+            "PRISMATIC": {"axis": [1.0, 0.0, 0.0], "angle_limits": None, "distance_limits": [-2.0, 2.0], "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.0},
+            "SPHERICAL": {"axis": [1.0, 0.0, 0.0], "angle_limits": [-1.0, 1.0], "distance_limits": None, "swing_limit": 0.5, "linear_damping": 0.0, "angular_damping": 0.0},
+        }
+        for kind, settings in expected.items():
+            component.joint_kind = kind
+            self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "joint", "kind": kind.lower(), "body1": None, "body2": "link", **settings, "collide": True}, kind)
+
+    def test_inverted_joint_limits(self):
+        component = joint(joint_use_limits=True, joint_angle_min=1.0, joint_angle_max=-1.0)
+        self.assertEqual(metadata.validate_items([component], "hinge"), ["hinge: Joint limit Min is above Max"])
+        component.joint_use_limits = False
+        self.assertEqual(metadata.validate_items([component]), [])
+        component.joint_use_limits = True
+        component.joint_kind = "PRISMATIC"
+        self.assertEqual(metadata.validate_items([component]), [])
+        component.joint_distance_min = 3.0
+        self.assertTrue(metadata.validate_items([component]))
+        component.joint_kind = "FIXED"
+        self.assertEqual(metadata.validate_items([component]), [])
 
     def test_custom(self):
         component = item(component_type="CUSTOM", custom_type="game::Marker", custom_json='{"value":42}', use_fields=False, fields=[])

@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import subprocess
 import sys
@@ -20,8 +21,10 @@ LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
 CHILD_LAYOUTS = {"row", "column", "box", "split", "grid_flow", "column_flow"}
 DEFAULT_COLLIDER = {"size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": False, "friction": 0.5, "restitution": 0.0, "memberships": 1, "filters": 4294967295}
-STATIC_BODY = {"type": "rigid_body", "kind": "static", "mass": None}
-DYNAMIC_BODY = {"type": "rigid_body", "kind": "dynamic", "mass": None}
+STATIC_BODY = {"type": "rigid_body", "kind": "static", "mass": None, "gravity_scale": None, "linear_damping": None, "angular_damping": None, "lock_translation": None, "lock_rotation": None, "ccd": None, "linear_velocity": None, "angular_velocity": None}
+KINEMATIC_BODY = {**STATIC_BODY, "kind": "kinematic", "linear_velocity": [0.0, 0.0, 0.0], "angular_velocity": [0.0, 0.0, 0.0]}
+DYNAMIC_BODY = {**KINEMATIC_BODY, "kind": "dynamic", "gravity_scale": 1.0, "linear_damping": 0.0, "angular_damping": 0.0, "lock_translation": [False, False, False], "lock_rotation": [False, False, False], "ccd": "default"}
+DEFAULT_JOINT = {"type": "joint", "kind": "revolute", "body1": None, "body2": None, "axis": [0.0, 1.0, 0.0], "angle_limits": None, "distance_limits": None, "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.0, "collide": False}
 DEFAULT_AUDIO = {"type": "audio_player", "path": "", "volume": 1.0, "loop": False, "autoplay": True, "spatial": True, "distance": 5.0}
 EXPECTED_COMPONENTS = {
     "ground": [
@@ -40,7 +43,7 @@ EXPECTED_COMPONENTS = {
     ],
     "ball": [
         {"type": "collider", "shape": "sphere", **DEFAULT_COLLIDER},
-        {"type": "rigid_body", "kind": "kinematic", "mass": None},
+        KINEMATIC_BODY,
     ],
     "pillar": [
         {"type": "collider", "shape": "capsule", **{**DEFAULT_COLLIDER, "radius": 0.4, "height": 1.2}},
@@ -120,6 +123,68 @@ EXPECTED_COMPONENTS = {
     ],
     "jingle": [
         {"type": "audio_player", "path": "sounds/chime.ogg", "volume": 0.5, "loop": False, "autoplay": False, "spatial": False, "distance": 5.0},
+    ],
+    "door_frame": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.1, 2.2, 0.2]}},
+    ],
+    "door": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [1.0, 2.0, 0.1]}},
+        {**DYNAMIC_BODY, "angular_velocity": [0.0, 6.0, 0.0]},
+    ],
+    "door_hinge": [
+        {**DEFAULT_JOINT, "body1": "door_frame", "body2": "door", "angle_limits": [0.0, 1.5708]},
+    ],
+    "chain_link_1": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.15, 0.6, 0.15]}},
+        DYNAMIC_BODY,
+    ],
+    "chain_link_2": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.15, 0.6, 0.15]}},
+        {**DYNAMIC_BODY, "linear_velocity": [3.0, 0.0, 0.0]},
+    ],
+    "chain_top": [
+        {**DEFAULT_JOINT, "kind": "spherical", "body2": "chain_link_1"},
+    ],
+    "chain_middle": [
+        {**DEFAULT_JOINT, "kind": "spherical", "body1": "chain_link_1", "body2": "chain_link_2", "swing_limit": 0.7854},
+    ],
+    "drawer_cabinet": [
+        {"type": "collider", "shape": "cuboid", **DEFAULT_COLLIDER},
+        STATIC_BODY,
+    ],
+    "drawer": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.8, 0.3, 0.8]}},
+        {**DYNAMIC_BODY, "linear_velocity": [2.0, 0.0, 0.0]},
+        {**DEFAULT_JOINT, "kind": "prismatic", "body1": "drawer_cabinet", "body2": "drawer", "axis": [1.0, 0.0, 0.0], "distance_limits": [0.0, 0.4]},
+    ],
+    "barrel": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.8, 1.0, 0.8]}},
+        DYNAMIC_BODY,
+    ],
+    "barrel_lid": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.9, 0.1, 0.9]}},
+        DYNAMIC_BODY,
+        {**DEFAULT_JOINT, "kind": "fixed", "body1": "barrel", "body2": "barrel_lid", "axis": None, "linear_damping": None, "angular_damping": None},
+    ],
+    "balloon": [
+        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.3}},
+        {**DYNAMIC_BODY, "gravity_scale": -0.5, "linear_damping": 0.5, "angular_damping": 0.2},
+    ],
+    "spinner": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [1.5, 0.2, 0.2]}},
+        {**KINEMATIC_BODY, "angular_velocity": [0.0, 1.5708, 0.0]},
+    ],
+    "puck": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.5, 0.1, 0.5]}},
+        {**DYNAMIC_BODY, "lock_translation": [False, True, False], "lock_rotation": [True, True, True], "linear_velocity": [2.0, 0.0, 0.0], "angular_velocity": [0.0, 3.0, 0.0]},
+    ],
+    "bullet": [
+        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.05}},
+        {**DYNAMIC_BODY, "gravity_scale": 0.0, "ccd": "all", "linear_velocity": [80.0, 0.0, 0.0]},
+    ],
+    "bullet_target": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.02, 1.0, 1.0]}},
+        {**DYNAMIC_BODY, "gravity_scale": 0.0},
     ],
 }
 
@@ -466,6 +531,47 @@ class TestOperators(unittest.TestCase):
         self.assertEqual((body.rigid_body_kind, body.rigid_body_use_mass, body.rigid_body_mass), ("STATIC", False, 1.0))
         self.assertEqual(_stored(self.obj)["components"], [{"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER}, STATIC_BODY])
 
+    def test_body_tuning_is_stored_for_moving_bodies(self):
+        body = add_component(self.obj, "RIGID_BODY", rigid_body_gravity_scale=0.5, rigid_body_linear_damping=1, rigid_body_lock_rotation=(True, False, True), rigid_body_ccd="ALL", rigid_body_linear_velocity=(1, 2, 3), rigid_body_angular_velocity=(0, 4, 0))
+        self.assertEqual(_stored(self.obj)["components"], [STATIC_BODY])
+        body.rigid_body_kind = "KINEMATIC"
+        self.assertEqual(_stored(self.obj)["components"], [{**KINEMATIC_BODY, "linear_velocity": [1.0, 2.0, 3.0], "angular_velocity": [0.0, 4.0, 0.0]}])
+        body.rigid_body_kind = "DYNAMIC"
+        self.assertEqual(_stored(self.obj)["components"], [{**DYNAMIC_BODY, "gravity_scale": 0.5, "linear_damping": 1.0, "lock_rotation": [True, False, True], "ccd": "all", "linear_velocity": [1.0, 2.0, 3.0], "angular_velocity": [0.0, 4.0, 0.0]}])
+
+    def test_reset_keeps_open_sub_panels(self):
+        body = add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_gravity_scale=0, rigid_body_lock_translation=(True, True, True), show_velocity=True, show_dynamics=True)
+        bpy.ops.bevy_components.reset(index=0)
+        self.assertEqual((body.rigid_body_kind, body.rigid_body_gravity_scale, tuple(body.rigid_body_lock_translation)), ("STATIC", 1.0, (False, False, False)))
+        self.assertEqual((body.show_velocity, body.show_dynamics), (True, True))
+
+    def test_joints_start_on_the_body_they_are_added_to(self):
+        hinge = add_empty("hinge", (0, 0, 0))
+        joint = add_component(hinge, "JOINT")
+        self.assertEqual((joint.joint_body1, joint.joint_body2), (None, None))
+        self.assertEqual(_stored(hinge)["components"], [DEFAULT_JOINT])
+        add_component(self.obj, "COLLIDER")
+        joint = add_component(self.obj, "JOINT")
+        self.assertEqual((joint.joint_body1, joint.joint_body2), (None, self.obj))
+        self.assertEqual(_stored(self.obj)["components"][1]["body2"], "subject")
+
+    def test_copied_joints_point_at_their_new_object(self):
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame")
+        add_component(frame, "COLLIDER")
+        add_component(self.obj, "COLLIDER")
+        joint = add_component(self.obj, "JOINT")
+        joint.joint_body1 = frame
+        other = add_mesh(bpy.ops.mesh.primitive_cube_add, "other")
+        select(self.obj, other)
+        self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=1), {"FINISHED"})
+        copied = other.bevy_component_data.components[0]
+        self.assertEqual((copied.joint_body1, copied.joint_body2), (frame, other))
+        self.assertEqual((joint.joint_body1, joint.joint_body2), (frame, self.obj))
+        third = add_mesh(bpy.ops.mesh.primitive_cube_add, "third")
+        select(self.obj, third)
+        self.assertEqual(bpy.ops.bevy_components.copy_to_selected(), {"FINISHED"})
+        self.assertEqual([(item["body1"], item["body2"]) for item in _stored(third)["components"] if item["type"] == "joint"], [("frame", "third")])
+
     def test_reset_restores_defaults(self):
         item = add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=3, collider_sensor=True)
         item.show_expanded = False
@@ -559,6 +665,23 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(list(obj.bevy_component_data.components[0].collider_memberships), layers(1, 7))
         self.assertEqual(_rounded(_stored(obj)["components"]), [{"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 2.0, "friction": 0.2, "memberships": 0b10000010}}, {**DYNAMIC_BODY, "mass": 7.5}])
 
+    def test_save_and_reload_keeps_joint_bodies(self):
+        add_component(self.obj, "COLLIDER")
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame")
+        add_component(frame, "COLLIDER")
+        joint = add_component(self.obj, "JOINT", joint_kind="SPHERICAL", joint_use_swing=True)
+        joint.joint_body1 = frame
+        frame.name = "door_frame"
+        self.assertEqual(_stored(self.obj)["components"][1]["body1"], "frame")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "level.blend"
+            bpy.ops.wm.save_as_mainfile(filepath=str(path))
+            bpy.ops.wm.open_mainfile(filepath=str(path))
+        obj = bpy.data.objects["subject"]
+        joint = obj.bevy_component_data.components[1]
+        self.assertEqual((joint.joint_body1, joint.joint_body2), (bpy.data.objects["door_frame"], obj))
+        self.assertEqual(_rounded(_stored(obj)["components"][1]), {**DEFAULT_JOINT, "kind": "spherical", "body1": "door_frame", "body2": "subject", "swing_limit": 0.7854})
+
 
 class TestPanels(unittest.TestCase):
     def setUp(self):
@@ -566,7 +689,7 @@ class TestPanels(unittest.TestCase):
         self.obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "subject")
 
     def test_object_panel_draws_every_component(self):
-        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM", "SHADOWS", "AUDIO_PLAYER"):
+        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM", "SHADOWS", "AUDIO_PLAYER", "JOINT"):
             add_component(self.obj, kind)
         collider = self.obj.bevy_component_data.components[1]
         for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE"):
@@ -576,9 +699,9 @@ class TestPanels(unittest.TestCase):
             addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
             text, add_menu, enabled = panel.layout.buttons()[0]
             self.assertEqual((text, add_menu.name), ("Add Component", "BEVY_MT_component_add"))
-            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 6)
-            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_expanded", "show_layers", "show_expanded", "show_expanded", "show_expanded", "show_expanded"])
-            self.assertEqual(panel.layout.props().count("enabled"), 6)
+            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 7)
+            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_expanded", "show_layers", "show_expanded", "show_expanded", "show_expanded", "show_expanded", "show_expanded"])
+            self.assertEqual(panel.layout.props().count("enabled"), 7)
         self.assertIn("collider_height", panel.layout.props())
         self.assertNotIn("Fade distances must increase from top to bottom", panel.layout.texts())
 
@@ -619,7 +742,7 @@ class TestPanels(unittest.TestCase):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "AUDIO_PLAYER": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "AUDIO_PLAYER": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_audio.draw(menu, _menu_context(self.obj))
@@ -684,13 +807,99 @@ class TestPanels(unittest.TestCase):
         body.rigid_body_kind = "DYNAMIC"
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props()[-3:], ["rigid_body_kind", "rigid_body_use_mass", "rigid_body_mass"])
+        self.assertEqual(panel.layout.props()[-4:], ["rigid_body_kind", "rigid_body_use_mass", "rigid_body_mass", "rigid_body_gravity_scale"])
         self.assertIn(("row", "Mass"), [(name, bound.get("heading")) for name, bound, layout in panel.layout.calls])
         self.assertFalse(_prop_layout(panel.layout, "rigid_body_mass").active)
         body.rigid_body_use_mass = True
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertTrue(_prop_layout(panel.layout, "rigid_body_mass").active)
+
+    def test_rigid_body_card_tunes_moving_bodies(self):
+        body = add_component(self.obj, "RIGID_BODY", show_velocity=True, show_dynamics=True)
+        expected = {
+            "STATIC": ["rigid_body_kind"],
+            "KINEMATIC": ["rigid_body_kind", *["rigid_body_linear_velocity"] * 3, *["rigid_body_angular_velocity"] * 3],
+            "DYNAMIC": ["rigid_body_kind", "rigid_body_use_mass", "rigid_body_mass", "rigid_body_gravity_scale", *["rigid_body_linear_velocity"] * 3, *["rigid_body_angular_velocity"] * 3, "rigid_body_linear_damping", "rigid_body_angular_damping", *["rigid_body_lock_translation"] * 3, *["rigid_body_lock_rotation"] * 3, "rigid_body_ccd"],
+        }
+        for kind, props in expected.items():
+            body.rigid_body_kind = kind
+            panel = FakePanel(self)
+            addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+            self.assertEqual([prop for prop in panel.layout.props() if prop.startswith("rigid_body_")], props, kind)
+        self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_velocity", "show_dynamics"])
+        self.assertIn(("row", "Lock Position"), [(name, bound.get("heading")) for name, bound, layout in panel.layout.calls])
+        toggles = [(bound["index"], bound["text"], bound["toggle"]) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "rigid_body_lock_rotation"]
+        self.assertEqual(toggles, [(0, "X", True), (1, "Y (Up)", True), (2, "Z", True)])
+        self.assertEqual([bound["text"] for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "rigid_body_angular_velocity"], ["Spin X", "Y (Up)", "Z"])
+        body.rigid_body_lock_rotation = (False, True, False)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual([layout.active for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "rigid_body_angular_velocity"], [True, False, True])
+        body.rigid_body_kind = "KINEMATIC"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual([layout.active for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "rigid_body_angular_velocity"], [True, True, True])
+        body.show_velocity = False
+        body.show_dynamics = False
+        body.rigid_body_kind = "DYNAMIC"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-1], "rigid_body_gravity_scale")
+        self.assertIn("Initial Velocity", panel.layout.texts())
+        self.assertIn("Dynamics", panel.layout.texts())
+
+    def test_joint_card_follows_its_type(self):
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame")
+        add_component(frame, "COLLIDER")
+        joint = add_component(self.obj, "JOINT")
+        joint.joint_body1 = frame
+        select(self.obj)
+        expected = {
+            "FIXED": ["joint_kind", "joint_body1", "joint_body2", "joint_collide"],
+            "REVOLUTE": ["joint_kind", "joint_body1", "joint_body2", "joint_axis", "joint_use_limits", "joint_angle_min", "joint_angle_max", "joint_linear_damping", "joint_angular_damping", "joint_collide"],
+            "PRISMATIC": ["joint_kind", "joint_body1", "joint_body2", "joint_axis", "joint_use_limits", "joint_distance_min", "joint_distance_max", "joint_linear_damping", "joint_angular_damping", "joint_collide"],
+            "SPHERICAL": ["joint_kind", "joint_body1", "joint_body2", "joint_axis", "joint_use_swing", "joint_swing", "joint_use_limits", "joint_angle_min", "joint_angle_max", "joint_linear_damping", "joint_angular_damping", "joint_collide"],
+        }
+        for kind, props in expected.items():
+            joint.joint_kind = kind
+            panel = FakePanel(self)
+            addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+            self.assertEqual([prop for prop in panel.layout.props() if prop.startswith("joint_")], props, kind)
+            self.assertEqual([bound.get("placeholder") for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] in {"joint_body1", "joint_body2"}], ["World", "World"])
+            self.assertIn("Pins frame to this spot in the level", panel.layout.texts())
+        self.assertEqual([bound["text"] for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "joint_use_limits"], ["Twist Limits"])
+        self.assertIn(("row", "Swing Limit"), [(name, bound.get("heading")) for name, bound, layout in panel.layout.calls])
+        self.assertFalse(_prop_layout(panel.layout, "joint_swing").active)
+        joint.joint_kind = "REVOLUTE"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertFalse(_prop_layout(panel.layout, "joint_angle_min").active)
+        self.assertEqual([bound["text"] for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "joint_use_limits"], ["Limits"])
+        joint.joint_use_limits = True
+        joint.joint_angle_min = 1
+        joint.joint_angle_max = -1
+        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door")
+        add_component(door, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        joint.joint_body2 = door
+        select(self.obj)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertTrue(_prop_layout(panel.layout, "joint_angle_min").active)
+        self.assertTrue(_prop_layout(panel.layout, "joint_angle_min").is_alert())
+        self.assertIn("Min must not be above Max", panel.layout.texts())
+        self.assertIn(("", "CANCEL"), [(bound.get("text"), bound.get("icon")) for name, bound, layout in panel.layout.calls if name == "label"])
+        self.assertNotIn("Pins frame to this spot in the level", panel.layout.texts())
+
+    def test_joints_only_pick_bodies(self):
+        joint = add_component(self.obj, "JOINT")
+        poll = addon.property._is_body
+        self.assertFalse(poll(joint, self.obj))
+        add_component(self.obj, "COLLIDER")
+        self.assertTrue(poll(joint, self.obj))
+        holder = add_empty("holder", (0, 0, 0))
+        add_component(holder, "RIGID_BODY")
+        self.assertTrue(poll(joint, holder))
 
     def test_shadows_card(self):
         shadows = add_component(self.obj, "SHADOWS")
@@ -735,7 +944,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.props(), ["enabled"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
-        self.assertEqual(panel.layout.props(), ["scope", "colliders", "visibility_ranges", "audio_ranges", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "labels", "xray", "edit_handles", "max_mesh_edges"])
         settings.enabled = False
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
@@ -1179,6 +1388,77 @@ class TestViewport(unittest.TestCase):
         self.settings.colliders = True
         self.settings.visibility_ranges = True
 
+    def test_joint_previews_follow_the_joint(self):
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", size=0.2)
+        add_component(frame, "COLLIDER")
+        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door", size=0.2, location=(1, 0, 0))
+        add_component(door, "COLLIDER")
+        add_component(door, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        hinge = add_empty("hinge", (0.5, 0, 0))
+        joint = add_component(hinge, "JOINT", joint_use_limits=True, joint_angle_min=0, joint_angle_max=math.radians(90))
+        joint.joint_body1 = frame
+        joint.joint_body2 = door
+        select(hinge)
+        batches = [batch for batch in addon.overlay.preview_batches(bpy.context, self.settings) if batch[2] == addon.overlay.JOINT_COLOR]
+        self.assertEqual([(tuple(matrix.translation), width) for matrix, lines, color, width in batches], [((0.5, 0.0, 0.0), 2.0), ((0.0, 0.0, 0.0), 1.0)])
+        points = {tuple(round(value, 5) for value in point) for line in batches[0][1] for point in line}
+        self.assertTrue({(0.0, 0.0, 0.5), (0.0, 0.0, -0.5), (0.5, 0.0, 0.0), (0.0, 0.5, 0.0)} <= points)
+        self.assertNotIn((0.0, -0.5, 0.0), points)
+        self.assertEqual(batches[1][1], [((0.5, 0.0, 0.0), (0.0, 0.0, 0.0)), ((0.5, 0.0, 0.0), (1.0, 0.0, 0.0))])
+        self.assertEqual(addon.overlay._label_lines(hinge, self.settings, {}), ["Joint · Hinge · frame – door"])
+        joint.joint_body1 = None
+        self.assertEqual(addon.overlay._label_lines(hinge, self.settings, {}), ["Joint · Hinge · World – door"])
+        select(door)
+        self.assertEqual(addon.overlay.joint_objects(bpy.context, self.settings, [door]), [hinge])
+        select(frame)
+        self.assertEqual(addon.overlay.joint_objects(bpy.context, self.settings, [frame]), [])
+        self.settings.joints = False
+        select(hinge)
+        self.assertEqual([batch for batch in addon.overlay.preview_batches(bpy.context, self.settings) if batch[2] == addon.overlay.JOINT_COLOR], [])
+        self.assertEqual(addon.overlay._label_lines(hinge, self.settings, {}), [])
+        self.settings.joints = True
+
+    def test_joint_previews_point_at_the_other_body(self):
+        cabinet = add_mesh(bpy.ops.mesh.primitive_cube_add, "cabinet", location=(-2, 0, 0))
+        add_component(cabinet, "COLLIDER")
+        add_component(self.obj, "COLLIDER")
+        add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        for kind in ("FIXED", "REVOLUTE", "PRISMATIC", "SPHERICAL"):
+            joint = add_component(self.obj, "JOINT", joint_kind=kind, joint_axis="X", joint_use_limits=True, joint_distance_min=0, joint_distance_max=1)
+            joint.joint_body1 = cabinet
+            select(self.obj)
+            batches = addon.overlay.joint_batches(self.obj, joint)
+            self.assertEqual(batches[1][1], [((0.0, 0.0, 0.0), (-2.0, 0.0, 0.0))], kind)
+            self.assertTrue(batches[0][1], kind)
+            bpy.ops.bevy_components.remove(index=2)
+        joint = add_component(self.obj, "JOINT", joint_kind="PRISMATIC", joint_axis="X", joint_use_limits=True, joint_distance_min=0, joint_distance_max=1)
+        joint.joint_body1 = cabinet
+        self.assertEqual(addon.overlay.joint_batches(self.obj, joint)[0][1][0], ((-1.0, 0.0, 0.0), (0.0, 0.0, 0.0)))
+
+    def test_velocity_previews_and_labels(self):
+        body = add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_linear_velocity=(4, 0, 0))
+        select(self.obj)
+        batches = [batch for batch in addon.overlay.preview_batches(bpy.context, self.settings) if batch[2] == addon.overlay.VELOCITY_COLOR]
+        self.assertEqual(len(batches), 1)
+        self.assertEqual(batches[0][1][0], ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)))
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 4 m/s"])
+        body.rigid_body_linear_velocity = (0, 0, 4)
+        self.assertEqual(tuple(round(value, 5) for value in addon.overlay.velocity_batches(self.obj, body)[0][1][0][1]), (0.0, -1.0, 0.0))
+        body.rigid_body_angular_velocity = (0, math.pi, 0)
+        lines = addon.overlay.velocity_batches(self.obj, body)[0][1]
+        self.assertTrue(all(abs(point[2]) < 1e-5 for line in lines[5:-4] for point in line))
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 4 m/s · 180 °/s"])
+        body.rigid_body_lock_translation = (False, False, True)
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 180 °/s"])
+        body.rigid_body_kind = "KINEMATIC"
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 4 m/s · 180 °/s"])
+        self.settings.velocities = False
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [])
+        self.settings.velocities = True
+        body.rigid_body_kind = "STATIC"
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+
     def test_visibility_preview_is_world_sized(self):
         self.obj.scale = (2, 2, 2)
         bpy.context.view_layer.update()
@@ -1458,6 +1738,49 @@ class TestValidation(unittest.TestCase):
             self.assertEqual(self._messages(), [f"speaker: {message}" for message in messages], path)
         audio.audio_path = "sounds/fire.ogg"
         self.assertEqual(json.loads(speaker["bevy_components"])["components"][0]["path"], "sounds/fire.ogg")
+
+    def test_joints_need_moving_bodies(self):
+        hinge = add_empty("hinge", (0, 0, 0))
+        joint = add_component(hinge, "JOINT")
+        self.assertEqual(self._messages(), ["hinge: Connects nothing. Pick Body 1, Body 2 or both"])
+        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door")
+        joint.joint_body1 = door
+        joint.joint_body2 = door
+        self.assertEqual(self._messages(), ["hinge: Connects door to itself"])
+        joint.joint_body2 = None
+        self.assertEqual(self._messages(), ["hinge: door has no Rigid Body or Collider, so the joint holds nothing"])
+        add_component(door, "COLLIDER", collider_shape="CUBOID")
+        self.assertEqual(self._messages(), ["hinge: door is static, so pinning it does nothing"])
+        body = add_component(door, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        self.assertEqual(self._messages(), [])
+        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall")
+        add_component(wall, "COLLIDER")
+        joint.joint_body2 = wall
+        self.assertEqual(self._messages(), [])
+        body.rigid_body_kind = "STATIC"
+        self.assertEqual(self._messages(), ["hinge: Both ends are static, so the joint does nothing"])
+        body.rigid_body_kind = "DYNAMIC"
+        handle = add_mesh(bpy.ops.mesh.primitive_cube_add, "handle")
+        add_component(handle, "COLLIDER", collider_shape="CUBOID")
+        handle.parent = door
+        joint.joint_body2 = handle
+        self.assertEqual(self._messages(), ["hinge: handle is part of door's body, so pick door"])
+        joint.joint_body2 = wall
+        self.assertEqual([addon.validation.describe(issue) for issue in addon.validation.check_objects([hinge, door])], ["hinge: wall is not exported with this level, so the joint holds nothing"])
+        joint.joint_use_limits = True
+        joint.joint_angle_min = 1
+        joint.joint_angle_max = 0
+        self.assertEqual([(issue.level, addon.validation.describe(issue)) for issue in addon.validation.check_objects(bpy.data.objects)], [("ERROR", "hinge: Joint limit Min is above Max")])
+
+    def test_fully_locked_bodies(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate")
+        add_component(crate, "COLLIDER", collider_shape="CUBOID")
+        body = add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_lock_translation=(True, True, True), rigid_body_lock_rotation=(True, True, False))
+        self.assertEqual(self._messages(), [])
+        body.rigid_body_lock_rotation = (True, True, True)
+        self.assertEqual(self._messages(), ["crate: Every axis is locked, so the body never moves. Use a Static or Kinematic body instead"])
+        body.rigid_body_kind = "KINEMATIC"
+        self.assertEqual(self._messages(), [])
 
     def test_custom_component_type_paths(self):
         marker = add_empty("marker", (0, 0, 0))

@@ -14,6 +14,11 @@ FIELD_VALUES = {
 }
 COLOR_CHANNELS = ("red", "green", "blue", "alpha")
 INT_LIMIT = 2 ** 31
+AXIS_VECTORS = {
+    "X": [1.0, 0.0, 0.0],
+    "Y": [0.0, 1.0, 0.0],
+    "Z": [0.0, 0.0, 1.0],
+}
 
 
 def _single(value):
@@ -133,10 +138,36 @@ def serialize_component(item):
             "filters": _layer_bits(item.collider_filters),
         }
     if kind == "RIGID_BODY":
+        dynamic = item.rigid_body_kind == "DYNAMIC"
+        moving = item.rigid_body_kind != "STATIC"
         return {
             "type": "rigid_body",
             "kind": item.rigid_body_kind.lower(),
-            "mass": float(item.rigid_body_mass) if item.rigid_body_kind == "DYNAMIC" and item.rigid_body_use_mass else None,
+            "mass": float(item.rigid_body_mass) if dynamic and item.rigid_body_use_mass else None,
+            "gravity_scale": float(item.rigid_body_gravity_scale) if dynamic else None,
+            "linear_damping": float(item.rigid_body_linear_damping) if dynamic else None,
+            "angular_damping": float(item.rigid_body_angular_damping) if dynamic else None,
+            "lock_translation": [bool(value) for value in item.rigid_body_lock_translation] if dynamic else None,
+            "lock_rotation": [bool(value) for value in item.rigid_body_lock_rotation] if dynamic else None,
+            "ccd": item.rigid_body_ccd.lower() if dynamic else None,
+            "linear_velocity": [float(value) for value in item.rigid_body_linear_velocity] if moving else None,
+            "angular_velocity": [float(value) for value in item.rigid_body_angular_velocity] if moving else None,
+        }
+    if kind == "JOINT":
+        joint = item.joint_kind
+        limits = item.joint_use_limits
+        return {
+            "type": "joint",
+            "kind": joint.lower(),
+            "body1": item.joint_body1.name if item.joint_body1 else None,
+            "body2": item.joint_body2.name if item.joint_body2 else None,
+            "axis": AXIS_VECTORS[item.joint_axis] if joint != "FIXED" else None,
+            "angle_limits": [float(item.joint_angle_min), float(item.joint_angle_max)] if limits and joint in {"REVOLUTE", "SPHERICAL"} else None,
+            "distance_limits": [float(item.joint_distance_min), float(item.joint_distance_max)] if limits and joint == "PRISMATIC" else None,
+            "swing_limit": float(item.joint_swing) if item.joint_use_swing and joint == "SPHERICAL" else None,
+            "linear_damping": float(item.joint_linear_damping) if joint != "FIXED" else None,
+            "angular_damping": float(item.joint_angular_damping) if joint != "FIXED" else None,
+            "collide": bool(item.joint_collide),
         }
     if kind == "SHADOWS":
         return {
@@ -163,6 +194,13 @@ def serialize_component(item):
             raise ValueError(f"Custom JSON for {item.custom_type} is invalid: {error}") from error
         return {"type": "custom", "type_path": item.custom_type, "data": value}
     raise ValueError(f"Unsupported component: {kind}")
+
+
+def initial_velocities(item):
+    dynamic = item.rigid_body_kind == "DYNAMIC"
+    linear = [0.0 if dynamic and locked else float(value) for value, locked in zip(item.rigid_body_linear_velocity, item.rigid_body_lock_translation)]
+    angular = [0.0 if dynamic and locked else float(value) for value, locked in zip(item.rigid_body_angular_velocity, item.rigid_body_lock_rotation)]
+    return linear, angular
 
 
 def _layer_bits(layers):
@@ -194,7 +232,17 @@ def component_errors(item):
             errors.append("collider cuboid dimensions must be positive")
         if item.collider_shape in {"SPHERE", "CAPSULE"} and item.collider_radius <= 0:
             errors.append("collider radius must be positive")
+    elif item.component_type == "JOINT" and joint_limits_inverted(item):
+        errors.append("Joint limit Min is above Max")
     return errors
+
+
+def joint_limits_inverted(item):
+    if not item.joint_use_limits or item.joint_kind == "FIXED":
+        return False
+    if item.joint_kind == "PRISMATIC":
+        return item.joint_distance_min > item.joint_distance_max
+    return item.joint_angle_min > item.joint_angle_max
 
 
 def validate_items(items, object_name="Object"):

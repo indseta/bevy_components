@@ -51,15 +51,19 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 **Shadows** (under Rendering) stops the meshes on and under an object from casting or receiving shadows. **Audio Player** (under Audio) plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
 
-Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits, and dynamic Rigid Bodies can set a total mass. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Bevy Components** panel in Properties is expanded, and resize handles show on the selected object. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
+**Joint** (under Physics) connects two bodies with an Avian Fixed, Hinge, Slider or Ball joint. Put it on an empty at the pivot, or on one of the bodies, and pick Body 1 and Body 2 from objects with a Rigid Body or Collider. Leave one empty to pin the other to that spot in the level. The object's position and its Axis set the pivot, and limits count from where the bodies sit in Blender.
+
+Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Dynamic Rigid Bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Bevy Components** panel in Properties is expanded, and resize handles show on the selected object. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
 
 ## Checks
 
-**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
+**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON or a joint limit whose Min is above its Max, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
 
 - a Triangle Mesh or Convex Hull collider, or a Visibility Range, with no mesh on or under its object
 - a Dynamic Rigid Body with no collider, a Rigid Body inside a moving one, and Triangle Mesh colliders on Dynamic bodies
 - a collider rotated inside an unevenly scaled parent, which Avian sizes wrong
+- a Dynamic body with every axis locked
+- a Joint with no bodies, the same body twice, only static bodies, or a body that has no Rigid Body or Collider, is part of another body or is left out of the export
 - levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
 - Custom Component type paths that aren't Rust paths, or that repeat on one object
 - Shadows with no mesh on or under its object

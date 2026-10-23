@@ -43,6 +43,25 @@ fn mesh_collider<'a>(world: &'a mut World, name: &str) -> &'a Collider {
     return world.get::<Collider>(mesh).unwrap_or_else(|| panic!("{name} has no collider on its mesh"));
 }
 
+fn transform(world: &World, entity: Entity) -> Transform {
+    return world.get::<Transform>(entity).copied().unwrap_or_else(|| panic!("{entity} has no transform"));
+}
+
+fn joint_entity<T: Component>(world: &mut World, name: &str) -> Entity {
+    let node = node(world, name);
+    let mut joints = world.query_filtered::<(Entity, &ChildOf), With<T>>();
+    return joints.iter(world).find(|(_, parent)| parent.parent() == node).map(|(entity, _)| entity).unwrap_or_else(|| panic!("{name} has no {}", std::any::type_name::<T>()));
+}
+
+fn joint<'a, T: Component>(world: &'a mut World, name: &str) -> &'a T {
+    let entity = joint_entity::<T>(world, name);
+    return world.get::<T>(entity).expect("the joint entity has the joint");
+}
+
+fn physics_time(app: &App) -> f32 {
+    return app.world().resource::<Time<Physics>>().elapsed_secs();
+}
+
 fn colliders(world: &mut World, name: &str) -> Vec<Entity> {
     let mut entities = meshes(world, name);
     entities.push(node(world, name));
@@ -189,7 +208,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 27);
+    assert_eq!(count, 43);
 }
 
 #[test]
@@ -306,6 +325,269 @@ fn older_exports_keep_avian_defaults() {
     assert!(world.get::<Restitution>(entity).is_none());
     assert!(world.get::<Mass>(entity).is_none());
     assert!(world.get::<NoAutoMass>(entity).is_none());
+    assert!(world.get::<GravityScale>(entity).is_none());
+    assert!(world.get::<LinearDamping>(entity).is_none());
+    assert!(world.get::<AngularDamping>(entity).is_none());
+    assert!(world.get::<LockedAxes>(entity).is_none());
+    assert!(world.get::<SweptCcd>(entity).is_none());
+}
+
+#[test]
+fn locked_axes_cancel_initial_velocity() {
+    let mut app = LevelApp::default().build();
+    let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "rigid_body", "kind": "dynamic", "gravity_scale": 0.0, "lock_translation": [true, false, false], "lock_rotation": [false, true, false], "linear_velocity": [1.0, 2.0, 3.0], "angular_velocity": [4.0, 5.0, 6.0]}]}).to_string()});
+    let entity = app.world_mut().spawn((Name::new("locked"), Transform::default(), GltfExtras { value: extras.to_string() })).id();
+    app.update();
+    let world = app.world();
+    assert_eq!(world.get::<LinearVelocity>(entity), Some(&LinearVelocity(Vec3::new(0.0, 2.0, 3.0))));
+    assert_eq!(world.get::<AngularVelocity>(entity), Some(&AngularVelocity(Vec3::new(4.0, 0.0, 6.0))));
+    assert_eq!(world.get::<LockedAxes>(entity).map(LockedAxes::to_bits), Some(0b100_010));
+}
+
+#[test]
+fn rigid_bodies_keep_their_tuning() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let balloon = node(world, "balloon");
+    assert_eq!(world.get::<GravityScale>(balloon), Some(&GravityScale(-0.5)));
+    assert_eq!(world.get::<LinearDamping>(balloon), Some(&LinearDamping(0.5)));
+    assert_eq!(world.get::<AngularDamping>(balloon), Some(&AngularDamping(0.2)));
+    let puck = node(world, "puck");
+    assert_eq!(world.get::<LockedAxes>(puck).map(LockedAxes::to_bits), Some(0b010_111));
+    let bullet = node(world, "bullet");
+    assert_eq!(world.get::<SweptCcd>(bullet).map(|ccd| ccd.filter), Some(CcdFilter::ALL));
+    assert_eq!(world.get::<GravityScale>(bullet), Some(&GravityScale(0.0)));
+    let crate_node = node(world, "crate");
+    assert_eq!(world.get::<GravityScale>(crate_node), Some(&GravityScale(1.0)));
+    assert_eq!(world.get::<LockedAxes>(crate_node).map(LockedAxes::to_bits), Some(0));
+    assert!(world.get::<SweptCcd>(crate_node).is_none());
+    for name in ["ground", "ramp", "spinner", "ball", "drawer_cabinet"] {
+        let node = node(world, name);
+        assert!(world.get::<GravityScale>(node).is_none(), "{name}");
+        assert!(world.get::<LinearDamping>(node).is_none(), "{name}");
+        assert!(world.get::<LockedAxes>(node).is_none(), "{name}");
+    }
+}
+
+#[test]
+fn negative_gravity_and_damping_make_bodies_rise_slowly() {
+    let mut app = load_level(LEVEL);
+    let balloon = node(app.world_mut(), "balloon");
+    let start = transform(app.world(), balloon).translation;
+    for _ in 0..300 {
+        app.update();
+    }
+    let world = app.world();
+    let height = transform(world, balloon).translation.y;
+    let velocity = world.get::<LinearVelocity>(balloon).map(|velocity| velocity.y).expect("balloon has a velocity");
+    assert!(height > start.y + 5.0, "balloon only rose from {} to {height}", start.y);
+    assert!(velocity > 0.0 && velocity < 9.81, "balloon rises at {velocity} m/s, faster than damping allows");
+}
+
+#[test]
+fn kinematic_bodies_keep_their_initial_spin() {
+    let mut app = load_level(LEVEL);
+    let spinner = node(app.world_mut(), "spinner");
+    let before = transform(app.world(), spinner);
+    let start = physics_time(&app);
+    for _ in 0..60 {
+        app.update();
+    }
+    let after = transform(app.world(), spinner);
+    let elapsed = physics_time(&app) - start;
+    let (axis, angle) = (after.rotation * before.rotation.inverse()).to_axis_angle();
+    assert!(elapsed > 0.9, "only {elapsed} s of physics ran");
+    assert!(axis.dot(Vec3::Y) > 0.999, "spinner turned around {axis}");
+    assert!((angle - std::f32::consts::FRAC_PI_2 * elapsed).abs() < 0.02, "spinner turned {angle} rad in {elapsed} s");
+    assert!(after.translation.distance(before.translation) < 1e-4);
+}
+
+#[test]
+fn locked_axes_keep_bodies_from_turning_or_lifting() {
+    let mut app = load_level(LEVEL);
+    for _ in 0..60 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let puck = node(world, "puck");
+    let pose = transform(world, puck);
+    assert!(pose.rotation.angle_between(Quat::IDENTITY) < 1e-3, "puck turned to {}", pose.rotation);
+    assert!((pose.translation.y - 0.05).abs() < 1e-4, "puck moved to height {}", pose.translation.y);
+    assert!(pose.translation.x > -7.9, "puck did not slide, it is at {}", pose.translation);
+    assert!((pose.translation.z - 5.0).abs() < 1e-3, "puck slid sideways to {}", pose.translation);
+}
+
+#[test]
+fn continuous_collision_stops_fast_bodies() {
+    let mut app = load_level(LEVEL);
+    for _ in 0..20 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let (bullet, target) = (node(world, "bullet"), node(world, "bullet_target"));
+    let (bullet, target) = (transform(world, bullet).translation, transform(world, target).translation);
+    assert!(bullet.x < target.x, "the bullet passed the target to {bullet}");
+    assert!(target.x > -5.9, "the bullet did not push the target, which is at {target}");
+
+    let mut app = LevelApp::default().build();
+    app.add_observer(|added: On<Add<SweptCcd>>, mut commands: Commands| {
+        commands.entity(added.event_target()).remove::<SweptCcd>();
+    });
+    spawn_level(&mut app, LEVEL).expect("level loads");
+    for _ in 0..20 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let (bullet, target) = (node(world, "bullet"), node(world, "bullet_target"));
+    let (bullet, target) = (transform(world, bullet).translation, transform(world, target).translation);
+    assert!(bullet.x > target.x + 1.0, "without sweeps against dynamic bodies the bullet should fly through the target, but it is at {bullet}");
+    assert_eq!(target.x, -6.0);
+}
+
+#[test]
+fn joints_connect_the_named_bodies() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let (door_frame, door) = (node(world, "door_frame"), node(world, "door"));
+    let hinge = joint::<RevoluteJoint>(world, "door_hinge").clone();
+    assert_eq!((hinge.body1, hinge.body2, hinge.hinge_axis), (door_frame, door, Vec3::Y));
+    assert_eq!(hinge.angle_limit, Some(AngleLimit::new(0.0, std::f32::consts::FRAC_PI_2)));
+    let hinge = joint_entity::<RevoluteJoint>(world, "door_hinge");
+    assert!(world.get::<JointCollisionDisabled>(hinge).is_some());
+    assert_eq!(world.get::<JointDamping>(hinge), Some(&JointDamping { linear: 0.0, angular: 0.0 }));
+    assert_eq!(world.get::<Name>(hinge).map(Name::as_str), Some("door_hinge joint"));
+
+    let (cabinet, drawer) = (node(world, "drawer_cabinet"), node(world, "drawer"));
+    let slider = joint::<PrismaticJoint>(world, "drawer").clone();
+    assert_eq!((slider.body1, slider.body2, slider.slider_axis), (cabinet, drawer, Vec3::X));
+    assert_eq!(slider.limits, Some(DistanceLimit::new(0.0, 0.4)));
+
+    let (barrel, lid) = (node(world, "barrel"), node(world, "barrel_lid"));
+    let fixed = joint::<FixedJoint>(world, "barrel_lid").clone();
+    assert_eq!((fixed.body1, fixed.body2), (barrel, lid));
+    let fixed = joint_entity::<FixedJoint>(world, "barrel_lid");
+    assert!(world.get::<JointDamping>(fixed).is_none());
+
+    let (first, second) = (node(world, "chain_link_1"), node(world, "chain_link_2"));
+    let middle = joint::<SphericalJoint>(world, "chain_middle").clone();
+    assert_eq!((middle.body1, middle.body2, middle.twist_axis), (first, second, Vec3::Y));
+    assert_eq!((middle.swing_limit, middle.twist_limit), (Some(AngleLimit::new(0.0, std::f32::consts::FRAC_PI_4)), None));
+    let top = joint::<SphericalJoint>(world, "chain_top").clone();
+    assert_eq!(top.body2, first);
+    assert_eq!(world.get::<Name>(top.body1).map(Name::as_str), Some("chain_top anchor"));
+    assert_eq!(world.get::<RigidBody>(top.body1), Some(&RigidBody::Static));
+    assert!((world.get::<GlobalTransform>(top.body1).expect("the anchor has a transform").translation() - Vec3::new(-6.0, 4.0, -2.0)).length() < 1e-4);
+
+    let mut joints = world.query::<AnyOf<(&FixedJoint, &RevoluteJoint, &PrismaticJoint, &SphericalJoint)>>();
+    assert_eq!(joints.iter(world).count(), 5);
+}
+
+#[test]
+fn hinges_turn_until_their_limit() {
+    let mut app = load_level(LEVEL);
+    let door = node(app.world_mut(), "door");
+    let frame = node(app.world_mut(), "door_frame");
+    let mut widest = 0.0_f32;
+    for _ in 0..120 {
+        app.update();
+        let pose = transform(app.world(), door);
+        let facing = pose.rotation * Vec3::X;
+        let angle = (-facing.z).atan2(facing.x).to_degrees();
+        assert!((-3.0..93.0).contains(&angle), "the door swung to {angle} degrees, past its 0 to 90 degree limits");
+        assert!(facing.y.abs() < 0.01, "the door tipped off its hinge axis to {facing}");
+        widest = widest.max(angle);
+        let hinge = pose.transform_point(Vec3::new(-0.5, 0.0, 0.0));
+        assert!(hinge.distance(Vec3::new(-2.0, 1.1, 9.0)) < 0.02, "the door came off its hinge to {hinge}");
+    }
+    assert!(widest > 85.0, "the door only opened to {widest} degrees");
+    assert_eq!(transform(app.world(), frame).translation, Vec3::new(-2.05, 1.1, 9.0));
+}
+
+#[test]
+fn ball_joints_hold_chains_together() {
+    let mut app = load_level(LEVEL);
+    let first = node(app.world_mut(), "chain_link_1");
+    let second = node(app.world_mut(), "chain_link_2");
+    let start = transform(app.world(), second).translation;
+    let mut swing = 0.0_f32;
+    for _ in 0..120 {
+        app.update();
+        let (upper, lower) = (transform(app.world(), first), transform(app.world(), second));
+        assert!(upper.transform_point(Vec3::new(0.0, 0.3, 0.0)).distance(Vec3::new(-6.0, 4.0, -2.0)) < 0.03, "the chain came off its anchor");
+        assert!(upper.transform_point(Vec3::new(0.0, -0.3, 0.0)).distance(lower.transform_point(Vec3::new(0.0, 0.3, 0.0))) < 0.03, "the links came apart");
+        assert!((upper.rotation * Vec3::Y).angle_between(lower.rotation * Vec3::Y) < 48.0_f32.to_radians(), "the links bent past their swing limit");
+        swing = swing.max((lower.translation.x - start.x).abs());
+    }
+    assert!(swing > 0.2, "the chain only swung {swing} m");
+}
+
+#[test]
+fn sliders_stop_at_their_limit() {
+    let mut app = load_level(LEVEL);
+    for _ in 0..60 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let drawer = node(world, "drawer");
+    let pose = transform(world, drawer);
+    assert!(pose.translation.distance(Vec3::new(2.4, 0.5, 9.0)) < 0.02, "the drawer is at {}", pose.translation);
+    assert!(pose.rotation.angle_between(Quat::IDENTITY) < 1e-3, "the drawer turned to {}", pose.rotation);
+}
+
+#[test]
+fn fixed_joints_move_bodies_as_one() {
+    let mut app = load_level(LEVEL);
+    for _ in 0..120 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let (barrel, lid) = (node(world, "barrel"), node(world, "barrel_lid"));
+    let (barrel, lid) = (transform(world, barrel), transform(world, lid));
+    assert!((barrel.translation.y - 0.5).abs() < 0.02, "the barrel did not land, it is at {}", barrel.translation);
+    assert!((lid.translation - barrel.translation).distance(barrel.rotation * Vec3::new(0.0, 0.6, 0.0)) < 0.01, "the lid moved to {} on a barrel at {}", lid.translation, barrel.translation);
+    assert!(lid.rotation.angle_between(barrel.rotation) < 1e-2);
+}
+
+#[test]
+fn joints_to_missing_bodies_are_skipped() {
+    let mut app = LevelApp::default().build();
+    let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "joint", "kind": "revolute", "body1": "nowhere", "body2": null, "axis": [0.0, 1.0, 0.0], "collide": false}]}).to_string()});
+    app.world_mut().spawn((Name::new("lost_hinge"), Transform::default(), GltfExtras { value: extras.to_string() }));
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let mut joints = world.query::<&RevoluteJoint>();
+    assert_eq!(joints.iter(world).count(), 0);
+    let mut anchors = world.query::<&Name>();
+    assert!(anchors.iter(world).all(|name| name.as_str() != "lost_hinge anchor"));
+}
+
+#[test]
+fn joints_pick_bodies_from_their_own_level() {
+    let mut app = LevelApp::default().build();
+    let extras = |components: Value| GltfExtras { value: json!({"bevy_components": json!({"version": 1, "components": components}).to_string()}).to_string() };
+    let body = json!([{"type": "collider", "shape": "sphere", "size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": false}, {"type": "rigid_body", "kind": "dynamic"}]);
+    let hinge = json!([{"type": "joint", "kind": "spherical", "body1": null, "body2": "weight", "axis": [0.0, 1.0, 0.0], "collide": true}]);
+    let mut levels = Vec::new();
+    for offset in [0.0, 10.0] {
+        let root = app.world_mut().spawn((Name::new("level"), Transform::from_xyz(offset, 0.0, 0.0))).id();
+        let weight = app.world_mut().spawn((Name::new("weight"), Transform::from_xyz(0.0, -1.0, 0.0), extras(body.clone()), ChildOf(root))).id();
+        let pivot = app.world_mut().spawn((Name::new("pivot"), Transform::from_xyz(0.0, 0.5, 0.0), extras(hinge.clone()), ChildOf(root))).id();
+        levels.push((root, weight, pivot));
+    }
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world_mut();
+    for (root, weight, pivot) in levels {
+        let mut joints = world.query::<(Entity, &SphericalJoint, &ChildOf)>();
+        let (joint, anchor, body) = joints.iter(world).find(|(_, _, parent)| parent.parent() == pivot).map(|(entity, joint, _)| (entity, joint.body1, joint.body2)).expect("each pivot has a joint");
+        assert_eq!(body, weight);
+        assert_eq!(world.get::<ChildOf>(anchor).map(ChildOf::parent), Some(root));
+        assert_eq!(world.get::<Transform>(anchor).map(|transform| transform.translation), Some(Vec3::new(0.0, 0.5, 0.0)));
+        assert!(world.get::<JointCollisionDisabled>(joint).is_none());
+    }
 }
 
 #[test]

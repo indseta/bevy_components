@@ -39,6 +39,59 @@ class TestGeometry(unittest.TestCase):
             segments = geometry.circle_lines(4.5, plane=plane, segments=24)
             self.assertEqual(len(segments), 24)
 
+    def test_rotate_follows_the_right_hand_rule(self):
+        rotated = geometry.rotate((1, 0, 0), (0, 0, 1), math.pi / 2)
+        self.assertEqual(tuple(round(value, 6) for value in rotated), (0.0, 1.0, 0.0))
+
+    def test_perpendicular_prefers_the_given_direction(self):
+        self.assertEqual(geometry.perpendicular((0, 0, 1), (3, 0, 5)), (1.0, 0.0, 0.0))
+        self.assertEqual(geometry.perpendicular((1, 0, 0), (2, 0, 0)), (0.0, 1.0, 0.0))
+        self.assertEqual(geometry.perpendicular((0, 0, 1), (0, 0, 0)), (1.0, 0.0, 0.0))
+
+    def test_arcs_span_their_angles(self):
+        lines = geometry.arc_lines((0, 0, 1), (1, 0, 0), 2.0, 0.0, math.pi / 2)
+        self.assertEqual(tuple(round(value, 6) for value in lines[0][0]), (2.0, 0.0, 0.0))
+        self.assertEqual(tuple(round(value, 6) for value in lines[-1][1]), (0.0, 2.0, 0.0))
+        self.assertTrue(all(abs(math.dist((0, 0, 0), point) - 2) < 1e-6 for line in lines for point in line))
+
+    def test_arrow_has_a_shaft_and_head(self):
+        lines = geometry.arrow_lines((0, 0, 0), (0, 0, 2))
+        self.assertEqual(lines[0], ((0, 0, 0), (0, 0, 2)))
+        self.assertEqual(len(lines), 5)
+        self.assertTrue(all(line[0] == (0, 0, 2) and line[1][2] < 2 for line in lines[1:]))
+        self.assertEqual(geometry.arrow_lines((1, 1, 1), (1, 1, 1)), [])
+
+    def test_hinge_limits_sweep_from_min_to_max(self):
+        lines = geometry.joint_lines("REVOLUTE", (0, 0, 1), (1, 0, 0), 1.0, (0.0, math.pi / 2))
+        points = {tuple(round(value, 6) for value in point) for line in lines for point in line}
+        self.assertIn((0.0, 0.0, 1.0), points)
+        self.assertIn((0.0, 1.0, 0.0), points)
+        self.assertNotIn((0.0, -1.0, 0.0), points)
+        free = geometry.joint_lines("REVOLUTE", (0, 0, 1), (1, 0, 0), 1.0)
+        self.assertIn((0.0, -1.0, 0.0), {tuple(round(value, 6) for value in point) for line in free for point in line})
+
+    def test_slider_limits_span_the_axis(self):
+        lines = geometry.joint_lines("PRISMATIC", (1, 0, 0), (0, 1, 0), 0.5, (-0.25, 1.5))
+        self.assertEqual(lines[0], ((-0.25, 0.0, 0.0), (1.5, 0.0, 0.0)))
+        extent = [point[0] for line in geometry.joint_lines("PRISMATIC", (1, 0, 0), (0, 1, 0), 0.5) for point in line]
+        self.assertEqual((min(extent), max(extent)), (-1.0, 1.0))
+
+    def test_ball_swing_cone_opens_around_the_axis(self):
+        lines = geometry.joint_lines("SPHERICAL", (0, 0, 1), (1, 0, 0), 1.0, None, math.pi / 4)
+        tips = [line[1] for line in lines[-4:]]
+        self.assertTrue(all(abs(math.degrees(math.acos(point[2] / math.dist((0, 0, 0), point))) - 45) < 1e-6 for point in tips))
+
+    def test_fixed_joint_is_a_small_box(self):
+        lines = geometry.joint_lines("FIXED", (0, 1, 0), (1, 0, 0), 1.0)
+        self.assertEqual(len(lines), 12)
+        self.assertEqual(max(abs(value) for line in lines for point in line for value in point), 0.15)
+
+    def test_spin_arrow_circles_the_axis(self):
+        lines = geometry.spin_lines((0, 0, 2), 0.5, (1, 1, 1))
+        arc = lines[:-4]
+        self.assertTrue(all(abs(point[2] - 1) < 1e-6 and abs(math.dist((1, 1, 1), point) - 0.5) < 1e-6 for line in arc for point in line))
+        self.assertTrue(all(line[0] == arc[-1][1] for line in lines[-4:]))
+
 
 if __name__ == "__main__":
     unittest.main()

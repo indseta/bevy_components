@@ -152,6 +152,13 @@ def copy_component(source, destination):
             continue
 
 
+def copy_to_object(source, destination, obj):
+    copy_component(source, destination)
+    for prop in ("joint_body1", "joint_body2"):
+        if getattr(destination, prop) == source.id_data:
+            setattr(destination, prop, obj)
+
+
 def sync_changed(self, context):
     obj = getattr(self, "id_data", None)
     if isinstance(obj, bpy.types.Object):

@@ -1,5 +1,5 @@
 from array import array
-from math import radians
+from math import degrees, radians
 from pathlib import PurePosixPath
 
 import blf
@@ -10,7 +10,9 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
-from .geometry import box_lines, capsule_lines, cuboid_lines, sphere_lines
+from .geometry import arrow_lines, box_lines, capsule_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines
+from .metadata import EXTRAS_KEY, initial_velocities
+from .property import JOINT_LABELS
 from .system import children_map, component_of, components_for, mesh_sources, panel_expanded, redraw_viewports
 
 DRAW_3D = None
@@ -31,6 +33,18 @@ SHADOW_LABELS = {
     (False, False): "no casting or receiving",
     (True, True): "as usual",
 }
+JOINT_COLOR = (0.82, 0.52, 1.0, 0.90)
+VELOCITY_COLOR = (1.0, 0.90, 0.30, 0.90)
+JOINT_AXES = {
+    "X": Vector((1.0, 0.0, 0.0)),
+    "Y": Vector((0.0, 0.0, 1.0)),
+    "Z": Vector((0.0, -1.0, 0.0)),
+}
+JOINT_SIZE = 0.5
+JOINT_SIZES = (0.25, 5.0)
+VELOCITY_SECONDS = 0.25
+VELOCITY_LENGTHS = (0.3, 5.0)
+JOINT_TAG = '"type":"joint"'
 
 
 def preview_objects(context, settings):
@@ -38,6 +52,66 @@ def preview_objects(context, settings):
         return []
     objects = context.selected_objects if settings.scope == "SELECTED" else context.scene.objects
     return [obj for obj in objects if obj.visible_get(view_layer=context.view_layer) and len(components_for(obj))]
+
+
+def joint_objects(context, settings, objects):
+    found = [obj for obj in objects if component_of(obj, "JOINT") is not None]
+    if settings.scope == "ALL" or not context.selected_objects:
+        return found
+    selected = set(context.selected_objects)
+    listed = set(found)
+    for obj in context.scene.objects:
+        if obj in listed or JOINT_TAG not in str(obj.get(EXTRAS_KEY, "")) or not obj.visible_get(view_layer=context.view_layer):
+            continue
+        joint = component_of(obj, "JOINT")
+        if joint is not None and (joint.joint_body1 in selected or joint.joint_body2 in selected):
+            found.append(obj)
+    return found
+
+
+def bevy_to_blender(vector):
+    return Vector((vector[0], -vector[2], vector[1]))
+
+
+def _clamp(value, limits):
+    return max(limits[0], min(value, limits[1]))
+
+
+def joint_batches(obj, item):
+    location, rotation, _scale = obj.matrix_world.decompose()
+    inverse = rotation.inverted()
+    axis = JOINT_AXES[item.joint_axis]
+    offsets = [(inverse @ (body.matrix_world.translation - location), sign) for body, sign in ((item.joint_body2, 1.0), (item.joint_body1, -1.0)) if body is not None]
+    offset, sign = next(((offset, sign) for offset, sign in offsets if offset.length > 1e-4), (Vector(), offsets[0][1] if offsets else 1.0))
+    size = _clamp(offset.length, JOINT_SIZES) if offset.length > 1e-4 else JOINT_SIZE
+    reference = perpendicular(tuple(axis), tuple(offset))
+    limits = None
+    if item.joint_use_limits and item.joint_kind in {"REVOLUTE", "SPHERICAL"}:
+        limits = (item.joint_angle_min, item.joint_angle_max)
+    elif item.joint_use_limits and item.joint_kind == "PRISMATIC":
+        limits = (item.joint_distance_min, item.joint_distance_max)
+    if limits is not None and sign < 0:
+        limits = (-limits[1], -limits[0])
+    swing = item.joint_swing if item.joint_use_swing and item.joint_kind == "SPHERICAL" else None
+    batches = [(Matrix.LocRotScale(location, rotation, None), joint_lines(item.joint_kind, tuple(axis), reference, size, limits, swing), JOINT_COLOR, 2.0)]
+    links = [(tuple(location), tuple(body.matrix_world.translation)) for body in (item.joint_body1, item.joint_body2) if body is not None and body != obj]
+    if links:
+        batches.append((Matrix.Identity(4), links, JOINT_COLOR, 1.0))
+    return batches
+
+
+def velocity_batches(obj, item):
+    if item.rigid_body_kind == "STATIC":
+        return []
+    origin = obj.matrix_world.translation
+    linear, angular = (bevy_to_blender(vector) for vector in initial_velocities(item))
+    lines = []
+    if linear.length > 1e-6:
+        lines.extend(arrow_lines(tuple(origin), tuple(origin + linear.normalized() * _clamp(linear.length * VELOCITY_SECONDS, VELOCITY_LENGTHS))))
+    if angular.length > 1e-6:
+        radius = _clamp(max(obj.dimensions) * 0.6, VELOCITY_LENGTHS) if max(obj.dimensions) > 0 else JOINT_SIZE
+        lines.extend(spin_lines(tuple(angular.normalized()), radius, tuple(origin)))
+    return [(Matrix.Identity(4), lines, VELOCITY_COLOR, 2.0)] if lines else []
 
 
 def collider_lines(obj, item, limit, children):
@@ -190,6 +264,12 @@ def preview_batches(context, settings):
             center = Matrix.Translation(obj.matrix_world.translation)
             for radius, color, width in ((audio.audio_distance, AUDIO_COLOR, 1.9), (audio.audio_distance * AUDIO_QUIET_FACTOR, AUDIO_QUIET_COLOR, 1.1)):
                 batches.append((center, sphere_lines(radius, segments=48), color, width))
+        body = component_of(obj, "RIGID_BODY")
+        if body and settings.velocities:
+            batches.extend(velocity_batches(obj, body))
+    if settings.joints:
+        for obj in joint_objects(context, settings, objects):
+            batches.extend(joint_batches(obj, component_of(obj, "JOINT")))
     return batches
 
 
@@ -234,6 +314,12 @@ def _label_lines(obj, settings, children):
             else:
                 details = "mesh edges"
         descriptions.append(f"Collider · {kind} · {details}")
+    body = component_of(obj, "RIGID_BODY")
+    if body and settings.velocities and body.rigid_body_kind != "STATIC":
+        linear, angular = (Vector(vector).length for vector in initial_velocities(body))
+        speeds = [f"{speed:.3g} {unit}" for speed, unit in ((linear, "m/s"), (degrees(angular), "°/s")) if speed > 1e-6]
+        if speeds:
+            descriptions.append(" · ".join(["Velocity", *speeds]))
     visibility = component_of(obj, "VISIBILITY_RANGE")
     if visibility and settings.visibility_ranges:
         descriptions.append(f"LOD · in {visibility.fade_in_start:g}–{visibility.fade_in_end:g}m · out {visibility.fade_out_start:g}–{visibility.fade_out_end:g}m")
@@ -252,7 +338,15 @@ def _label_lines(obj, settings, children):
         else:
             details.append("same volume everywhere")
         descriptions.append(f"Audio · {' · '.join(details)}")
-    return descriptions
+    return descriptions + _joint_label(obj, settings)
+
+
+def _joint_label(obj, settings):
+    joint = component_of(obj, "JOINT")
+    if joint is None or not settings.joints:
+        return []
+    names = [body.name if body is not None else "World" for body in (joint.joint_body1, joint.joint_body2)]
+    return [f"Joint · {JOINT_LABELS[joint.joint_kind]} · {names[0]} – {names[1]}"]
 
 
 def _draw_labels():
@@ -268,8 +362,10 @@ def _draw_labels():
     blf.color(font_id, 0.9, 1.0, 0.95, 0.98)
     objects = preview_objects(context, settings)
     children = _hierarchy(context, objects)
-    for obj in objects:
-        descriptions = _label_lines(obj, settings, children)
+    listed = set(objects)
+    linked = [obj for obj in joint_objects(context, settings, objects) if obj not in listed] if settings.joints else []
+    for obj in objects + linked:
+        descriptions = _label_lines(obj, settings, children) if obj in listed else _joint_label(obj, settings)
         if not descriptions:
             continue
         point = view3d_utils.location_3d_to_region_2d(region, context.region_data, obj.matrix_world.translation)

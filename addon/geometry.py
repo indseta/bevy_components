@@ -1,4 +1,4 @@
-from math import cos, pi, sin
+from math import ceil, cos, pi, sin, sqrt
 
 
 def lines_from_points(points, closed=False):
@@ -59,3 +59,99 @@ def capsule_lines(radius, height, segments=32):
         lines.extend(circle_lines(radius, plane, arc_segments, (0, 0, half), 0, pi))
         lines.extend(circle_lines(radius, plane, arc_segments, (0, 0, -half), pi, 2 * pi))
     return lines
+
+
+def _add(first, second):
+    return tuple(a + b for a, b in zip(first, second))
+
+
+def _scaled(vector, factor):
+    return tuple(value * factor for value in vector)
+
+
+def _dot(first, second):
+    return sum(a * b for a, b in zip(first, second))
+
+
+def _cross(first, second):
+    return (first[1] * second[2] - first[2] * second[1], first[2] * second[0] - first[0] * second[2], first[0] * second[1] - first[1] * second[0])
+
+
+def normalized(vector):
+    length = sqrt(_dot(vector, vector))
+    return _scaled(vector, 1.0 / length) if length > 1e-9 else (0.0, 0.0, 0.0)
+
+
+def perpendicular(axis, preferred=(1.0, 0.0, 0.0)):
+    for candidate in (preferred, (1.0, 0.0, 0.0), (0.0, 1.0, 0.0)):
+        projected = _add(candidate, _scaled(axis, -_dot(candidate, axis)))
+        if _dot(projected, projected) > 1e-8:
+            return normalized(projected)
+    return (1.0, 0.0, 0.0)
+
+
+def rotate(vector, axis, angle):
+    return _add(_add(_scaled(vector, cos(angle)), _scaled(_cross(axis, vector), sin(angle))), _scaled(axis, _dot(axis, vector) * (1 - cos(angle))))
+
+
+def arc_lines(axis, reference, radius, start_angle, end_angle, center=(0.0, 0.0, 0.0), segments=48):
+    count = max(2, ceil(segments * abs(end_angle - start_angle) / (2 * pi)))
+    points = [_add(center, _scaled(rotate(reference, axis, start_angle + (end_angle - start_angle) * index / count), radius)) for index in range(count + 1)]
+    return lines_from_points(points)
+
+
+def arrow_lines(start, end, head=None):
+    direction = tuple(b - a for a, b in zip(start, end))
+    length = sqrt(_dot(direction, direction))
+    if length <= 1e-9:
+        return []
+    direction = _scaled(direction, 1.0 / length)
+    head = min(length * 0.4, 0.15) if head is None else head
+    side = perpendicular(direction)
+    other = _cross(direction, side)
+    back = _add(end, _scaled(direction, -head))
+    return [(tuple(start), tuple(end))] + [(tuple(end), _add(back, _scaled(offset, head * 0.5))) for offset in (side, _scaled(side, -1), other, _scaled(other, -1))]
+
+
+def spin_lines(axis, radius, center=(0.0, 0.0, 0.0), sweep=1.5 * pi):
+    axis = normalized(axis)
+    reference = perpendicular(axis)
+    lines = arc_lines(axis, reference, radius, 0.0, sweep, center)
+    tip = _add(center, _scaled(rotate(reference, axis, sweep), radius))
+    tangent = _cross(axis, rotate(reference, axis, sweep))
+    return lines + arrow_lines(_add(tip, _scaled(tangent, -radius * 0.3)), tip)[1:]
+
+
+def joint_lines(kind, axis, reference, size, limits=None, swing=None):
+    axis = normalized(axis)
+    reference = normalized(reference)
+    origin = (0.0, 0.0, 0.0)
+    if kind == "FIXED":
+        half = size * 0.15
+        return box_lines((-half, -half, -half), (half, half, half))
+    if kind == "REVOLUTE":
+        lines = [(_scaled(axis, -size), _scaled(axis, size)), (origin, _scaled(reference, size))]
+        if limits is None:
+            return lines + arc_lines(axis, reference, size, 0.0, 2 * pi)
+        return lines + arc_lines(axis, reference, size, limits[0], limits[1]) + [(origin, _scaled(rotate(reference, axis, angle), size)) for angle in limits]
+    if kind == "PRISMATIC":
+        if limits is None:
+            return arrow_lines(origin, _scaled(axis, size * 2)) + arrow_lines(origin, _scaled(axis, -size * 2))
+        side = _cross(axis, reference)
+        lines = [(_scaled(axis, limits[0]), _scaled(axis, limits[1]))]
+        for distance, tick in ((limits[0], size * 0.2), (limits[1], size * 0.2), (0.0, size * 0.1)):
+            point = _scaled(axis, distance)
+            lines.extend([(_add(point, _scaled(reference, -tick)), _add(point, _scaled(reference, tick))), (_add(point, _scaled(side, -tick)), _add(point, _scaled(side, tick)))])
+        return lines
+    if kind == "SPHERICAL":
+        lines = sphere_lines(size * 0.15, segments=16) + [(origin, _scaled(axis, size))]
+        if swing is not None:
+            base = _scaled(axis, size * cos(swing))
+            lines.extend(arc_lines(axis, reference, size * sin(swing), 0.0, 2 * pi, base))
+            lines.extend((origin, _add(base, _scaled(rotate(reference, axis, angle), size * sin(swing)))) for angle in (0.0, pi / 2, pi, 3 * pi / 2))
+        if limits is not None:
+            tip = _scaled(axis, size)
+            lines.extend(arc_lines(axis, reference, size * 0.4, limits[0], limits[1], tip))
+            lines.extend((tip, _add(tip, _scaled(rotate(reference, axis, angle), size * 0.4))) for angle in limits)
+        return lines
+    raise ValueError(f"Unsupported joint type: {kind}")

@@ -240,6 +240,27 @@ def add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp):
     lamp.data.materials.append(glow)
 
 
+def add_box(name, location, size):
+    obj = add_mesh(bpy.ops.mesh.primitive_cube_add, name, size=1, location=location)
+    obj.data.transform(Matrix.Diagonal((size[0], size[2], size[1], 1)))
+    return obj
+
+
+def add_box_body(name, location, size, kind="DYNAMIC", **values):
+    obj = add_box(name, location, size)
+    add_component(obj, "COLLIDER", collider_shape="CUBOID", collider_size=size)
+    if kind is not None:
+        add_component(obj, "RIGID_BODY", rigid_body_kind=kind, **values)
+    return obj
+
+
+def add_joint(obj, kind, body1=None, body2=None, **values):
+    item = add_component(obj, "JOINT", joint_kind=kind, **values)
+    item.joint_body1 = body1
+    item.joint_body2 = body2
+    return item
+
+
 def layers(*numbers):
     return [index in numbers for index in range(32)]
 
@@ -362,6 +383,34 @@ def build_sample_level():
     pick_sound(campfire, SOUNDS / "campfire.ogg")
     jingle = add_empty("jingle", (0, 0, 3))
     add_component(jingle, "AUDIO_PLAYER", audio_path="sounds/chime.ogg", audio_volume=0.5, audio_autoplay=False, audio_spatial=False)
+
+    door_frame = add_box_body("door_frame", (-2.05, -9, 1.1), (0.1, 2.2, 0.2), kind=None)
+    door = add_box_body("door", (-1.5, -9, 1.1), (1.0, 2.0, 0.1), rigid_body_angular_velocity=(0, 6, 0))
+    add_joint(add_empty("door_hinge", (-2, -9, 1.1)), "REVOLUTE", door_frame, door, joint_use_limits=True, joint_angle_min=0, joint_angle_max=math.radians(90))
+
+    chain_link_1 = add_box_body("chain_link_1", (-6, 2, 3.7), (0.15, 0.6, 0.15))
+    chain_link_2 = add_box_body("chain_link_2", (-6, 2, 3.1), (0.15, 0.6, 0.15), rigid_body_linear_velocity=(3, 0, 0))
+    add_joint(add_empty("chain_top", (-6, 2, 4)), "SPHERICAL", None, chain_link_1)
+    add_joint(add_empty("chain_middle", (-6, 2, 3.4)), "SPHERICAL", chain_link_1, chain_link_2, joint_use_swing=True, joint_swing=math.radians(45))
+
+    drawer_cabinet = add_box_body("drawer_cabinet", (2, -9, 0.5), (1, 1, 1), kind="STATIC")
+    drawer = add_box_body("drawer", (2, -9, 0.5), (0.8, 0.3, 0.8), rigid_body_linear_velocity=(2, 0, 0))
+    joint = add_component(drawer, "JOINT", joint_kind="PRISMATIC", joint_axis="X", joint_use_limits=True, joint_distance_min=0, joint_distance_max=0.4)
+    joint.joint_body1 = drawer_cabinet
+
+    barrel = add_box_body("barrel", (6, 2, 1.5), (0.8, 1.0, 0.8))
+    barrel_lid = add_box_body("barrel_lid", (6, 2, 2.1), (0.9, 0.1, 0.9))
+    add_component(barrel_lid, "JOINT", joint_kind="FIXED").joint_body1 = barrel
+
+    balloon = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "balloon", radius=0.3, segments=16, ring_count=8, location=(-2, 5, 1))
+    add_component(balloon, "COLLIDER", collider_shape="SPHERE", collider_radius=0.3)
+    add_component(balloon, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_gravity_scale=-0.5, rigid_body_linear_damping=0.5, rigid_body_angular_damping=0.2)
+    add_box_body("spinner", (8, 4, 1), (1.5, 0.2, 0.2), kind="KINEMATIC", rigid_body_angular_velocity=(0, math.radians(90), 0))
+    add_box_body("puck", (-8, -5, 0.05), (0.5, 0.1, 0.5), rigid_body_lock_translation=(False, True, False), rigid_body_lock_rotation=(True, True, True), rigid_body_linear_velocity=(2, 0, 0), rigid_body_angular_velocity=(0, 3, 0))
+    bullet = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "bullet", radius=0.05, segments=8, ring_count=4, location=(-9.5, 9.5, 1))
+    add_component(bullet, "COLLIDER", collider_shape="SPHERE", collider_radius=0.05)
+    add_component(bullet, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_gravity_scale=0, rigid_body_ccd="ALL", rigid_body_linear_velocity=(80, 0, 0))
+    add_box_body("bullet_target", (-6, 9.5, 1), (0.02, 1, 1), rigid_body_gravity_scale=0)
 
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 10))
     bpy.context.object.name = "sun"
