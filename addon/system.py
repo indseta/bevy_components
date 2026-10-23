@@ -137,6 +137,27 @@ def mesh_sources(obj, children, kind, instances=True):
     return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
 
 
+def export_settings(scene):
+    if scene.bevy_bsn_export.rust_file.strip() and not scene.bevy_glb_export.filepath.strip():
+        return scene.bevy_bsn_export
+    return scene.bevy_glb_export
+
+
+def exported(obj, options):
+    if options.visible_only and (not obj.visible_get() or obj.hide_viewport or all(collection.hide_viewport for collection in obj.users_collection)):
+        return False
+    return not options.renderable_only or not (obj.hide_render or all(collection.hide_render for collection in obj.users_collection))
+
+
+def exported_objects(context, options, selected=None):
+    objects = context.selected_objects if (options.selected_only if selected is None else selected) else context.scene.objects
+    return [obj for obj in objects if exported(obj, options)]
+
+
+def changes_mesh(obj):
+    return any(modifier.type != "ARMATURE" and modifier.show_viewport for modifier in obj.modifiers)
+
+
 def blend_directory():
     return bpy.path.abspath("//") or os.getcwd()
 

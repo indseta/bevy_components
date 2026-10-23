@@ -1,6 +1,6 @@
 import bpy
 
-from .operator import BEVY_OT_add_component, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate, running_bake, running_export
+from .operator import BEVY_OT_add_component, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate, running_bake, running_export
 from .property import COMPONENT_LABELS
 from .schema import short_name
 from .system import accepts, component_index, game_types, scene_definition
@@ -169,6 +169,7 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
         layout.operator(BEVY_OT_export_glb.bl_idname, text="Export Bevy Scene (.glb)...", icon="EXPORT")
         layout.operator(BEVY_OT_export_bsn.bl_idname, text="Export Bevy Scene (BSN)...", icon="EXPORT")
         draw_export_again(layout, context.scene)
+        draw_export_all(layout)
 
 
 def draw_export_again(layout, scene):
@@ -176,6 +177,11 @@ def draw_export_again(layout, scene):
         path = operator.remembered(scene)
         if path:
             layout.operator(operator.bl_idname, text=f"Export Again ({bpy.path.basename(path)})", icon="FILE_REFRESH").again = True
+
+
+def draw_export_all(layout):
+    if len(bpy.data.scenes) > 1:
+        layout.operator(BEVY_OT_export_all_scenes.bl_idname, text="Export All Scenes (.glb)", icon="SCENE_DATA")
 
 
 def export_menu(self, context):

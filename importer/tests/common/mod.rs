@@ -50,6 +50,7 @@ pub struct SceneApp {
     pub gpu: bool,
     pub plugin: bool,
     pub audio: bool,
+    pub watch: bool,
     pub formats: Option<CompressedImageFormats>,
 }
 
@@ -60,6 +61,7 @@ impl Default for SceneApp {
             gpu: false,
             plugin: true,
             audio: false,
+            watch: false,
             formats: None,
         };
     }
@@ -69,7 +71,7 @@ impl SceneApp {
     pub fn build(&self) -> App {
         let mut app = App::new();
         let render = if self.gpu { RenderPlugin { synchronous_pipeline_compilation: true, ..default() } } else { RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() } };
-        let plugins = DefaultPlugins.set(AssetPlugin { file_path: self.assets.clone(), ..default() }).set(render).set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, close_when_requested: false, ..default() }).disable::<WinitPlugin>().disable::<GilrsPlugin>().disable::<LogPlugin>().disable::<PipelinedRenderingPlugin>();
+        let plugins = DefaultPlugins.set(AssetPlugin { file_path: self.assets.clone(), watch_for_changes_override: Some(self.watch), ..default() }).set(render).set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, close_when_requested: false, ..default() }).disable::<WinitPlugin>().disable::<GilrsPlugin>().disable::<LogPlugin>().disable::<PipelinedRenderingPlugin>();
         app.add_plugins(if self.audio { plugins.set(AudioPlugin { global_volume: GlobalVolume::new(Volume::SILENT), ..default() }) } else { plugins.disable::<AudioPlugin>() });
         app.add_plugins(PhysicsPlugins::default());
         if self.plugin {

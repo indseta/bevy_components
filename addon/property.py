@@ -241,7 +241,11 @@ class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
 
 
 class ExportOptions:
+    export_on_save: BoolProperty(name="Export on Save", description="Export the scene again with these settings every time the .blend file is saved, so a game built with Bevy's file_watcher feature reloads it", default=False)
     selected_only: BoolProperty(name="Selected Objects Only", default=False)
+    visible_only: BoolProperty(name="Visible Objects Only", description="Leave out objects hidden in the viewport", default=False)
+    renderable_only: BoolProperty(name="Renderable Objects Only", description="Leave out objects turned off for renders", default=False)
+    apply_modifiers: BoolProperty(name="Apply Modifiers", description="Export meshes with their modifiers applied, as the viewport shows them. glTF then leaves out the shape keys of meshes with modifiers", default=True)
     include_lights: BoolProperty(name="Include Lights", default=True)
     include_cameras: BoolProperty(name="Include Cameras", default=False)
     include_animations: BoolProperty(name="Include Animations", default=False)

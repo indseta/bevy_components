@@ -227,7 +227,7 @@ pub fn apply_default_bodies(mut commands: Commands, candidates: Query<Entity, Wi
     }
 }
 
-pub fn build_joints(mut commands: Commands, joints: Query<(Entity, &PendingJoint, Option<&Name>)>, names: Query<(Entity, &Name), Without<Mesh3d>>, parents: Query<&ChildOf>, transforms: Query<&Transform>, bodies: Query<(), With<RigidBody>>) {
+pub fn build_joints(mut commands: Commands, joints: Query<(Entity, &PendingJoint, Option<&Name>)>, names: Query<(Entity, &Name), Without<Mesh3d>>, parents: Query<&ChildOf>, transforms: Query<&Transform>, bodies: Query<(), With<RigidBody>>, roots: Query<(), With<WorldAssetRoot>>) {
     for (entity, pending, name) in &joints {
         commands.entity(entity).remove::<PendingJoint>();
         let spec = &pending.0;
@@ -261,7 +261,7 @@ pub fn build_joints(mut commands: Commands, joints: Query<(Entity, &PendingJoint
                 frames[index] = local_frame(joint_pose, world_pose(body, &parents, &transforms));
                 continue;
             }
-            let root = parents.iter_ancestors(entity).last();
+            let root = parents.iter_ancestors(entity).find(|ancestor| parents.get(*ancestor).is_ok_and(|parent| roots.contains(parent.parent()))).or_else(|| parents.iter_ancestors(entity).last());
             let anchor = Affine3A::from_rotation_translation(rotation, translation);
             let local = root.map_or(anchor, |root| world_pose(root, &parents, &transforms).inverse() * anchor);
             let mut spawned = commands.spawn((Name::new(format!("{label} anchor")), RigidBody::Static, Transform::from_matrix(Mat4::from(local))));

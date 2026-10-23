@@ -6,7 +6,7 @@ use bevy_components_importer::{BlenderCustomComponents, GltfTextures, Navigation
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{f32::consts::{FRAC_PI_2, FRAC_PI_4}, thread, time::Duration};
+use std::{f32::consts::{FRAC_PI_2, FRAC_PI_4}, fs, thread, time::Duration};
 
 #[derive(Deserialize, Debug, PartialEq)]
 struct Pickup {
@@ -859,6 +859,75 @@ fn joints_pick_bodies_from_their_own_scene() {
         assert_eq!(world.get::<Transform>(anchor).map(|transform| transform.translation), Some(Vec3::new(0.0, 0.5, 0.0)));
         assert!(world.get::<JointCollisionDisabled>(joint).is_none());
     }
+}
+
+fn with_friction(glb: &[u8], name: &str, friction: f32) -> Vec<u8> {
+    let length = u32::from_le_bytes(glb[12..16].try_into().expect("the GLB has a JSON chunk")) as usize;
+    let mut gltf: Value = serde_json::from_slice(&glb[20..20 + length]).expect("the GLB holds JSON");
+    let node = gltf["nodes"].as_array_mut().expect("the scene has nodes").iter_mut().find(|node| node["name"] == name).unwrap_or_else(|| panic!("No node named {name}"));
+    let mut exported: Value = serde_json::from_str(node["extras"]["bevy_components"].as_str().expect("the node has components")).expect("components are JSON");
+    exported["components"][0]["friction"] = json!(friction);
+    node["extras"]["bevy_components"] = json!(exported.to_string());
+    let mut chunk = serde_json::to_vec(&gltf).expect("the glTF serializes");
+    chunk.resize(chunk.len().div_ceil(4) * 4, b' ');
+    let binary = &glb[20 + length..];
+    let mut output = glb[..8].to_vec();
+    output.extend_from_slice(&((20 + chunk.len() + binary.len()) as u32).to_le_bytes());
+    output.extend_from_slice(&(chunk.len() as u32).to_le_bytes());
+    output.extend_from_slice(b"JSON");
+    output.extend_from_slice(&chunk);
+    output.extend_from_slice(binary);
+    return output;
+}
+
+fn scene_counts(world: &mut World) -> Vec<(&'static str, usize)> {
+    let mut names = world.query::<&Name>();
+    let anchors = names.iter(world).filter(|name| name.as_str().ends_with(" anchor")).count();
+    let mut joints = world.query::<AnyOf<(&FixedJoint, &RevoluteJoint, &PrismaticJoint, &SphericalJoint)>>();
+    let joints = joints.iter(world).count();
+    let mut colliders = world.query::<&Collider>();
+    let colliders = colliders.iter(world).count();
+    let mut bodies = world.query::<&RigidBody>();
+    let bodies = bodies.iter(world).count();
+    let mut extras = world.query::<&GltfExtras>();
+    let extras = extras.iter(world).count();
+    return vec![("anchors", anchors), ("joints", joints), ("colliders", colliders), ("rigid bodies", bodies), ("nodes with extras", extras), ("crates", nodes(world, "crate").len()), ("windmill towers", nodes(world, "windmill_tower").len())];
+}
+
+#[test]
+fn reloaded_scenes_rebuild_their_components_once() {
+    let directory = std::env::temp_dir().join(format!("bevy_components_reload_{}", std::process::id()));
+    fs::create_dir_all(directory.join("props")).expect("temporary directory");
+    fs::copy(format!("{ASSETS}/{SCENE}"), directory.join(SCENE)).expect("scene copy");
+    fs::copy(format!("{ASSETS}/props/windmill.glb"), directory.join("props/windmill.glb")).expect("prop copy");
+    let mut app = SceneApp { assets: directory.to_string_lossy().to_string(), watch: true, ..default() }.build();
+    spawn_scene(&mut app, SCENE).expect("the copied scene loads");
+    let before = scene_counts(app.world_mut());
+    assert_eq!(before[0], ("anchors", 1));
+    let ready = app.world().resource::<ReadyInstances>().0;
+    let glb = fs::read(directory.join(SCENE)).expect("scene copy");
+    fs::write(directory.join(SCENE), with_friction(&glb, "crate", 0.3)).expect("changed scene");
+    app.world().resource::<AssetServer>().reload(SCENE);
+    let mut reloaded = false;
+    for _ in 0..1000 {
+        app.update();
+        let friction = colliders(app.world_mut(), "crate").first().and_then(|collider| app.world().get::<Friction>(*collider).copied());
+        if friction == Some(Friction::new(0.3)) && app.world().resource::<ReadyInstances>().0 >= ready + 3 {
+            reloaded = true;
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    for _ in 0..10 {
+        app.update();
+    }
+    fs::remove_dir_all(&directory).ok();
+    assert!(reloaded, "the scene was not respawned with the changed friction");
+    assert_eq!(scene_counts(app.world_mut()), before);
+    let world = app.world_mut();
+    let top = joint::<SphericalJoint>(world, "chain_top").clone();
+    assert_eq!(top.body2, node(world, "chain_link_1"));
+    assert!((world.get::<GlobalTransform>(top.body1).expect("the anchor has a transform").translation() - Vec3::new(-6.0, 4.0, -2.0)).length() < 1e-4);
 }
 
 #[test]

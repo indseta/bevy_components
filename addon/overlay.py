@@ -14,7 +14,7 @@ from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cuboid_
 from .metadata import EXTRAS_KEY, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
 from .property import JOINT_LABELS
 from .reference import read_scenes
-from .system import children_map, component_of, components_for, file_path, mesh_sources, panel_expanded, redraw_viewports
+from .system import changes_mesh, children_map, component_of, components_for, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports
 from .validation import texture_check
 
 DRAW_3D = None
@@ -212,20 +212,33 @@ def mesh_parts(obj, kind, limit):
 
 
 def exceeds_edge_limit(obj, limit):
-    return obj.type == "MESH" and len(obj.data.edges) > limit
+    return obj.type == "MESH" and len(_exported_mesh(obj).edges) > limit
+
+
+def _applies_modifiers():
+    return export_settings(bpy.context.scene).apply_modifiers
+
+
+def _exported_mesh(obj):
+    if _applies_modifiers() and changes_mesh(obj):
+        return obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
+    return obj.data
 
 
 def _mesh_preview(obj, kind, limit, normals=None):
     if obj.type == "MESH":
-        return _cached_preview(obj.data, kind, limit, obj.data.as_pointer() if normals is None else (obj.data.as_pointer(), obj.as_pointer()), normals)
+        mesh = _exported_mesh(obj)
+        pointer = (obj if mesh != obj.data else mesh).as_pointer()
+        return _cached_preview(mesh, kind, limit, pointer if normals is None else (pointer, obj.as_pointer()), normals)
+    source = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()) if _applies_modifiers() else obj
     try:
-        mesh = obj.to_mesh()
+        mesh = source.to_mesh()
     except RuntimeError:
         return box_lines(*_bounds([Vector(corner) for corner in obj.bound_box])), 1
     try:
         return _cached_preview(mesh, kind, limit, obj.as_pointer(), normals) if mesh is not None else ([], 0)
     finally:
-        obj.to_mesh_clear()
+        source.to_mesh_clear()
 
 
 def _cached_preview(mesh, kind, limit, pointer, normals=None):

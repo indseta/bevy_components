@@ -49,6 +49,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 3. Export with **File > Export > Bevy Scene (.glb)**, or from the dropdown next to **Add Component**. After that, **Export Again** in those menus and in **3D Viewport > N > Bevy > Export** writes the same file with the same settings, without the file dialog.
 4. Put the GLB in your game's `assets/` folder.
 
+The export holds the active scene. Under **Include**, **Limit to** can leave out objects that aren't selected, are hidden in the viewport or are turned off for renders, and the checks look at the same objects. **Apply Modifiers**, on by default, exports meshes as the viewport shows them, though glTF then leaves out the shape keys of meshes with modifiers. The file is written once the export succeeds, so a failed export keeps the previous one. With more than one scene in the file, **Export All Scenes (.glb)** exports every scene that was exported before to its own GLB, with that scene's settings.
+
 **Shadows** (under Rendering) stops the meshes on and under an object from casting or receiving shadows. **Audio Player** (under Audio) plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
 
 **Joint** (under Physics) connects two bodies with an Avian Fixed, Hinge, Slider or Ball joint. Put it on an empty at the pivot, or on one of the bodies, and pick Body 1 and Body 2 from objects with a Rigid Body or Collider. Leave one empty to pin the other to that spot in the scene. The object's position and its Axis set the pivot, and limits count from where the bodies sit in Blender.
@@ -56,6 +58,16 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 **Scene Reference** (under Scene) spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. **Animation** (under Animation) plays an action when the scene loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
 
 Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Dynamic Rigid Bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded, and resize handles show on the selected object. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
+
+## Hot reload
+
+Turn on **Export on Save** in the export dialog or under **3D Viewport > N > Bevy > Export**, and every save of the .blend file exports the scene again with the same settings. When that export fails, a message says why and the previous file stays. Enable Bevy's `file_watcher` feature in your game, and it reloads the scene while it runs, with the components rebuilt once:
+
+```toml
+bevy = { version = "0.20", features = ["file_watcher"] }
+```
+
+A BSN export rewrites its `.rs` file on save as well, but the game only picks that up when it is rebuilt.
 
 ## Checks
 
@@ -75,6 +87,8 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 - a Fog Volume with a density of 0, and a Reflection Probe or Irradiance Volume with no file
 - an area light without a Light component, which glTF leaves out, a disk or ellipse area light or a square spot light, which Bevy cannot draw, and a Volumetric light without shadows
 - a light probe file in a block-compressed format, which only loads on GPUs that support it
+- a material that glTF flattens: one that mixes shaders, has no Principled BSDF, or drives Principled BSDF inputs with procedural nodes instead of images
+- shape keys on a mesh with modifiers while **Apply Modifiers** is on
 
 ## Custom components
 
@@ -168,7 +182,7 @@ A second Blender bakes a copy of the scene in the background, so you can keep wo
 
 - A lightmap holds the light from the sky and emissive materials and the light that bounces between surfaces. Bevy lights the mesh with the exported lamps as usual, except lamps whose Light component is **Baked**: their direct light and shadows go into the lightmap, and Bevy only adds their reflections.
 - Turn on **Bevy Ambient Light** and its **Baked** option in the World properties, so Bevy keeps its ambient light off lightmapped meshes.
-- Lightmaps are 4 bytes per pixel, so a 512 px lightmap adds 1 MB to the exported scene. Unwrap again after changing a lightmap's **Bake Size**, so its UV islands stay a few pixels apart. Apply modifiers first: the bake renders them, but the export leaves them out.
+- Lightmaps are 4 bytes per pixel, so a 512 px lightmap adds 1 MB to the exported scene. Unwrap again after changing a lightmap's **Bake Size**, so its UV islands stay a few pixels apart. Keep modifiers the same in the viewport and in renders: the bake renders the ones enabled for renders, and the export applies the ones shown in the viewport while **Apply Modifiers** is on.
 - Lightmapped meshes skip irradiance volumes, which light the moving objects instead. Irradiance volumes leave out the light lamps shine straight at them, since Bevy lights meshes with the exported lamps itself. Turn on **Direct Lamp Light** for lamps you do not export.
 - Bevy adds its ambient light on top of irradiance volumes, so turn off **Bevy Ambient Light** when volumes cover the scene and nothing is lightmapped, or the sky lights it twice.
 - A probe's **Intensity** starts at 683, which converts Blender's light units the way the glTF export converts lamps, so baked light matches them. Lightmaps are stored at that scale already.

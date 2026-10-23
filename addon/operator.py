@@ -4,6 +4,7 @@ import tempfile
 from pathlib import Path
 
 import bpy
+from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
@@ -15,7 +16,7 @@ from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
-from .system import accepts, apply_definitions, apply_game_types, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, game_schema, game_types, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sync_object, unlink_component, write_field
+from .system import accepts, apply_definitions, apply_game_types, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sync_object, unlink_component, write_field
 from .validation import body_kind, check_bsn, check_objects, check_rust_file, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
@@ -628,7 +629,8 @@ class BEVY_OT_validate(bpy.types.Operator):
     bl_description = "Check every object for problems that block export or that make the scene behave differently in Bevy"
 
     def execute(self, context):
-        issues = check_objects(bpy.data.objects)
+        settings = export_settings(context.scene)
+        issues = check_objects(exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers)
         for issue in issues:
             print("Bevy Components:", describe(issue))
         if not issues:
@@ -665,10 +667,19 @@ def _draw_include(operator, layout):
     header, body = layout.panel("BEVY_export_include")
     header.label(text="Include")
     if body:
-        body.prop(operator, "selected_only")
-        body.prop(operator, "include_lights")
-        body.prop(operator, "include_cameras")
-        body.prop(operator, "include_animations")
+        column = body.column(heading="Limit to")
+        column.prop(operator, "selected_only", text="Selected Objects")
+        column.prop(operator, "visible_only", text="Visible Objects")
+        column.prop(operator, "renderable_only", text="Renderable Objects")
+        column = body.column(heading="Data")
+        column.prop(operator, "include_lights", text="Lights")
+        column.prop(operator, "include_cameras", text="Cameras")
+        column.prop(operator, "include_animations", text="Animations")
+        body.column(heading="Meshes").prop(operator, "apply_modifiers")
+
+
+def _export_key(operator):
+    return (operator.filepath, operator.selected_only, operator.visible_only, operator.renderable_only, operator.include_animations, operator.apply_modifiers)
 
 
 def _draw_compression(operator, layout, context):
@@ -706,7 +717,7 @@ def _draw_checks(operator, layout, context, key, find):
 
 
 def _exported_objects(operator, context):
-    return context.selected_objects if operator.selected_only else bpy.data.objects
+    return exported_objects(context, operator)
 
 
 def _bsn_paths(operator):
@@ -719,7 +730,7 @@ def _bsn_paths(operator):
 
 def _bsn_issues(operator, objects):
     rust_file, folder, glb = _bsn_paths(operator)
-    issues = check_objects(objects, destination=glb, animations=operator.include_animations)
+    issues = check_objects(objects, destination=glb, animations=operator.include_animations, modifiers=operator.apply_modifiers)
     if glb is not None:
         issues = check_rust_file(rust_file, getattr(operator, "again", False)) + issues + check_bsn(objects, asset_root(folder))
     return issues
@@ -802,14 +813,8 @@ class _SceneExport(ExportHelper, ExportOptions):
                 return {"CANCELLED"}
         for obj in objects:
             sync_object(obj, destination.parent if destination else None)
-        if encoder is None and self._direct(objects):
-            result = self._export_gltf(Path(self.filepath))
-            if "FINISHED" in result:
-                self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}")
-                self._report_warnings()
-            return result
         self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
-        result = self._export_scene(context, encoder)
+        result = self._export_direct() if encoder is None and self._direct(objects) else self._export_scene(context, encoder)
         if "RUNNING_MODAL" not in result:
             self._release()
         return result
@@ -832,6 +837,8 @@ class _SceneExport(ExportHelper, ExportOptions):
         return result
 
     def cancel(self, context):
+        if self._task is None:
+            return
         self._task.cancel()
         self._task.wait()
         self._stop_background(context)
@@ -849,10 +856,25 @@ class _SceneExport(ExportHelper, ExportOptions):
 
     def _export_gltf(self, path):
         try:
-            return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
+            return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_active_scene=True, use_selection=self.selected_only, use_visible=self.visible_only, use_renderable=self.renderable_only, export_apply=self.apply_modifiers, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
         except Exception as error:
             self.report({"ERROR"}, f"GLB export failed: {error}")
             return {"CANCELLED"}
+
+    def _export_direct(self):
+        path = Path(self._directory.name) / "scene.glb"
+        result = self._export_gltf(path)
+        if "FINISHED" not in result:
+            return result
+        output = Path(self.filepath)
+        try:
+            write_if_changed(output, path.read_bytes())
+        except OSError as error:
+            self.report({"ERROR"}, f"Could not write {output}: {error}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}")
+        self._report_warnings()
+        return {"FINISHED"}
 
     def _export_scene(self, context, encoder):
         path = Path(self._directory.name) / "scene.glb"
@@ -956,15 +978,16 @@ class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
         layout = self.layout
         layout.use_property_split = True
         layout.use_property_decorate = False
+        layout.prop(self, "export_on_save")
         _draw_include(self, layout)
         _draw_compression(self, layout, context)
-        _draw_checks(self, layout, context, (self.selected_only, self.include_animations, self.filepath), lambda: check_objects(_exported_objects(self, context), destination=_export_path(self.filepath), animations=self.include_animations))
+        _draw_checks(self, layout, context, _export_key(self), lambda: check_objects(_exported_objects(self, context), destination=_export_path(self.filepath), animations=self.include_animations, modifiers=self.apply_modifiers))
 
     def _destination(self):
         return _export_path(self.filepath)
 
     def _check(self, objects):
-        return check_objects(objects, destination=self._destination(), animations=self.include_animations)
+        return check_objects(objects, destination=self._destination(), animations=self.include_animations, modifiers=self.apply_modifiers)
 
     def _direct(self, objects):
         return not _has_probes(objects)
@@ -1004,6 +1027,7 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
         layout.use_property_split = True
         layout.use_property_decorate = False
         rust_file, folder, glb = _bsn_paths(self)
+        layout.prop(self, "export_on_save")
         header, body = layout.panel("BEVY_export_bsn")
         header.label(text="Scene")
         if body:
@@ -1018,7 +1042,7 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
                     draw_message(body, f"The game loads the GLB as {load_path(glb, root)}", "INFO", width)
         _draw_include(self, layout)
         _draw_compression(self, layout, context)
-        _draw_checks(self, layout, context, (self.selected_only, self.include_animations, self.filepath, self.assets_folder), lambda: _bsn_issues(self, _exported_objects(self, context)))
+        _draw_checks(self, layout, context, (*_export_key(self), self.assets_folder), lambda: _bsn_issues(self, _exported_objects(self, context)))
 
     def invoke(self, context, event):
         if not self.remembered(context.scene) and not self.filepath and bpy.data.filepath:
@@ -1116,6 +1140,70 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
         removed = remove_stale(previous if isinstance(previous, dict) else {}, folder, written)
         settings.written_files = json.dumps({"folder": _blend_relative(folder), "files": written}, sort_keys=True)
         return removed
+
+
+class BEVY_OT_export_all_scenes(bpy.types.Operator):
+    bl_idname = "bevy_components.export_all_scenes"
+    bl_label = "Export All Scenes"
+    bl_description = "Export every scene in this file to its own GLB, with the settings its last export used. Scenes that were never exported are skipped"
+
+    @classmethod
+    def poll(cls, context):
+        if running_export() is not None:
+            cls.poll_message_set("A Bevy scene export is still compressing textures")
+            return False
+        if context.window is None:
+            cls.poll_message_set("Exporting every scene needs a Blender window")
+            return False
+        return True
+
+    def execute(self, context):
+        window = context.window
+        active = window.scene
+        exported = []
+        skipped = []
+        failed = []
+        try:
+            for scene in bpy.data.scenes:
+                if not BEVY_OT_export_glb.remembered(scene):
+                    skipped.append(scene.name)
+                    continue
+                window.scene = scene
+                try:
+                    bpy.ops.export_scene.bevy_components_glb(again=True)
+                except RuntimeError as error:
+                    failed.append((scene.name, str(error).removeprefix("Error: ").strip()))
+                    continue
+                exported.append(scene.name)
+        finally:
+            window.scene = active
+        for name, error in failed:
+            print(f"Bevy Components: Could not export {name}: {error}")
+        note = f". Skipped {', '.join(skipped)}, export {'it' if len(skipped) == 1 else 'each'} once with File > Export > Bevy Scene (.glb)" if skipped else ""
+        if failed:
+            self.report({"ERROR"}, f"Could not export {count(len(failed), 'scene')}, {failed[0][0]}: {failed[0][1]}{note}")
+            return {"CANCELLED"} if not exported else {"FINISHED"}
+        if not exported:
+            self.report({"WARNING"}, f"No scene was exported yet{note}")
+            return {"CANCELLED"}
+        self.report({"WARNING"} if skipped else {"INFO"}, f"Exported {count(len(exported), 'scene')}: {', '.join(exported)}{note}")
+        return {"FINISHED"}
+
+
+@persistent
+def export_on_save(path):
+    scene = bpy.context.scene
+    if path != bpy.data.filepath or scene is None or not hasattr(scene, "bevy_glb_export"):
+        return
+    for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn):
+        if getattr(scene, operator._settings).export_on_save and operator.remembered(scene):
+            try:
+                getattr(bpy.ops.export_scene, operator.bl_idname.partition(".")[2])("INVOKE_DEFAULT", again=True)
+            except RuntimeError as error:
+                message = str(error).removeprefix("Error: ").strip()
+                print("Bevy Components: Export on Save failed:", message)
+                if not bpy.app.background:
+                    bpy.context.window_manager.popup_menu(lambda menu, _context, text=message: menu.layout.label(text=text), title=f"Export on Save failed ({operator.bl_label})", icon="ERROR")
 
 
 class BEVY_OT_unwrap_lightmap(bpy.types.Operator):
@@ -1285,6 +1373,8 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         return result
 
     def cancel(self, context):
+        if self._task is None:
+            return
         self._task.cancel()
         self._task.wait()
         self._stop_background(context)

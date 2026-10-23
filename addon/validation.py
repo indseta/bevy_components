@@ -30,6 +30,10 @@ MISSING_FILES = {
     "LIGHTMAP": "No lightmap baked yet, so the mesh gets no baked light",
 }
 TEXTURE_CACHE_LIMIT = 256
+SHADER_MIXES = {"MIX_SHADER", "ADD_SHADER"}
+GLTF_MIXES = {"BSDF_TRANSPARENT", "LIGHT_PATH"}
+UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
+PROCEDURAL_NODES = {"AMBIENT_OCCLUSION", "BEVEL", "CAMERA", "FRESNEL", "HAIR_INFO", "LAYER_WEIGHT", "LIGHT_PATH", "NEW_GEOMETRY", "OBJECT_INFO", "PARTICLE_INFO", "POINT_INFO", "SCRIPT", "TANGENT", "TEX_COORD", "WIREFRAME"}
 
 _texture_checks = {}
 
@@ -69,20 +73,21 @@ def draw_issues(layout, rows, limit, more, select=False, width=300):
         layout.label(text=f"{len(rows) - limit} more {more}", icon="BLANK1")
 
 
-def check_objects(objects, destination=None, animations=True):
+def check_objects(objects, destination=None, animations=True, modifiers=True):
     objects = list(objects)
     children = children_map(objects)
     exported = set(objects)
+    materials = set()
     issues = []
     for obj in objects:
-        issues.extend(_object_issues(obj, children, exported, destination, animations))
+        issues.extend(_object_issues(obj, children, exported, destination, animations, modifiers, materials))
     issues.extend(_visibility_range_issues(objects))
     return issues
 
 
-def check_object(obj, objects):
+def check_object(obj, objects, modifiers=True):
     objects = list(objects)
-    return _object_issues(obj, children_map(objects), set(objects)) + _visibility_range_issues(objects, obj)
+    return _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers) + _visibility_range_issues(objects, obj)
 
 
 def check_bsn(objects, root):
@@ -133,7 +138,7 @@ def check_rust_file(rust_file, strict=False):
     return [Issue("WARNING", None, None, message)]
 
 
-def _object_issues(obj, children, exported, destination=None, animations=True):
+def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, materials=None):
     issues = []
     custom_types = set()
     for item in components_for(obj):
@@ -157,7 +162,7 @@ def _object_issues(obj, children, exported, destination=None, animations=True):
         elif item.component_type == "ANIMATION":
             issues.extend(Issue("WARNING", obj, item, message) for message in _animation_warnings(obj, item, children, animations))
         elif item.component_type == "LIGHTMAP":
-            issues.extend(_lightmap_issues(obj, item))
+            issues.extend(_lightmap_issues(obj, item, modifiers))
         elif item.component_type in FILE_KINDS:
             check = texture_check(obj, item)
             if check.level is not None:
@@ -179,7 +184,63 @@ def _object_issues(obj, children, exported, destination=None, animations=True):
     light = light_of(obj)
     if light is not None and light.type == "AREA" and not any(item.component_type == "LIGHT" for item in obj.bevy_component_data.components):
         issues.append(Issue("WARNING", obj, None, "glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"))
+    shape_keys = obj.data.shape_keys if obj.type == "MESH" else None
+    if modifiers and len(obj.modifiers) and shape_keys is not None and len(shape_keys.key_blocks) > 1:
+        issues.append(Issue("WARNING", obj, None, "glTF leaves out the shape keys of meshes with modifiers. Apply the modifiers, or turn off Apply Modifiers"))
+    issues.extend(Issue("WARNING", obj, None, message) for message in material_warnings(obj, materials))
     return issues
+
+
+def material_warnings(obj, seen=None):
+    seen = set() if seen is None else seen
+    warnings = []
+    if obj.type not in MESH_TYPES:
+        return warnings
+    for slot in obj.material_slots:
+        if slot.material is None or slot.material in seen:
+            continue
+        seen.add(slot.material)
+        message = _material_warning(slot.material)
+        if message:
+            warnings.append(message)
+    return warnings
+
+
+def _material_warning(material):
+    tree = material.node_tree if bpy.app.version >= (5, 0, 0) or material.use_nodes else None
+    output = next((node for node in tree.nodes if node.type == "OUTPUT_MATERIAL" and node.is_active_output), None) if tree is not None else None
+    if output is None or not output.inputs["Surface"].is_linked:
+        return None
+    shaders = _upstream(output.inputs["Surface"])
+    if any(node.type in SHADER_MIXES and not (node.type == "MIX_SHADER" and {link.from_node.type for socket in node.inputs for link in socket.links} & GLTF_MIXES) for node in shaders):
+        return f"Material {material.name} mixes shaders, which glTF flattens into one"
+    principled = [node for node in shaders if node.type == "BSDF_PRINCIPLED"]
+    if not principled:
+        return None if any(node.type in UNLIT_SHADERS for node in shaders) else f"Material {material.name} has no Principled BSDF, so glTF exports it plain white"
+    names = list(dict.fromkeys(socket.name for node in principled for socket in node.inputs if socket.is_linked and _procedural(socket)))
+    if not names:
+        return None
+    listed = names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}" if len(names) <= 3 else f"{', '.join(names[:2])} and {len(names) - 2} more inputs"
+    return f"Material {material.name} drives {listed} with procedural nodes, which glTF leaves out. Bake them to images"
+
+
+def _upstream(socket):
+    found = set()
+    pending = [link.from_node for link in socket.links if not link.is_muted]
+    while pending:
+        node = pending.pop()
+        if node in found:
+            continue
+        found.add(node)
+        pending.extend(link.from_node for entry in node.inputs for link in entry.links if not link.is_muted)
+        if node.type == "GROUP" and node.node_tree is not None:
+            pending.extend(node.node_tree.nodes)
+    return found
+
+
+def _procedural(socket):
+    nodes = _upstream(socket)
+    return not any(node.type == "TEX_IMAGE" for node in nodes) and any(node.type in PROCEDURAL_NODES or node.type.startswith("TEX_") for node in nodes)
 
 
 def texture_check(obj, item):
@@ -347,15 +408,18 @@ def _animation_warnings(obj, item, children, animations):
     return warnings
 
 
-def _lightmap_issues(obj, item):
+def _lightmap_issues(obj, item, modifiers=True):
     if obj.type != "MESH":
         return [Issue("WARNING", obj, item, "Only meshes use lightmaps, so it is not exported")]
     issues = []
     if lightmap_uv_map(obj) is None:
         issues.append(Issue("WARNING", obj, item, "No second UV map, which Bevy reads lightmaps with. Click Unwrap Lightmap UVs"))
-    modifier = next((modifier for modifier in obj.modifiers if modifier.show_render), None)
-    if modifier is not None:
-        issues.append(Issue("WARNING", obj, item, f"Bake includes the {modifier.name} modifier but the export leaves it out, so the lightmap may not fit. Apply the modifier"))
+    baked = next((modifier for modifier in obj.modifiers if modifier.show_render and not (modifiers and modifier.show_viewport)), None)
+    exported = next((modifier for modifier in obj.modifiers if modifiers and modifier.show_viewport and not modifier.show_render), None)
+    if baked is not None:
+        issues.append(Issue("WARNING", obj, item, f"Bake includes the {baked.name} modifier but the export leaves it out, so the lightmap may not fit. {'Show it in the viewport' if modifiers else 'Turn on Apply Modifiers'}"))
+    elif exported is not None:
+        issues.append(Issue("WARNING", obj, item, f"Export includes the {exported.name} modifier but the bake leaves it out, so the lightmap may not fit. Enable it in renders"))
     check = texture_check(obj, item)
     if check.level is not None:
         issues.append(Issue(check.level, obj, item, check.message))
