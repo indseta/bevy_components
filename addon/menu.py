@@ -2,7 +2,8 @@ import bpy
 
 from .operator import BEVY_OT_add_component, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate, running_bake, running_export
 from .property import COMPONENT_LABELS
-from .system import accepts, component_index, find_definition
+from .schema import short_name
+from .system import accepts, component_index, game_types, scene_definition
 
 
 def _draw_add_items(layout, obj, kinds):
@@ -14,11 +15,21 @@ def _draw_add_items(layout, obj, kinds):
         column.operator(BEVY_OT_add_component.bl_idname, text=text, icon=icon).component_type = kind
 
 
+def _custom_types(obj):
+    return {item.custom_type for item in obj.bevy_component_data.components if item.component_type == "CUSTOM"} if obj else set()
+
+
+def _game_menu_label(types):
+    crates = {type_path.split("::", 1)[0] for type_path in types}
+    return next(iter(crates)) if len(crates) == 1 else "Game Components"
+
+
 def _draw_defined_items(layout, obj, scene):
-    definitions = [definition for definition in scene.bevy_component_definitions.definitions if definition.name.strip()] if scene else []
+    types = game_types()
+    definitions = [definition for definition in scene.bevy_component_definitions.definitions if definition.name.strip() and definition.name not in types] if scene else []
     if not definitions:
         return
-    present = {item.custom_type for item in obj.bevy_component_data.components if item.component_type == "CUSTOM"} if obj else set()
+    present = _custom_types(obj)
     layout.separator()
     for definition in definitions:
         column = layout.column()
@@ -36,6 +47,9 @@ class BEVY_MT_component_add(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         _draw_add_items(layout, context.object, ("CUSTOM",))
+        types = game_types()
+        if types:
+            layout.menu(BEVY_MT_component_add_game.bl_idname, text=_game_menu_label(types), icon="FILE_SCRIPT")
         _draw_defined_items(layout, context.object, context.scene)
         layout.separator()
         layout.menu(BEVY_MT_component_add_physics.bl_idname)
@@ -44,6 +58,24 @@ class BEVY_MT_component_add(bpy.types.Menu):
         layout.menu(BEVY_MT_component_add_animation.bl_idname)
         layout.menu(BEVY_MT_component_add_scene.bl_idname)
         _draw_add_items(layout, context.object, ("NAVIGATION",))
+
+
+class BEVY_MT_component_add_game(bpy.types.Menu):
+    bl_idname = "BEVY_MT_component_add_game"
+    bl_label = "Game Components"
+    bl_options = {"SEARCH_ON_KEY_PRESS"}
+
+    def draw(self, context):
+        layout = self.layout
+        types = sorted(game_types(), key=lambda type_path: (short_name(type_path).lower(), type_path))
+        names = [short_name(type_path) for type_path in types]
+        present = _custom_types(context.object)
+        for type_path, name in zip(types, names):
+            column = layout.column()
+            column.enabled = type_path not in present
+            button = column.operator(BEVY_OT_add_component.bl_idname, text=name if names.count(name) == 1 else type_path, icon=COMPONENT_LABELS["CUSTOM"][1])
+            button.component_type = "CUSTOM"
+            button.type_path = type_path
 
 
 class BEVY_MT_component_add_physics(bpy.types.Menu):
@@ -107,9 +139,9 @@ class BEVY_MT_component_context_menu(bpy.types.Menu):
         column.enabled = item.component_type == "CUSTOM"
         column.operator(BEVY_OT_duplicate_component.bl_idname, text="Duplicate", icon="DUPLICATE").index = index
         layout.operator(BEVY_OT_copy_component_to_selected.bl_idname, text="Copy to Selected", icon="COPYDOWN").index = index
-        if item.component_type == "CUSTOM":
+        if item.component_type == "CUSTOM" and item.custom_type not in game_types():
             layout.separator()
-            defined = find_definition(context.scene, item.custom_type) is not None
+            defined = scene_definition(context.scene, item.custom_type) is not None
             layout.operator(BEVY_OT_define_fields.bl_idname, text="Edit Fields" if defined else "Define Fields", icon="PROPERTIES").index = index
         layout.separator()
         layout.operator(BEVY_OT_reset_component.bl_idname, text="Reset to Defaults", icon="LOOP_BACK").index = index

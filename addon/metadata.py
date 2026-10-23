@@ -11,11 +11,32 @@ FIELD_VALUES = {
     "INT": "int_value",
     "BOOL": "bool_value",
     "STRING": "string_value",
+    "VECTOR2": "vector2_value",
     "VECTOR": "vector_value",
     "COLOR": "color_value",
+    "ENUM": "string_value",
+}
+FIELD_ZEROS = {
+    "FLOAT": 0.0,
+    "INT": 0,
+    "BOOL": False,
+    "STRING": "",
+    "VECTOR2": (0.0, 0.0),
+    "VECTOR": (0.0, 0.0, 0.0),
+    "COLOR": (1.0, 1.0, 1.0, 1.0),
+    "ENUM": "",
 }
 COLOR_CHANNELS = ("red", "green", "blue", "alpha")
 INT_LIMIT = 2 ** 31
+INT_RANGES = {
+    "i8": (-2 ** 7, 2 ** 7 - 1),
+    "i16": (-2 ** 15, 2 ** 15 - 1),
+    "u8": (0, 2 ** 8 - 1),
+    "u16": (0, 2 ** 16 - 1),
+    "u32": (0, INT_LIMIT - 1),
+    "u64": (0, INT_LIMIT - 1),
+    "usize": (0, INT_LIMIT - 1),
+}
 AXIS_VECTORS = {
     "X": [1.0, 0.0, 0.0],
     "Y": [0.0, 1.0, 0.0],
@@ -70,8 +91,10 @@ def field_value(field):
         return int(field.int_value)
     if kind == "BOOL":
         return bool(field.bool_value)
-    if kind == "STRING":
+    if kind in {"STRING", "ENUM"}:
         return str(field.string_value)
+    if kind == "VECTOR2":
+        return [_float32(value) for value in field.vector2_value]
     if kind == "VECTOR":
         return [_float32(value) for value in field.vector_value]
     if kind == "COLOR":
@@ -79,8 +102,32 @@ def field_value(field):
     raise ValueError(f"Unsupported field type: {kind}")
 
 
+def tuple_fields(names):
+    names = list(names)
+    return bool(names) and names == [str(index) for index in range(len(names))]
+
+
 def field_data(fields):
+    if tuple_fields(field.name for field in fields):
+        values = [field_value(field) for field in fields]
+        return values[0] if len(values) == 1 else values
     return {field.name: field_value(field) for field in fields}
+
+
+def json_fields(data):
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        return {str(index): value for index, value in enumerate(data)}
+    return {} if data is None else {"0": data}
+
+
+def variant_names(text):
+    names = []
+    for name in text.split(","):
+        if name.strip() and name.strip() not in names:
+            names.append(name.strip())
+    return names
 
 
 def convert_value(kind, value):
@@ -90,8 +137,10 @@ def convert_value(kind, value):
         return int(round(value)) if _number(value) and -INT_LIMIT <= round(value) < INT_LIMIT else None
     if kind == "BOOL":
         return value if isinstance(value, bool) else None
-    if kind == "STRING":
+    if kind in {"STRING", "ENUM"}:
         return value if isinstance(value, str) else None
+    if kind == "VECTOR2":
+        return tuple(float(number) for number in value) if _numbers(value, (2,)) else None
     if kind == "VECTOR":
         return tuple(float(number) for number in value) if _numbers(value, (3,)) else None
     if kind == "COLOR":
@@ -110,7 +159,7 @@ def infer_field_type(value):
         return "FLOAT" if _number(value) else None
     if isinstance(value, str):
         return "STRING"
-    for kind in ("VECTOR", "COLOR"):
+    for kind in ("VECTOR2", "VECTOR", "COLOR"):
         if convert_value(kind, value) is not None:
             return kind
     return None
@@ -249,7 +298,8 @@ def serialize_component(item, locate=_portable):
         return _serialize_light(item, getattr(item, "id_data", None))
     if kind == "CUSTOM":
         if item.use_fields:
-            return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields)}
+            enums = {field.name: field.rust_type.strip() for field in item.fields if field.field_type == "ENUM" and field.rust_type.strip()}
+            return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields), **({"enums": enums} if enums else {})}
         try:
             value = json.loads(item.custom_json)
         except json.JSONDecodeError as error:
@@ -388,6 +438,7 @@ def component_errors(item):
         if item.use_fields:
             if invalid_names(field.name for field in item.fields):
                 errors.append(f"{item.custom_type} needs a unique name for every field")
+            errors.extend(field_errors(item.fields))
         else:
             try:
                 json.loads(item.custom_json)
@@ -408,6 +459,17 @@ def component_errors(item):
     elif item.component_type == "SCENE_REFERENCE":
         if not item.scene_file.strip():
             errors.append("Scene Reference needs a glTF file")
+    return errors
+
+
+def field_errors(fields):
+    errors = []
+    for field in fields:
+        bounds = INT_RANGES.get(field.rust_type.strip())
+        if field.field_type == "INT" and bounds is not None and not bounds[0] <= field.int_value <= bounds[1]:
+            errors.append(f"{field.name} must be from {bounds[0]} to {bounds[1]} to fit {field.rust_type.strip()}")
+        if field.field_type == "ENUM" and field.string_value not in variant_names(field.variants):
+            errors.append(f"{field.name} needs one of its variants" if variant_names(field.variants) else f"{field.name} needs a list of variants")
     return errors
 
 

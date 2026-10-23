@@ -4,9 +4,10 @@ import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
-from .system import ambient_light, lightmap_uv_map, panel_body_drawn, panel_header_drawn, world_background, world_color
+from .schema import short_name
+from .system import ambient_light, game_schema, game_types, lightmap_uv_map, panel_body_drawn, panel_header_drawn, world_background, world_color
 from .validation import check_object, draw_message, texture_check
 
 
@@ -323,13 +324,23 @@ def _draw_light(layout, obj, index, item):
         body.prop(item, "light_cascade_overlap")
 
 
+def _field_property(field):
+    return "enum_value" if field.field_type == "ENUM" else FIELD_VALUES[field.field_type]
+
+
 def _draw_fields(layout, item):
     problems = invalid_names(field.name for field in item.fields)
     for field in item.fields:
         row = layout.row()
         row.alert = field.name in problems
-        row.prop(field, FIELD_VALUES[field.field_type], text=field.name)
-    if not len(item.fields):
+        row.prop(field, _field_property(field), text=field.name)
+    game_type = game_types().get(item.custom_type)
+    others = game_type.others if game_type is not None else []
+    for name, rust_type in others:
+        row = _labeled_row(layout, name)
+        row.active = False
+        row.label(text=f"Game default ({short_name(rust_type)})")
+    if not len(item.fields) and not others:
         row = layout.row()
         row.active = False
         row.label(text="No fields")
@@ -341,7 +352,7 @@ def _draw_custom(layout, obj, index, item):
         return
     row = layout.row()
     row.alert = not item.custom_type.strip()
-    row.prop_search(item, "custom_type", bpy.context.scene.bevy_component_definitions, "definitions", results_are_suggestions=True)
+    row.prop(item, "custom_type")
     row = layout.row()
     row.alert = not _is_json(item.custom_json)
     row.prop(item, "custom_json")
@@ -470,7 +481,10 @@ class BEVY_UL_definitions(bpy.types.UIList):
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_property, index=0, flt_flag=0):
         layout.alert = item.name in invalid_names(definition.name for definition in data.definitions)
+        layout.active = item.name not in game_types()
         layout.prop(item, "name", text="", emboss=False, icon=COMPONENT_LABELS["CUSTOM"][1])
+        if not layout.active:
+            layout.label(text="", icon="LINKED")
 
 
 class BEVY_UL_fields(bpy.types.UIList):
@@ -499,6 +513,7 @@ class BEVY_PT_scene_definitions(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        _draw_game_status(layout)
         library = context.scene.bevy_component_definitions
         row = layout.row()
         row.template_list(BEVY_UL_definitions.bl_idname, "", library, "definitions", library, "active_index", rows=3)
@@ -508,6 +523,8 @@ class BEVY_PT_scene_definitions(bpy.types.Panel):
         if not 0 <= library.active_index < len(library.definitions):
             return
         definition = library.definitions[library.active_index]
+        if definition.name in game_types():
+            draw_message(layout, f"Your game defines {definition.name}, so objects use its fields instead of these", icon="INFO", width=context.region.width if context.region else 300)
         header, body = layout.panel("BEVY_definition_fields")
         header.label(text="Fields")
         if body is None:
@@ -526,7 +543,25 @@ class BEVY_PT_scene_definitions(bpy.types.Panel):
         body.use_property_split = True
         body.use_property_decorate = False
         body.prop(field, "field_type")
-        body.prop(field, FIELD_VALUES[field.field_type], text="Default")
+        if field.field_type == "ENUM":
+            body.prop(field, "variants")
+            body.prop(field, "rust_type", text="Enum Type")
+        body.prop(field, _field_property(field), text="Default")
+
+
+def _draw_game_status(layout):
+    schema = game_schema()
+    row = layout.row()
+    if schema["error"]:
+        column = row.column()
+        column.alert = True
+        draw_message(column, schema["error"], width=bpy.context.region.width if bpy.context.region else 300)
+    elif schema["path"] is None:
+        row.active = False
+        row.label(text="No game components found", icon="INFO")
+    else:
+        row.label(text=f"{len(schema['types'])} components from your game", icon="CHECKMARK")
+    row.operator(BEVY_OT_reload_schema.bl_idname, text="", icon="FILE_REFRESH")
 
 
 class BEVY_PT_world_ambient_light(bpy.types.Panel):

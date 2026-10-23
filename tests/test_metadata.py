@@ -24,10 +24,10 @@ def joint(**kwargs):
     return item(**{**values, **kwargs})
 
 
-def field(name, field_type, value):
-    values = {"float_value": 0.0, "int_value": 0, "bool_value": False, "string_value": "", "vector_value": (0.0, 0.0, 0.0), "color_value": (1.0, 1.0, 1.0, 1.0)}
+def field(name, field_type, value, variants="", rust_type=""):
+    values = {"float_value": 0.0, "int_value": 0, "bool_value": False, "string_value": "", "vector2_value": (0.0, 0.0), "vector_value": (0.0, 0.0, 0.0), "color_value": (1.0, 1.0, 1.0, 1.0)}
     values[metadata.FIELD_VALUES[field_type]] = value
-    return item(name=name, field_type=field_type, **values)
+    return item(name=name, field_type=field_type, variants=variants, rust_type=rust_type, **values)
 
 
 class TestMetadata(unittest.TestCase):
@@ -264,6 +264,30 @@ class TestMetadata(unittest.TestCase):
             self.assertEqual(metadata.validate_items([component], "car"), ["car: game::Mover needs a unique name for every field"])
         self.assertEqual(metadata.invalid_names(["a", "b", "a", ""]), {"a", ""})
 
+    def test_enum_and_vector2_fields(self):
+        fields = [field("mode", "ENUM", "PingPong", "Loop, PingPong", "my_game::PatrolMode"), field("offset", "VECTOR2", (1.0, 0.10000000149011612)), field("stops", "INT", 3, rust_type="u8")]
+        component = item(component_type="CUSTOM", custom_type="my_game::Patrol", custom_json="{}", use_fields=True, fields=fields)
+        self.assertEqual(metadata.validate_items([component]), [])
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "custom", "type_path": "my_game::Patrol", "data": {"mode": "PingPong", "offset": [1.0, 0.1], "stops": 3}, "enums": {"mode": "my_game::PatrolMode"}})
+        component.fields[0].rust_type = " "
+        self.assertNotIn("enums", json.loads(metadata.serialize_items([component]))["components"][0])
+
+    def test_tuple_struct_fields(self):
+        single = item(component_type="CUSTOM", custom_type="my_game::Armor", custom_json="{}", use_fields=True, fields=[field("0", "INT", 3)])
+        pair = item(component_type="CUSTOM", custom_type="my_game::Reward", custom_json="{}", use_fields=True, fields=[field("0", "INT", 7), field("1", "FLOAT", 1.5)])
+        shuffled = item(component_type="CUSTOM", custom_type="my_game::Odd", custom_json="{}", use_fields=True, fields=[field("1", "INT", 7), field("0", "FLOAT", 1.5)])
+        self.assertEqual([component["data"] for component in json.loads(metadata.serialize_items([single, pair, shuffled]))["components"]], [3, [7, 1.5], {"1": 7, "0": 1.5}])
+        self.assertEqual(metadata.json_fields([7, 1.5]), {"0": 7, "1": 1.5})
+        self.assertEqual(metadata.json_fields(0.25), {"0": 0.25})
+        self.assertEqual(metadata.json_fields({"a": 1}), {"a": 1})
+        self.assertEqual(metadata.json_fields(None), {})
+
+    def test_field_values_must_fit_their_rust_types(self):
+        fields = [field("stops", "INT", 256, rust_type="u8"), field("lives", "INT", -1, rust_type="u32"), field("score", "INT", -5, rust_type="i32"), field("mode", "ENUM", "Hover", "Loop, PingPong"), field("team", "ENUM", "", " , ")]
+        component = item(component_type="CUSTOM", custom_type="my_game::Patrol", use_fields=True, fields=fields)
+        self.assertEqual(metadata.component_errors(component), ["stops must be from 0 to 255 to fit u8", "lives must be from 0 to 2147483647 to fit u32", "mode needs one of its variants", "team needs a list of variants"])
+        self.assertEqual(metadata.variant_names(" Loop, PingPong,,Loop "), ["Loop", "PingPong"])
+
     def test_float32_values_are_short(self):
         for value, expected in ((0.10000000149011612, 0.1), (1.0, 1.0), (16777217.0, 16777216.0), (3.4028234663852886e38, 3.4028235e38), (1e-45, 1e-45)):
             self.assertEqual(metadata._float32(value), expected)
@@ -282,6 +306,10 @@ class TestMetadata(unittest.TestCase):
             ("STRING", 5, None),
             ("VECTOR", [1, 2.5, 3], (1.0, 2.5, 3.0)),
             ("VECTOR", [1, 2], None),
+            ("VECTOR2", [1, 2], (1.0, 2.0)),
+            ("VECTOR2", [1, 2, 3], None),
+            ("ENUM", "Loop", "Loop"),
+            ("ENUM", 1, None),
             ("VECTOR", [1, "2", 3], None),
             ("COLOR", [1, 0.5, 0], (1.0, 0.5, 0.0, 1.0)),
             ("COLOR", [1, 0.5, 0, 0.25], (1.0, 0.5, 0.0, 0.25)),
@@ -297,6 +325,7 @@ class TestMetadata(unittest.TestCase):
     def test_infer_fields(self):
         data = {"count": 3, "delay": 1.5, "boss": False, "label": "x", "offset": [0, 1, 0], "tint": [1, 1, 1, 1], "glow": {"Srgba": {"red": 1, "green": 1, "blue": 1, "alpha": 1}}}
         self.assertEqual(metadata.infer_fields(data), [("count", "INT", 3), ("delay", "FLOAT", 1.5), ("boss", "BOOL", False), ("label", "STRING", "x"), ("offset", "VECTOR", (0.0, 1.0, 0.0)), ("tint", "COLOR", (1.0, 1.0, 1.0, 1.0)), ("glow", "COLOR", (1.0, 1.0, 1.0, 1.0))])
+        self.assertEqual(metadata.infer_fields({"aim": [0, 1]}), [("aim", "VECTOR2", (0.0, 1.0))])
         with self.assertRaisesRegex(ValueError, "No field type fits target, path"):
             metadata.infer_fields({"count": 3, "target": None, "path": [[0, 0]]})
         with self.assertRaisesRegex(ValueError, "Only a JSON object"):

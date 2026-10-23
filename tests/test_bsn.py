@@ -153,6 +153,15 @@ class TestLiterals(unittest.TestCase):
         for type_path, data, crate, expected in cases:
             self.assertEqual(bsn.custom_literal(type_path, data, crate), expected, type_path)
 
+    def test_enum_fields(self):
+        enums = {"mode": "my_game::PatrolMode", "unused": "my_game::Other"}
+        self.assertEqual(bsn.custom_literal("my_game::Patrol", {"mode": "PingPong", "offset": [1, 0]}, "my_game", enums), "crate::Patrol { mode: {crate::PatrolMode::PingPong}, offset: Vec2::new(1.0, 0.0) }")
+        self.assertEqual(bsn.custom_literal("my_game::Team", "Red", None, {"0": "my_game::Color"}), "my_game::Team({my_game::Color::Red})")
+        self.assertEqual(bsn.custom_literal("my_game::Pair", [1, "Blue"], None, {"1": "other::Side"}), "my_game::Pair(1, {other::Side::Blue})")
+        self.assertEqual(bsn.custom_literal("my_game::Label", {"text": "Red"}, None, {"text": " "}), 'my_game::Label { text: "Red" }')
+        with self.assertRaisesRegex(bsn.BsnError, "holds \"Ping Pong\" for an enum, which needs a variant name"):
+            bsn.custom_literal("my_game::Patrol", {"mode": "Ping Pong"}, None, enums)
+
     def test_values_rust_cannot_hold(self):
         with self.assertRaisesRegex(bsn.BsnError, "not Rust names, so the BSN export cannot write it: max-speed, type"):
             bsn.custom_literal("my_game::Car", {"max-speed": 1, "type": 2, "ok": 3})

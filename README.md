@@ -59,7 +59,7 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 
 ## Checks
 
-**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a joint limit whose Min is above its Max, shadow cascade distances out of order, or a light probe file that is missing or that Bevy cannot use, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
+**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a number its field's Rust type cannot hold, a joint limit whose Min is above its Max, shadow cascade distances out of order, or a light probe file that is missing or that Bevy cannot use, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
 
 - a Triangle Mesh or Convex Hull collider, or a Visibility Range, with no mesh on or under its object
 - a Dynamic Rigid Body with no collider, a Rigid Body inside a moving one, and Triangle Mesh colliders on Dynamic bodies
@@ -67,7 +67,7 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 - a Dynamic body with every axis locked
 - a Joint with no bodies, the same body twice, only static bodies, or a body that has no Rigid Body or Collider, is part of another body or is left out of the export
 - levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
-- Custom Component type paths that aren't Rust paths, or that repeat on one object
+- Custom Component type paths that aren't Rust paths, or that repeat on one object, and game components with fields Blender cannot set but no `#[reflect(Default)]`
 - Shadows with no mesh on or under its object, and Navigation with no mesh or collider on or under its object
 - an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
 - a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported scene itself (a file on another drive than the exported scene is an error)
@@ -78,13 +78,32 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 
 ## Custom components
 
-A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, define its fields once:
+A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, let your game list its components for Blender, or define the fields by hand.
+
+### From your game
+
+Add `BlenderSchemaPlugin` with your crate's name while you develop:
+
+```rust
+use bevy_components_importer::BlenderSchemaPlugin;
+
+#[cfg(debug_assertions)]
+app.add_plugins(BlenderSchemaPlugin::new(&["my_game"]));
+```
+
+Each run writes `bevy_components_schema.json` next to your `Cargo.toml`. It lists every component in those crates that derives `Reflect` with `#[reflect(Component)]`, with its fields and the defaults from `#[reflect(Default)]`. Blender finds the file in the folders above the .blend file, or set its path in the add-on preferences.
+
+Your components then show under **Add Component**, in a menu named after your crate, with typed fields. Components already added as JSON switch to them and keep their values. When the components change, run the game again. Blender picks up the new file on its own, and **Properties > Scene > Bevy Custom Components** has a button to read it right away. Fields Blender cannot edit, such as a `Timer`, show as **Game default** and are left out, so the game needs `#[reflect(Default)]` to fill them in.
+
+### By hand
 
 1. In **Properties > Scene > Bevy Custom Components**, press **+** and double-click the new entry to set the type path, such as `my_game::Health`.
 2. Add fields with a name, a type and a default. The default is used when the component is added to an object.
 3. The type now appears under **Add Component**. Objects that already have it as JSON switch to the fields and keep their values.
 
-**Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values.
+**Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values. A type your game lists uses the game's fields instead.
+
+### In the game
 
 The importer inserts the component itself when your type derives `Reflect` with `#[reflect(Component)]`, found by its type path or by crate and type name, so `my_game::Health` also finds `my_game::stats::Health`. Add `#[reflect(Default)]` to fill in fields the data leaves out. Other types arrive as JSON in `BlenderCustomComponents`, which `serde_json::from_value` reads into a struct with the same field names. Either way, the fields map to these Rust types:
 
@@ -94,8 +113,12 @@ The importer inserts the component itself when your type derives `Reflect` with 
 | Integer | `i32` or another integer type |
 | Boolean | `bool` |
 | String | `String` |
+| Vector 2D | `Vec2` |
 | Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
 | Color | `Color`, in sRGB |
+| Enum | An enum whose variants hold no data, such as `Team::Red`. The BSN export needs its **Enum Type**, such as `my_game::Team` |
+
+Fields named `0`, `1` and so on fill a tuple struct, such as `Reward(u32, f32)`.
 
 ## Navigation
 
@@ -193,7 +216,7 @@ fn setup(mut commands: Commands) {
 
 With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file, so **Export Again** writes the same files in one click, and it only rewrites files that changed. It will not write over `main.rs`, `lib.rs` or another crate root, warns before it replaces a `.rs` file it did not write or one edited since the last export (Export Again refuses those), and removes files it copied into the assets folder earlier that the scene no longer uses. Rebuild the game after exporting again.
 
-- Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors and colors.
+- Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors, colors and enum variants.
 - Navigation writes the importer's `NavigationWalkable` and `NavigationObstacle`, so a scene that uses it needs the importer crate, though not its plugin.
 - Physics needs Avian with its `collider-from-mesh` feature. Add `BlenderBevyComponentsPlugin` when you compress textures or use a Scene Reference, since the referenced GLBs carry their components the usual way.
 - Skins and shape keys are left out.
@@ -213,7 +236,7 @@ pip install bpy==4.2.23
 python tests/blender/run.py
 ```
 
-The importer tests load `importer/tests/assets/sample_scene.glb` and its compressed copies `sample_scene_etc1s.glb`, `sample_scene_uastc.glb` and `sample_scene_automatic.glb`, plus the `props/windmill.glb` prop that the sample scene references, and the BSN export of the same scene in `importer/tests/bsn/sample_scene.rs` and `importer/tests/assets/bsn/`, plus a small unanimated BSN scene in `importer/tests/bsn/static_scene.rs` and `importer/tests/assets/bsn_static/`, which `python tests/blender/sample_scene.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
+The importer tests load `importer/tests/assets/sample_scene.glb` and its compressed copies `sample_scene_etc1s.glb`, `sample_scene_uastc.glb` and `sample_scene_automatic.glb`, plus the `props/windmill.glb` prop that the sample scene references, and the BSN export of the same scene in `importer/tests/bsn/sample_scene.rs` and `importer/tests/assets/bsn/`, plus a small unanimated BSN scene in `importer/tests/bsn/static_scene.rs` and `importer/tests/assets/bsn_static/`, which `python tests/blender/sample_scene.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The sample scene takes two of its components from `importer/tests/assets/bevy_components_schema.json`, which `BEVY_COMPONENTS_WRITE_SCHEMA=1 cargo test --manifest-path importer/Cargo.toml --test schema` writes from the test crate's types. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
 
 The rendering tests compare compressed and uncompressed scenes on a real GPU and check that light probes and fog show up. They are skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
 

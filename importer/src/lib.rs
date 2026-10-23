@@ -5,12 +5,14 @@ mod extension;
 mod joint;
 mod light;
 mod lightmap;
+mod schema;
 mod system;
 mod texture;
 
 use bevy::{app::SceneSpawnerSystems, gltf::extensions::GltfExtensionHandlers, prelude::*};
 
 pub use component::{BlenderCustomComponent, BlenderCustomComponents, NavigationObstacle, NavigationWalkable};
+pub use schema::{BlenderSchemaPlugin, SCHEMA_FILE, SchemaOutput, component_schema};
 pub use texture::GltfTextures;
 
 pub struct BlenderBevyComponentsPlugin;

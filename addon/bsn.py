@@ -395,23 +395,28 @@ def rust_path(type_path, crate=None):
     return GENERICS.sub("::<", type_path, count=1)
 
 
-def custom_literal(type_path, data, crate=None):
+def custom_literal(type_path, data, crate=None, enums=None):
     path = rust_path(type_path, crate)
+    enums = {name: rust_path(enum, crate) for name, enum in enums.items() if isinstance(enum, str) and enum.strip()} if isinstance(enums, dict) else {}
     if isinstance(data, dict):
         if not data:
             return path
         names = [name for name in data if not identifier(name)]
         if names:
             raise BsnError(f"{type_path} has fields that are not Rust names, so the BSN export cannot write it: {', '.join(names)}")
-        return f"{path} {{ {', '.join(f'{name}: {_value(type_path, value)}' for name, value in data.items())} }}"
+        return f"{path} {{ {', '.join(f'{name}: {_value(type_path, value, enums.get(name))}' for name, value in data.items())} }}"
     if isinstance(data, list):
-        return f"{path}({', '.join(_value(type_path, value) for value in data)})"
+        return f"{path}({', '.join(_value(type_path, value, enums.get(str(index))) for index, value in enumerate(data))})"
     if data is None:
         return path
-    return f"{path}({_value(type_path, data)})"
+    return f"{path}({_value(type_path, data, enums.get('0'))})"
 
 
-def _value(type_path, value):
+def _value(type_path, value, enum=None):
+    if enum is not None:
+        if not isinstance(value, str) or not identifier(value):
+            raise BsnError(f"{type_path} holds {json.dumps(value, ensure_ascii=False)} for an enum, which needs a variant name")
+        return f"{{{enum}::{value}}}"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, int):
@@ -940,7 +945,7 @@ class _Generator:
                     self._use("WorldAssetRoot")
             elif kind == "custom":
                 type_path = component.get("type_path", "")
-                entry = custom_literal(type_path, component.get("data"), self.crate)
+                entry = custom_literal(type_path, component.get("data"), self.crate, component.get("enums"))
                 self.custom_names[entry] = snake_case(GENERICS.split(type_path)[0].split("::")[-1])
                 body.append(entry)
             elif kind == "fog_volume":

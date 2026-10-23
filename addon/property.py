@@ -3,7 +3,7 @@ from math import radians
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, IntVectorProperty, PointerProperty, StringProperty
 
-from .system import component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, redraw_viewports, sync_changed
+from .system import component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, redraw_viewports, set_variant, sync_changed, type_path_suggestions, variant_index, variant_items
 
 COMPONENT_TYPES = [
     ("VISIBILITY_RANGE", "Visibility Range", "Fade the object in and out by camera distance, for levels of detail", "HIDE_OFF", 0),
@@ -35,15 +35,17 @@ TEXTURE_COMPRESSION = [
 ]
 
 FIELD_TYPES = [
-    ("FLOAT", "Float", "Decimal number, read as f32"),
-    ("INT", "Integer", "Whole number, read as i32 or another integer type"),
-    ("BOOL", "Boolean", "On or off, read as bool"),
-    ("STRING", "String", "Text, read as String"),
-    ("VECTOR", "Vector", "Three numbers on Bevy's axes (Y up), read as Vec3"),
-    ("COLOR", "Color", "sRGB color with alpha, read as Bevy's Color"),
+    ("FLOAT", "Float", "Decimal number, read as f32", 0),
+    ("INT", "Integer", "Whole number, read as i32 or another integer type", 1),
+    ("BOOL", "Boolean", "On or off, read as bool", 2),
+    ("STRING", "String", "Text, read as String", 3),
+    ("VECTOR2", "Vector 2D", "Two numbers, read as Vec2", 6),
+    ("VECTOR", "Vector", "Three numbers on Bevy's axes (Y up), read as Vec3", 4),
+    ("COLOR", "Color", "sRGB color with alpha, read as Bevy's Color", 5),
+    ("ENUM", "Enum", "One of a list of names, read as a Rust enum whose variants hold no data", 7),
 ]
 
-FIELD_LABELS = {identifier: name for identifier, name, _description in FIELD_TYPES}
+FIELD_LABELS = {identifier: name for identifier, name, _description, _number in FIELD_TYPES}
 
 JOINT_TYPES = [
     ("FIXED", "Fixed", "Holds the bodies together so they move as one, Avian FixedJoint", "LOCKED", 0),
@@ -75,8 +77,12 @@ class BEVY_PG_field(bpy.types.PropertyGroup):
     int_value: IntProperty(name="Value", update=sync_changed)
     bool_value: BoolProperty(name="Value", update=sync_changed)
     string_value: StringProperty(name="Value", update=sync_changed)
+    vector2_value: FloatVectorProperty(name="Value", size=2, subtype="XYZ", update=sync_changed)
     vector_value: FloatVectorProperty(name="Value", size=3, subtype="XYZ", update=sync_changed)
     color_value: FloatVectorProperty(name="Value", size=4, subtype="COLOR_GAMMA", default=(1.0, 1.0, 1.0, 1.0), min=0.0, max=1.0, update=sync_changed)
+    enum_value: EnumProperty(name="Value", items=variant_items, get=variant_index, set=set_variant)
+    variants: StringProperty(name="Variants", description="Names of the enum's variants, separated by commas, such as Red, Blue", update=field_changed)
+    rust_type: StringProperty(name="Rust Type", description="Rust type of the field. For an enum, its type path, such as my_game::Team, which the BSN export needs", update=field_changed)
 
 
 class BEVY_PG_component(bpy.types.PropertyGroup):
@@ -187,9 +193,9 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     light_cascade_far: FloatProperty(name="Max Distance", description="Distance from the camera where shadows end", default=150.0, min=0.001, unit="LENGTH", update=sync_changed)
     light_cascade_overlap: FloatProperty(name="Overlap", description="How far neighbouring cascades overlap, which hides the seam between them", default=0.2, min=0.0, max=0.95, subtype="FACTOR", update=sync_changed)
     show_shadows: BoolProperty(name="Shadows", description="Show the light's shadow settings", default=False)
-    custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health. Pick a type defined in Properties > Scene to edit its fields instead of JSON", default="my_game::MyComponent", update=custom_type_changed)
+    custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health. Pick a type from your game or from Properties > Scene to edit its fields instead of JSON", default="my_game::MyComponent", update=custom_type_changed, search=type_path_suggestions, search_options={"SUGGESTION"})
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
-    use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")
+    use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields that your game or Properties > Scene defines instead of JSON")
     fields: CollectionProperty(type=BEVY_PG_field)
     scene_file: StringProperty(name="File", description="glTF file whose scene spawns at this object. It is stored relative to the exported scene, so keep both in your game's assets folder", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
     scene_index: IntProperty(name="Scene", description="Which scene of the file to spawn, counting from 0 like Bevy's Scene0 label", default=0, min=0, update=sync_changed)

@@ -12,6 +12,36 @@ pub const COMPRESSED_SCENES: [&str; 3] = ["sample_scene_etc1s.glb", "sample_scen
 #[derive(Resource, Clone, Copy)]
 pub struct DeviceFormats(pub CompressedImageFormats);
 
+#[derive(Reflect, Clone, Copy, Debug, Default, PartialEq)]
+#[type_path = "my_game"]
+pub enum PatrolMode {
+    #[default]
+    Loop,
+    PingPong,
+}
+
+#[derive(Component, Reflect, Clone, Debug, PartialEq)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
+pub struct Patrol {
+    pub speed: f32,
+    pub mode: PatrolMode,
+    pub offset: Vec2,
+    pub stops: u8,
+    pub timer: Timer,
+}
+
+impl Default for Patrol {
+    fn default() -> Self {
+        return Patrol { speed: 2.0, mode: PatrolMode::Loop, offset: Vec2::ZERO, stops: 1, timer: Timer::from_seconds(1.5, TimerMode::Repeating) };
+    }
+}
+
+#[derive(Component, Reflect, Clone, Debug, Default, PartialEq)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
+pub struct Reward(pub u32, pub f32);
+
 #[derive(Resource, Default)]
 pub struct ReadyInstances(pub usize);
 

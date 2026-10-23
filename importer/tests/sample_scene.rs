@@ -273,6 +273,15 @@ fn custom_components_keep_type_paths_and_data() {
 }
 
 #[test]
+fn game_components_fill_in_fields_blender_leaves_out() {
+    let mut app = load_scene(SCENE);
+    let world = app.world_mut();
+    let enemy_spawn = node(world, "enemy_spawn");
+    assert_eq!(world.get::<Patrol>(enemy_spawn), Some(&Patrol { speed: 2.5, mode: PatrolMode::PingPong, offset: Vec2::new(1.0, -0.5), stops: 3, ..default() }));
+    assert_eq!(world.get::<Reward>(enemy_spawn), Some(&Reward(7, 1.5)));
+}
+
+#[test]
 fn custom_component_fields_deserialize_into_rust_types() {
     let mut app = load_scene(SCENE);
     let world = app.world_mut();

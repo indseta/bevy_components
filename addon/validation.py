@@ -13,7 +13,7 @@ from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serial
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, children_map, component_of, components_for, file_path, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, scene_path, subtree
+from .system import MESH_TYPES, children_map, component_of, components_for, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -91,8 +91,12 @@ def check_bsn(objects, root):
         for item in components_for(obj):
             if item.component_type == "CUSTOM" and not component_errors(item):
                 component = serialize_component(item)
+                untyped = [field.name for field in item.fields if item.use_fields and field.field_type == "ENUM" and not field.rust_type.strip()]
+                if untyped:
+                    issues.append(Issue("ERROR", obj, item, f"Set the Enum Type of {', '.join(untyped)} in Properties > Scene > Bevy Custom Components, which the BSN export needs to write the variant"))
+                    continue
                 try:
-                    custom_literal(component["type_path"], component["data"])
+                    custom_literal(component["type_path"], component["data"], enums=component.get("enums"))
                 except BsnError as error:
                     issues.append(Issue("ERROR", obj, item, str(error)))
             elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
@@ -168,6 +172,10 @@ def _object_issues(obj, children, exported, destination=None, animations=True):
             if item.custom_type in custom_types:
                 issues.append(Issue("WARNING", obj, item, f"Added more than once, but an entity holds only one {item.custom_type}"))
             custom_types.add(item.custom_type)
+            game_type = game_types().get(item.custom_type)
+            if item.use_fields and game_type is not None and game_type.others and not game_type.has_default:
+                names = ", ".join(name for name, _rust_type in game_type.others)
+                issues.append(Issue("WARNING", obj, item, f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
     light = light_of(obj)
     if light is not None and light.type == "AREA" and not any(item.component_type == "LIGHT" for item in obj.bevy_component_data.components):
         issues.append(Issue("WARNING", obj, None, "glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"))

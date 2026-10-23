@@ -1,0 +1,67 @@
+{
+  "components": [
+    {
+      "fields": [
+        {
+          "default": 2.0,
+          "name": "speed",
+          "rust_type": "f32",
+          "type": "float"
+        },
+        {
+          "default": "Loop",
+          "name": "mode",
+          "rust_type": "my_game::PatrolMode",
+          "type": "enum",
+          "variants": [
+            "Loop",
+            "PingPong"
+          ]
+        },
+        {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "name": "offset",
+          "rust_type": "glam::Vec2",
+          "type": "vector2"
+        },
+        {
+          "default": 1,
+          "name": "stops",
+          "rust_type": "u8",
+          "type": "int"
+        },
+        {
+          "name": "timer",
+          "rust_type": "bevy_time::timer::Timer",
+          "type": "other"
+        }
+      ],
+      "has_default": true,
+      "kind": "struct",
+      "type_path": "my_game::Patrol"
+    },
+    {
+      "fields": [
+        {
+          "default": 0,
+          "name": "0",
+          "rust_type": "u32",
+          "type": "int"
+        },
+        {
+          "default": 0.0,
+          "name": "1",
+          "rust_type": "f32",
+          "type": "float"
+        }
+      ],
+      "has_default": true,
+      "kind": "tuple_struct",
+      "type_path": "my_game::Reward"
+    }
+  ],
+  "version": 1
+}

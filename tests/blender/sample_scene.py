@@ -12,6 +12,7 @@ from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_scene.glb"
+SCHEMA = FIXTURE.parent / "bevy_components_schema.json"
 SOUNDS = FIXTURE.parent / "sounds"
 COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_scene_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
 BSN_FIXTURE = ROOT / "importer" / "tests" / "bsn" / "sample_scene.rs"
@@ -77,7 +78,15 @@ def uninstall_addon():
     bpy.ops.preferences.extension_repo_remove(index=list(repositories).index(repositories[REPOSITORY]), remove_files=True)
 
 
+def use_game_schema(path=SCHEMA):
+    module = install_addon()
+    bpy.context.preferences.addons[module].preferences.schema_path = str(path) if path else ""
+    sys.modules[f"{module}.system"].game_schema(force=True)
+    sys.modules[f"{module}.system"].apply_game_types()
+
+
 def clear_scene():
+    use_game_schema(None)
     for collection in (bpy.data.objects, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups, bpy.data.actions):
         for block in list(collection):
             collection.remove(block)
@@ -400,6 +409,7 @@ def apply_lod_preset(obj, preset):
 
 def build_sample_scene(directory=FIXTURE.parent):
     clear_scene()
+    use_game_schema()
     define_component("my_game::Wave", ("count", "INT", 1), ("delay", "FLOAT", 1.0))
     define_component("my_game::Pickup", ("item", "STRING", "coin"), ("amount", "INT", 1), ("respawn", "BOOL", False), ("weight", "FLOAT", 0.1), ("spin", "VECTOR", (0.0, 1.5, 0.0)), ("glow", "COLOR", (1.0, 0.8, 0.2, 1.0)))
     ground = add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=20)
@@ -448,6 +458,8 @@ def build_sample_scene(directory=FIXTURE.parent):
     enemy_spawn = add_empty("enemy_spawn", (-6, -6, 0))
     add_component(enemy_spawn, "CUSTOM", custom_type="my_game::EnemySpawn")
     set_fields(add_component(enemy_spawn, "CUSTOM", type_path="my_game::Wave"), count=3, delay=1.5)
+    set_fields(add_component(enemy_spawn, "CUSTOM", type_path="my_game::Patrol"), speed=2.5, mode="PingPong", offset=(1.0, -0.5), stops=3)
+    set_fields(add_component(enemy_spawn, "CUSTOM", type_path="my_game::Reward"), **{"0": 7, "1": 1.5})
 
     lamp = add_mesh(bpy.ops.mesh.primitive_cube_add, "lamp", size=0.5, location=(4, 4, 0.25))
     add_component(lamp, "CUSTOM", custom_type="my_game::Glow", custom_json=json.dumps({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"}))

@@ -303,6 +303,12 @@ fn describe(world: &World, entity: Entity) -> Vec<String> {
     if let Some(flicker) = target.get::<Flicker>() {
         found.push(custom("my_game::Flicker", json!(flicker.0)));
     }
+    if let Some(patrol) = target.get::<Patrol>() {
+        found.push(format!("{patrol:?}"));
+    }
+    if let Some(reward) = target.get::<Reward>() {
+        found.push(format!("{reward:?}"));
+    }
     return found;
 }
 

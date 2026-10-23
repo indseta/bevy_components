@@ -15,7 +15,7 @@ from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
-from .system import accepts, apply_definitions, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .system import accepts, apply_definitions, apply_game_types, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, game_schema, game_types, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sync_object, unlink_component, write_field
 from .validation import body_kind, check_bsn, check_objects, check_rust_file, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
@@ -128,6 +128,10 @@ class BEVY_OT_add_component(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         return _editable(context)
+
+    @classmethod
+    def description(cls, context, properties):
+        return f"Add {properties.type_path} to the active object" if properties.type_path else cls.bl_description
 
     def execute(self, context):
         obj = context.object
@@ -410,8 +414,11 @@ class BEVY_OT_define_fields(bpy.types.Operator):
         if not item.custom_type.strip():
             self.report({"WARNING"}, "Give the component a type path first")
             return {"CANCELLED"}
+        if item.custom_type in game_types():
+            self.report({"WARNING"}, f"{item.custom_type} gets its fields from your game")
+            return {"CANCELLED"}
         library = context.scene.bevy_component_definitions
-        definition = find_definition(context.scene, item.custom_type)
+        definition = scene_definition(context.scene, item.custom_type)
         if definition is None:
             if item.use_fields:
                 fields = [(field.identifier, field.name, field.field_type, field_slot(field)) for field in item.fields]
@@ -432,6 +439,24 @@ class BEVY_OT_define_fields(bpy.types.Operator):
         library.active_index = list(library.definitions).index(definition)
         apply_definitions(context.scene)
         _show_scene_properties(context)
+        return {"FINISHED"}
+
+
+class BEVY_OT_reload_schema(bpy.types.Operator):
+    bl_idname = "bevy_components.reload_schema"
+    bl_label = "Reload Game Components"
+    bl_description = "Read the components your game wrote to its schema file again, and update the objects that use them"
+    bl_options = {"REGISTER", "UNDO"}
+
+    def execute(self, context):
+        schema = game_schema(force=True)
+        apply_game_types()
+        if schema["error"]:
+            self.report({"WARNING"}, schema["error"])
+        elif schema["path"] is None:
+            self.report({"INFO"}, "No game components found. Add BlenderSchemaPlugin to your game and run it once")
+        else:
+            self.report({"INFO"}, f"Read {len(schema['types'])} game components from {schema['path'].name}")
         return {"FINISHED"}
 
 

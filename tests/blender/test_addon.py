@@ -20,7 +20,7 @@ import gpu
 import numpy
 from mathutils import Matrix, Vector
 
-from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, STATIC_ASSETS, STATIC_FIXTURE, STATIC_ROCKS, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_scene, build_static_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, STATIC_ASSETS, STATIC_FIXTURE, STATIC_ROCKS, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_scene, build_static_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -77,6 +77,8 @@ EXPECTED_COMPONENTS = {
     "enemy_spawn": [
         {"type": "custom", "type_path": "my_game::EnemySpawn", "data": {}},
         {"type": "custom", "type_path": "my_game::Wave", "data": {"count": 3, "delay": 1.5}},
+        {"type": "custom", "type_path": "my_game::Patrol", "data": {"speed": 2.5, "mode": "PingPong", "offset": [1.0, -0.5], "stops": 3}, "enums": {"mode": "my_game::PatrolMode"}},
+        {"type": "custom", "type_path": "my_game::Reward", "data": [7, 1.5]},
     ],
     "lamp": [
         {"type": "custom", "type_path": "my_game::Glow", "data": {"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"}},
@@ -1587,7 +1589,7 @@ class TestPanels(unittest.TestCase):
                 addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
             finally:
                 preferences.ktx_path = ""
-        self.assertEqual(panel.layout.props(), ["ktx_path"])
+        self.assertEqual(panel.layout.props(), ["ktx_path", "schema_path"])
         self.assertTrue(panel.layout.alerts()[0].startswith("KTX-Software was not found at "))
         self.assertIn("Install KTX-Software 4.4 or newer", panel.layout.alerts()[1])
         if addon.encoder.find_encoder() is not None:
@@ -1779,7 +1781,8 @@ class TestCustomFields(unittest.TestCase):
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertEqual([(bound["property"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"].endswith("_value")], [("float_value", "speed"), ("vector_value", "axis"), ("color_value", "tint")])
         self.assertIn("No fields", panel.layout.texts())
-        self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "prop_search"], ["custom_type"])
+        self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "prop_search"], [])
+        self.assertIn("custom_type", panel.layout.props())
         self.assertEqual(panel.layout.props().count("custom_json"), 1)
         self.assertIn("game::Mover", panel.layout.texts())
 
@@ -1792,8 +1795,9 @@ class TestCustomFields(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_scene_definitions.draw(panel, bpy.context)
         self.assertEqual(lists(), ["BEVY_UL_definitions", "BEVY_UL_fields"])
-        self.assertEqual(panel.layout.operators(), ["bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.field_move"])
+        self.assertEqual(panel.layout.operators(), ["bevy_components.reload_schema", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.field_move"])
         self.assertEqual(panel.layout.props(), ["field_type", "vector_value"])
+        self.assertIn("No game components found", panel.layout.texts())
 
     def test_lists_flag_repeated_names(self):
         define_component("game::Pair", ("value", "INT", 0), ("value", "FLOAT", 0.0))
@@ -1828,6 +1832,167 @@ class TestCustomFields(unittest.TestCase):
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_context_menu.draw(menu, _menu_context(self.obj, collider))
         self.assertNotIn("bevy_components.define_fields", menu.layout.operators())
+
+
+class TestGameComponents(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.addCleanup(use_game_schema, None)
+        self.obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "subject")
+        self.other = add_empty("other", (0, 0, 0))
+
+    def _schema(self, *components):
+        path = Path(self.directory.name) / "bevy_components_schema.json"
+        path.write_text(json.dumps({"version": 1, "components": list(components)}), encoding="utf-8")
+        use_game_schema(path)
+        return path
+
+    def _data(self, obj):
+        return [component["data"] for component in _stored(obj)["components"]]
+
+    def test_game_components_come_from_the_schema_file(self):
+        use_game_schema()
+        self.assertEqual(sorted(addon.system.game_types()), ["my_game::Patrol", "my_game::Reward"])
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
+        self.assertIn(("BEVY_MT_component_add_game", "my_game"), [(bound["menu"], bound.get("text")) for name, bound, layout in menu.layout.calls if name == "menu"])
+        item = add_component(self.obj, "CUSTOM", type_path="my_game::Patrol")
+        self.assertEqual([(field.name, field.field_type, field.rust_type) for field in item.fields], [("speed", "FLOAT", "f32"), ("mode", "ENUM", "my_game::PatrolMode"), ("offset", "VECTOR2", "glam::Vec2"), ("stops", "INT", "u8")])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "custom", "type_path": "my_game::Patrol", "data": {"speed": 2.0, "mode": "Loop", "offset": [0.0, 0.0], "stops": 1}, "enums": {"mode": "my_game::PatrolMode"}}])
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add_game.draw(menu, _menu_context(self.obj))
+        self.assertEqual([(text, properties.type_path, enabled) for text, properties, enabled in menu.layout.buttons()], [("Patrol", "my_game::Patrol", False), ("Reward", "my_game::Reward", True)])
+        self.assertEqual(addon.operator.BEVY_OT_add_component.description(bpy.context, SimpleNamespace(type_path="my_game::Reward")), "Add my_game::Reward to the active object")
+        define_component("my_game::Wave")
+        self.assertEqual(addon.system.type_path_suggestions(None, bpy.context, ""), ["my_game::Patrol", "my_game::Reward", "my_game::Wave"])
+
+    def test_enum_fields_pick_a_variant(self):
+        use_game_schema()
+        mode = add_component(self.obj, "CUSTOM", type_path="my_game::Patrol").fields[1]
+        self.assertEqual([identifier for identifier, *_rest in addon.system.variant_items(mode, bpy.context)], ["Loop", "PingPong"])
+        mode.enum_value = "PingPong"
+        self.assertEqual((mode.string_value, self._data(self.obj)[0]["mode"]), ("PingPong", "PingPong"))
+        with self.assertRaises(TypeError):
+            mode.enum_value = "Hover"
+        self.assertEqual(addon.validation.check_object(self.obj, bpy.data.objects), [])
+
+    def test_tuple_structs_export_their_values_in_order(self):
+        use_game_schema()
+        item = set_fields(add_component(self.obj, "CUSTOM", type_path="my_game::Reward"), **{"0": 7, "1": 1.5})
+        self.assertEqual(self._data(self.obj), [[7, 1.5]])
+        item.custom_type = "my_game::Loot"
+        self.assertEqual((item.use_fields, json.loads(item.custom_json)), (False, [7, 1.5]))
+        item.custom_type = "my_game::Reward"
+        self.assertEqual((item.use_fields, self._data(self.obj)), (True, [[7, 1.5]]))
+
+    def test_json_components_switch_to_game_fields(self):
+        item = add_component(self.obj, "CUSTOM", custom_type="my_game::Patrol")
+        item.custom_json = json.dumps({"speed": 4, "mode": "PingPong", "offset": [1, 2], "note": "kept"})
+        reward = add_component(self.other, "CUSTOM", custom_type="my_game::Reward")
+        reward.custom_json = "[3, 2.5]"
+        self.assertFalse(item.use_fields or reward.use_fields)
+        use_game_schema()
+        self.assertTrue(item.use_fields and reward.use_fields)
+        self.assertEqual(self._data(self.obj), [{"speed": 4.0, "mode": "PingPong", "offset": [1.0, 2.0], "stops": 1}])
+        self.assertEqual(json.loads(item.custom_json), {"note": "kept"})
+        self.assertEqual(self._data(self.other), [[3, 2.5]])
+
+    def test_schema_changes_reach_every_object(self):
+        self._schema({"type_path": "game::Mover", "has_default": True, "fields": [{"name": "speed", "type": "float", "rust_type": "f32", "default": 1.0}]})
+        first = set_fields(add_component(self.obj, "CUSTOM", type_path="game::Mover"), speed=3.0)
+        add_component(self.other, "CUSTOM", type_path="game::Mover")
+        self._schema({"type_path": "game::Mover", "has_default": True, "fields": [{"name": "speed", "type": "int", "rust_type": "u8", "default": 2}, {"name": "team", "type": "enum", "rust_type": "game::Team", "variants": ["Red", "Blue"], "default": "Blue"}]})
+        self.assertEqual([self._data(obj) for obj in (self.obj, self.other)], [[{"speed": 3, "team": "Blue"}], [{"speed": 1, "team": "Blue"}]])
+        self._schema()
+        self.assertTrue(first.use_fields)
+        self.assertEqual(self._data(self.obj), [{"speed": 3, "team": "Blue"}])
+
+    def test_game_types_win_over_scene_definitions(self):
+        define_component("my_game::Patrol", ("speed", "FLOAT", 9.0))
+        item = add_component(self.obj, "CUSTOM", type_path="my_game::Patrol")
+        use_game_schema()
+        self.assertEqual([field.name for field in item.fields], ["speed", "mode", "offset", "stops"])
+        self.assertEqual(self._data(self.obj)[0]["speed"], 9.0)
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
+        self.assertNotIn("my_game::Patrol", [getattr(properties, "type_path", "") for text, properties, enabled in menu.layout.buttons()])
+        select(self.obj)
+        self.assertEqual(bpy.ops.bevy_components.define_fields(index=0), {"CANCELLED"})
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_context_menu.draw(menu, _menu_context(self.obj, item))
+        self.assertNotIn("bevy_components.define_fields", menu.layout.operators())
+        library = bpy.context.scene.bevy_component_definitions
+        library.definitions[0].name = "my_game::Other"
+        self.assertEqual(item.custom_type, "my_game::Patrol")
+        library.definitions[0].name = "my_game::Patrol"
+        self.assertEqual(bpy.ops.bevy_components.definition_remove(), {"FINISHED"})
+        self.assertEqual((item.use_fields, len(item.fields)), (True, 4))
+
+    def test_checks_follow_the_rust_types(self):
+        self._schema({"type_path": "game::Spawner", "has_default": False, "fields": [{"name": "count", "type": "int", "rust_type": "u8", "default": 1}, {"name": "timer", "type": "other", "rust_type": "bevy_time::timer::Timer"}]})
+        set_fields(add_component(self.obj, "CUSTOM", type_path="game::Spawner"), count=300)
+        issues = addon.validation.check_object(self.obj, bpy.data.objects)
+        self.assertEqual([(issue.level, issue.message) for issue in issues], [("ERROR", "count must be from 0 to 255 to fit u8"), ("WARNING", "Blender cannot set timer, so the game needs #[reflect(Default)] on game::Spawner to fill them in")])
+
+    def test_bsn_needs_enum_types_from_scene_definitions(self):
+        definition = define_component("game::Door", ("side", "STRING", "Left"))
+        field = definition.fields[0]
+        field.variants = "Left, Right"
+        field.field_type = "ENUM"
+        item = add_component(self.obj, "CUSTOM", type_path="game::Door")
+        self.assertEqual((item.fields[0].field_type, item.fields[0].string_value), ("ENUM", "Left"))
+        root = Path(self.directory.name)
+        self.assertEqual([issue.message for issue in addon.validation.check_bsn([self.obj], root)], ["Set the Enum Type of side in Properties > Scene > Bevy Custom Components, which the BSN export needs to write the variant"])
+        field.rust_type = "game::Side"
+        self.assertEqual(addon.validation.check_bsn([self.obj], root), [])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "custom", "type_path": "game::Door", "data": {"side": "Left"}, "enums": {"side": "game::Side"}}])
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_scene_definitions.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), ["field_type", "variants", "rust_type", "enum_value"])
+
+    def test_schema_is_found_above_the_saved_blend_file(self):
+        root = Path(self.directory.name)
+        (root / "assets").mkdir()
+        add_component(self.obj, "CUSTOM", custom_type="my_game::Reward", custom_json="[3, 2.5]")
+        blend = root / "assets" / "level.blend"
+        bpy.ops.wm.save_as_mainfile(filepath=str(blend))
+        (root / "bevy_components_schema.json").write_bytes(SCHEMA.read_bytes())
+        bpy.ops.wm.open_mainfile(filepath=str(blend))
+        item = bpy.data.objects["subject"].bevy_component_data.components[0]
+        self.assertTrue(item.use_fields)
+        self.assertEqual(_stored(bpy.data.objects["subject"])["components"][0]["data"], [3, 2.5])
+        self.assertEqual(addon.system.game_schema()["path"], root / "bevy_components_schema.json")
+
+    def test_broken_schemas_show_an_error(self):
+        path = Path(self.directory.name) / "bevy_components_schema.json"
+        path.write_text("{", encoding="utf-8")
+        use_game_schema(path)
+        self.assertTrue(addon.system.game_schema()["error"].startswith("bevy_components_schema.json cannot be read. It is not valid JSON"))
+        self.assertEqual(addon.system.game_types(), {})
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_scene_definitions.draw(panel, bpy.context)
+        self.assertTrue(" ".join(panel.layout.alerts()).startswith("bevy_components_schema.json cannot be read. It is not valid JSON"))
+        preferences = bpy.context.preferences.addons[addon.__name__].preferences
+        panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="", schema_path=str(path))
+        addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
+        self.assertIn("bevy_components_schema.json cannot be read. It is not valid JSON", " ".join(panel.layout.alerts()))
+        use_game_schema(path.with_name("missing.json"))
+        self.assertEqual(addon.system.game_schema()["error"], "missing.json was not found")
+
+    def test_cards_and_preferences_show_game_components(self):
+        use_game_schema()
+        add_component(self.obj, "CUSTOM", type_path="my_game::Patrol")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual([(bound["property"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"].endswith("_value")], [("float_value", "speed"), ("enum_value", "mode"), ("vector2_value", "offset"), ("int_value", "stops")])
+        self.assertIn("Game default (Timer)", panel.layout.texts())
+        preferences = bpy.context.preferences.addons[addon.__name__].preferences
+        panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="", schema_path=str(SCHEMA))
+        addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
+        self.assertIn(f"2 game components from {SCHEMA}", panel.layout.texts())
+        self.assertIn("schema_path", panel.layout.props())
 
 
 class TestViewport(unittest.TestCase):

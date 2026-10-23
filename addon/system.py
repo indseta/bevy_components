@@ -2,6 +2,7 @@ import json
 import mimetypes
 import os
 import tempfile
+import time
 import uuid
 from pathlib import Path
 
@@ -9,11 +10,16 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, convert_value, field_data, light_intensity, light_of, relative_path, serialize_ambient_light, serialize_items
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_ambient_light, serialize_items, variant_names
+from .schema import GameField, SchemaError, find_schema, parse_schema
 
 MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 PANEL_EXPANDED = True
 PANEL_DRAWN_EXPANDED = True
+SCHEMA_CHECK_INTERVAL = 1.0
+
+_game_schema = {"checked": None, "key": None, "path": None, "types": {}, "error": ""}
+_variant_items = {}
 
 
 def redraw_viewports(_self=None, _context=None):
@@ -277,13 +283,109 @@ def new_identifier():
     return uuid.uuid4().hex
 
 
-def find_definition(scene, type_path):
+def schema_setting():
+    addon = bpy.context.preferences.addons.get(__package__) if bpy.context.preferences else None
+    preferences = addon.preferences if addon is not None else None
+    return preferences.schema_path.strip() if preferences is not None else ""
+
+
+def game_schema(force=False):
+    now = time.monotonic()
+    if not force and _game_schema["checked"] is not None and now - _game_schema["checked"] < SCHEMA_CHECK_INTERVAL:
+        return _game_schema
+    _game_schema["checked"] = now
+    setting = schema_setting()
+    path = file_path(setting) if setting else find_schema(blend_directory())
+    try:
+        stat = path.stat() if path is not None else None
+    except OSError:
+        stat = None
+    key = (str(path), stat.st_mtime_ns if stat else None, stat.st_size if stat else None)
+    if key == _game_schema["key"] and not force:
+        return _game_schema
+    types = {}
+    error = f"{path.name} was not found" if path is not None and stat is None else ""
+    if stat is not None:
+        try:
+            types = parse_schema(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, SchemaError) as exception:
+            error = f"{path.name} cannot be read. {exception}"
+    _game_schema.update(key=key, path=path, types=types, error=error)
+    if not bpy.app.timers.is_registered(_apply_game_types):
+        bpy.app.timers.register(_apply_game_types, first_interval=0.0)
+    return _game_schema
+
+
+def game_types():
+    return game_schema()["types"]
+
+
+def apply_game_types():
+    for scene in bpy.data.scenes:
+        apply_definitions(scene)
+    redraw_properties()
+
+
+def _apply_game_types():
+    apply_game_types()
+    return None
+
+
+def schema_setting_changed(_self, _context):
+    game_schema(force=True)
+
+
+def stop_schema_updates():
+    if bpy.app.timers.is_registered(_apply_game_types):
+        bpy.app.timers.unregister(_apply_game_types)
+
+
+@persistent
+def load_game_types(*_args):
+    game_schema(force=True)
+    stop_schema_updates()
+    apply_game_types()
+
+
+def scene_definition(scene, type_path):
     if scene is None or not type_path.strip() or not hasattr(scene, "bevy_component_definitions"):
         return None
     for definition in scene.bevy_component_definitions.definitions:
         if definition.name == type_path:
             return definition
     return None
+
+
+def find_definition(scene, type_path):
+    if not type_path.strip():
+        return None
+    return game_types().get(type_path) or scene_definition(scene, type_path)
+
+
+def type_path_suggestions(_self, context, _edit_text):
+    scene = getattr(context, "scene", None)
+    names = set(game_types())
+    if scene is not None and hasattr(scene, "bevy_component_definitions"):
+        names.update(definition.name for definition in scene.bevy_component_definitions.definitions if definition.name.strip())
+    return sorted(names)
+
+
+def variant_items(self, _context):
+    names = tuple(variant_names(self.variants))
+    if names not in _variant_items:
+        _variant_items[names] = [(name, name, "", index) for index, name in enumerate(names)] or [("NONE", "No Variants", "Add variants to the field first", 0)]
+    return _variant_items[names]
+
+
+def variant_index(self):
+    names = variant_names(self.variants)
+    return names.index(self.string_value) if self.string_value in names else 0
+
+
+def set_variant(self, value):
+    names = variant_names(self.variants)
+    if 0 <= value < len(names):
+        self.string_value = names[value]
 
 
 def field_slot(field):
@@ -296,7 +398,7 @@ def write_field(field, value):
 
 
 def _field_layout(fields):
-    return [(field.identifier, field.name, field.field_type) for field in fields]
+    return [(field.identifier, field.name, field.field_type, field.variants, field.rust_type) for field in fields]
 
 
 def _json_object(text):
@@ -304,11 +406,18 @@ def _json_object(text):
         data = json.loads(text)
     except json.JSONDecodeError:
         return {}
-    return data if isinstance(data, dict) else {}
+    return dict(json_fields(data))
 
 
-def _converted(kind, values, key):
-    return convert_value(kind, values[key]) if key in values else None
+def _default(source):
+    return source.default if isinstance(source, GameField) else field_slot(source)
+
+
+def _converted(source, values, key):
+    value = convert_value(source.field_type, values[key]) if key in values else None
+    if source.field_type == "ENUM" and value not in variant_names(source.variants):
+        return None
+    return value
 
 
 def link_component(item, definition, keep_values=True):
@@ -320,10 +429,10 @@ def link_component(item, definition, keep_values=True):
     leftovers = _json_object(item.custom_json) if keep_values else {}
     values = []
     for source in definition.fields:
-        default = field_slot(source)
-        kept = _converted(source.field_type, by_identifier, source.identifier)
-        loaded = _converted(source.field_type, leftovers, source.name)
-        renamed = _converted(source.field_type, by_name, source.name)
+        default = _default(source)
+        kept = _converted(source, by_identifier, source.identifier)
+        loaded = _converted(source, leftovers, source.name)
+        renamed = _converted(source, by_name, source.name)
         if kept is not None and kept != default:
             values.append(kept)
         elif loaded is not None:
@@ -339,6 +448,8 @@ def link_component(item, definition, keep_values=True):
         field.identifier = source.identifier
         field.name = source.name
         field.field_type = source.field_type
+        field.variants = source.variants
+        field.rust_type = source.rust_type
         write_field(field, value)
     if keep_values and leftovers != _json_object(item.custom_json):
         item.custom_json = json.dumps(leftovers, ensure_ascii=False)
@@ -350,8 +461,9 @@ def unlink_component(item):
     if not item.use_fields:
         return False
     data = field_data(item.fields)
-    leftovers = {name: value for name, value in _json_object(item.custom_json).items() if name not in data}
-    item.custom_json = json.dumps({**data, **leftovers}, ensure_ascii=False)
+    if isinstance(data, dict):
+        data = {**data, **{name: value for name, value in _json_object(item.custom_json).items() if name not in data}}
+    item.custom_json = json.dumps(data, ensure_ascii=False)
     item.fields.clear()
     item.use_fields = False
     return True
@@ -410,7 +522,7 @@ def definition_renamed(self, context):
     previous = self.linked_name
     self.linked_name = self.name
     scene = self.id_data
-    if previous and previous != self.name:
+    if previous and previous != self.name and previous not in game_types():
         for _obj, item in list(custom_components(scene, previous)):
             if item.use_fields:
                 item.custom_type = self.name
