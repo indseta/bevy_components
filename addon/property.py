@@ -225,6 +225,7 @@ class BEVY_PG_bsn_export(bpy.types.PropertyGroup):
     rust_file: StringProperty(name="Rust File", description="Rust file that the last BSN export wrote, which the next one writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
     assets_folder: StringProperty(name="Assets Folder", description="Assets folder that the last BSN export wrote, empty for the default next to Cargo.toml", subtype="DIR_PATH", options=PATH_OPTIONS)
     prefab_functions: BoolProperty(name="Prefab Functions", description="Whether the last BSN export wrote shared objects as object_ functions", default=True)
+    written_files: StringProperty(name="Written Files", description="Assets folder and files that the last BSN export wrote there, so the next export can remove the ones it no longer needs", options={"HIDDEN"})
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):

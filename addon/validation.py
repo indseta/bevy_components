@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from .bsn import BsnError, custom_literal, inside
+from .bsn import BsnError, crate_root, custom_literal, file_state, inside
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
@@ -34,7 +34,11 @@ _texture_checks = {}
 
 
 def describe(issue):
-    return f"{issue.obj.name}: {issue.message}"
+    return issue.message if issue.obj is None else f"{issue.obj.name}: {issue.message}"
+
+
+def issue_row(issue):
+    return (issue.level, None if issue.obj is None else issue.obj.name, issue.message)
 
 
 def count(number, word):
@@ -56,10 +60,10 @@ def draw_message(layout, text, icon="ERROR", width=300):
 def draw_issues(layout, rows, limit, more, select=False, width=300):
     for level, name, message in rows[:limit]:
         icon = "CANCEL" if level == "ERROR" else "ERROR"
-        if select:
+        if select and name is not None:
             layout.operator("bevy_components.select_object", text=f"{name}: {message}", icon=icon).name = name
         else:
-            draw_message(layout, f"{name}: {message}", icon, width)
+            draw_message(layout, message if name is None else f"{name}: {message}", icon, width)
     if len(rows) > limit:
         layout.label(text=f"{len(rows) - limit} more {more}", icon="BLANK1")
 
@@ -100,6 +104,28 @@ def check_bsn(objects, root):
         if shape_keys is not None and len(shape_keys.key_blocks) > 1:
             issues.append(Issue("WARNING", obj, None, "BSN scenes leave out shape key weights"))
     return issues
+
+
+def check_rust_file(rust_file, strict=False):
+    name = rust_file.name
+    if crate_root(rust_file):
+        return [Issue("ERROR", None, None, f"{name} is a crate root, so exporting would replace your game's code. Pick a file of its own, such as src/scene.rs")]
+    try:
+        state = file_state(rust_file.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return []
+    except (OSError, UnicodeDecodeError):
+        state = "foreign"
+    if state == "foreign":
+        holds = "the module declarations of its folder" if name.lower() == "mod.rs" else "its code"
+        message = f"{name} was not written by the BSN export, so exporting replaces {holds}"
+    elif state == "edited":
+        message = f"{name} was edited since the last export, which replaces those edits"
+    else:
+        return []
+    if strict:
+        return [Issue("ERROR", None, None, f"{message}. Export from File > Export > Bevy Scene (BSN) to replace it")]
+    return [Issue("WARNING", None, None, message)]
 
 
 def _object_issues(obj, children, exported, destination=None, animations=True):

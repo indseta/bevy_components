@@ -3,9 +3,11 @@ extern crate self as my_game;
 mod common;
 #[path = "bsn/sample_scene.rs"]
 mod sample_scene;
+#[path = "bsn/static_scene.rs"]
+mod static_scene;
 
 use avian3d::prelude::*;
-use bevy::{animation::{AnimatedBy, AnimationTargetId, graph::AnimationNodeType}, asset::UntypedAssetId, audio::PlaybackSettings, camera::visibility::VisibilityRange, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, pbr::Lightmap, prelude::*, world_serialization::WorldAssetRoot};
+use bevy::{animation::{AnimatedBy, AnimationTargetId, graph::AnimationNodeType}, asset::UntypedAssetId, audio::PlaybackSettings, camera::visibility::VisibilityRange, gltf::Gltf, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::Face, world_serialization::WorldAssetRoot};
 use bevy_components_importer::BlenderCustomComponents;
 use common::*;
 use serde_json::{Value, json};
@@ -13,6 +15,8 @@ use std::{collections::{BTreeMap, HashSet}, fmt::Debug, fs, thread, time::Durati
 
 const ROOT: &str = "sample_scene";
 const BSN_SCENE: &str = "bsn/sample_scene.glb";
+const STATIC_SCENE: &str = "bsn_static/static_scene.glb";
+const STATIC_ROCKS: usize = 260;
 const DECIMALS: usize = 4;
 
 #[derive(Component, Reflect, Clone, Default)]
@@ -106,6 +110,30 @@ fn bsn_ready(world: &mut World) -> bool {
     let asset_server = world.resource::<AssetServer>();
     let loaded = handles.iter().all(|handle| asset_server.is_loaded_with_dependencies(*handle));
     return spawned && constructors == 0 && loaded && world.resource::<ReadyInstances>().0 >= references;
+}
+
+fn static_app() -> App {
+    let mut app = SceneApp { plugin: false, ..default() }.build();
+    app.world_mut().commands().queue_spawn_scene(static_scene::setup());
+    app.world_mut().flush();
+    for _ in 0..1000 {
+        app.update();
+        let world = app.world_mut();
+        let mut handles: Vec<UntypedAssetId> = world.query::<&Mesh3d>().iter(world).map(|mesh| mesh.id().untyped()).collect();
+        handles.extend(world.query::<&MeshMaterial3d<StandardMaterial>>().iter(world).map(|material| material.id().untyped()));
+        let asset_server = world.resource::<AssetServer>();
+        if handles.len() == 2 * (STATIC_ROCKS + 2) && handles.iter().all(|handle| asset_server.is_loaded_with_dependencies(*handle)) {
+            return app;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    panic!("the static BSN scene did not spawn");
+}
+
+fn cull_mode(app: &mut App, target: &str) -> Option<Face> {
+    let entity = named(app.world_mut(), target);
+    let material = app.world().get::<MeshMaterial3d<StandardMaterial>>(entity).unwrap_or_else(|| panic!("{target} has a material"));
+    return app.world().resource::<Assets<StandardMaterial>>().get(material.id()).expect("the material is loaded").cull_mode;
 }
 
 fn glb_app() -> App {
@@ -379,4 +407,23 @@ fn bsn_scene_simulates() {
     let mut names: Vec<String> = joints.iter(app.world()).map(|name| name.as_str().to_string()).collect();
     names.sort();
     assert_eq!(names, ["barrel_lid joint", "chain_middle joint", "chain_top joint", "door_hinge joint", "drawer joint"]);
+}
+
+#[test]
+fn static_bsn_scene_loads_without_the_gltf_node_tree() {
+    let mut app = static_app();
+    let handle = app.world().resource::<AssetServer>().load::<Gltf>(STATIC_SCENE);
+    for _ in 0..1000 {
+        if app.world().resource::<AssetServer>().is_loaded(&handle) {
+            break;
+        }
+        app.update();
+        thread::sleep(Duration::from_millis(10));
+    }
+    let gltf = app.world().resource::<Assets<Gltf>>().get(&handle).expect("the GLB is loaded");
+    assert_eq!((gltf.nodes.len(), gltf.scenes.len()), (1, 1));
+    let rocks = named(app.world_mut(), "rocks");
+    assert_eq!(app.world().get::<Children>(rocks).map_or(0, |children| children.len()), STATIC_ROCKS);
+    assert_eq!(cull_mode(&mut app, "statue"), Some(Face::Back));
+    assert_eq!(cull_mode(&mut app, "statue_mirrored"), Some(Face::Front));
 }

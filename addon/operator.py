@@ -8,7 +8,7 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, lighting_jobs, unwrap_lightmap
-from .bsn import BsnError, asset_root, binary_crate, cargo_project, default_assets_folder, inside, load_path, node_components, scene_source, snake_case, strip_components, write_if_changed
+from .bsn import BsnError, asset_root, default_assets_folder, digest, drop_scenes, inside, load_path, module_crate, node_components, remove_stale, scene_source, snake_case, strip_components, write_if_changed
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
@@ -16,7 +16,7 @@ from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
 from .system import accepts, apply_definitions, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
-from .validation import body_kind, check_bsn, check_objects, count, describe, draw_issues, draw_message, issue_summary
+from .validation import body_kind, check_bsn, check_objects, check_rust_file, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 TEXTURE_COMPRESSION = [
     ("DISABLED", "Disabled", "Export ordinary embedded textures"),
@@ -681,7 +681,7 @@ def _draw_checks(operator, layout, context, key, find):
         header.label(text=issue_summary(issues), icon="CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR")
     if body:
         if issues:
-            draw_issues(body, [(issue.level, issue.obj.name, issue.message) for issue in issues], 6, "in Validate All Objects", width=context.region.width if context.region else 300)
+            draw_issues(body, [issue_row(issue) for issue in issues], 6, "in Validate All Objects", width=context.region.width if context.region else 300)
         else:
             body.label(text="No problems found", icon="CHECKMARK")
 
@@ -699,10 +699,10 @@ def _bsn_paths(operator):
 
 
 def _bsn_issues(operator, objects):
-    _rust_file, folder, glb = _bsn_paths(operator)
+    rust_file, folder, glb = _bsn_paths(operator)
     issues = check_objects(objects, destination=glb, animations=operator.include_animations)
     if glb is not None:
-        issues.extend(check_bsn(objects, asset_root(folder)))
+        issues = check_rust_file(rust_file, getattr(operator, "again", False)) + issues + check_bsn(objects, asset_root(folder))
     return issues
 
 
@@ -1024,20 +1024,22 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
         rust_file, folder, glb = _bsn_paths(self)
         root = asset_root(folder)
         try:
-            source, warnings = scene_source(gltf, load_path(glb, root), rust_file.stem, prefabs=self.prefab_functions, files=self._files, crate=binary_crate(cargo_project(rust_file)))
+            source, warnings = scene_source(gltf, load_path(glb, root), rust_file.stem, prefabs=self.prefab_functions, files=self._files, crate=module_crate(rust_file))
         except BsnError as error:
             self.report({"ERROR"}, f"Cannot write the scene: {error}")
             return None
         strip_components(gltf)
+        drop_scenes(gltf)
+        assets = [(glb, write_glb(gltf, binary)), *self._copies]
         written = 0
         try:
-            written += write_if_changed(glb, write_glb(gltf, binary))
-            for target, data in self._copies:
+            for target, data in assets:
                 written += write_if_changed(target, data)
             written += write_if_changed(rust_file, source.encode("utf-8"))
         except OSError as error:
             self.report({"ERROR"}, f"Could not write {Path(error.filename or '').name or 'the scene'}: {error.strerror or error}")
             return None
+        removed = self._remove_stale(folder, {target.name: digest(data) for target, data in assets})
         for warning in warnings:
             print("Bevy Components:", warning)
         if warnings:
@@ -1047,7 +1049,19 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
         settings.assets_folder = _blend_relative(folder) if self.assets_folder.strip() else ""
         settings.prefab_functions = self.prefab_functions
         files = 2 + len(self._copies)
-        return f"{rust_file} ({count(written, 'file')} of {files} changed)"
+        stale = f", removed {count(len(removed), 'old file')}" if removed else ""
+        return f"{rust_file} ({count(written, 'file')} of {files} changed{stale})"
+
+    def _remove_stale(self, folder, written):
+        settings = bpy.context.scene.bevy_bsn_export
+        try:
+            record = json.loads(settings.written_files or "{}")
+            previous = record["files"] if _export_path(record["folder"]) == folder else {}
+        except (KeyError, TypeError, ValueError):
+            previous = {}
+        removed = remove_stale(previous if isinstance(previous, dict) else {}, folder, written)
+        settings.written_files = json.dumps({"folder": _blend_relative(folder), "files": written}, sort_keys=True)
+        return removed
 
 
 class BEVY_OT_unwrap_lightmap(bpy.types.Operator):

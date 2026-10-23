@@ -176,9 +176,9 @@ fn setup(mut commands: Commands) {
 }
 ```
 
-With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file and only rewrites files that changed. Rebuild the game after exporting again.
+With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file and only rewrites files that changed. It will not write over `main.rs`, `lib.rs` or another crate root, warns before it replaces a `.rs` file it did not write or one edited since the last export, and removes files it copied into the assets folder earlier that the scene no longer uses. Rebuild the game after exporting again.
 
-- Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` inside the `my_game` binary) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors and colors.
+- Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors and colors.
 - Physics needs Avian with its `collider-from-mesh` feature. Add `BlenderBevyComponentsPlugin` when you compress textures or use a Scene Reference, since the referenced GLBs carry their components the usual way.
 - Skins and shape keys are left out.
 
@@ -197,7 +197,7 @@ pip install bpy==4.2.23
 python tests/blender/run.py
 ```
 
-The importer tests load `importer/tests/assets/sample_scene.glb` and its compressed copies `sample_scene_etc1s.glb`, `sample_scene_uastc.glb` and `sample_scene_automatic.glb`, plus the `props/windmill.glb` prop that the sample scene references, and the BSN export of the same scene in `importer/tests/bsn/sample_scene.rs` and `importer/tests/assets/bsn/`, which `python tests/blender/sample_scene.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
+The importer tests load `importer/tests/assets/sample_scene.glb` and its compressed copies `sample_scene_etc1s.glb`, `sample_scene_uastc.glb` and `sample_scene_automatic.glb`, plus the `props/windmill.glb` prop that the sample scene references, and the BSN export of the same scene in `importer/tests/bsn/sample_scene.rs` and `importer/tests/assets/bsn/`, plus a small unanimated BSN scene in `importer/tests/bsn/static_scene.rs` and `importer/tests/assets/bsn_static/`, which `python tests/blender/sample_scene.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
 
 The rendering tests compare compressed and uncompressed scenes on a real GPU and check that light probes and fog show up. They are skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
 

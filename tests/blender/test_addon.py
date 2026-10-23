@@ -19,7 +19,7 @@ import gpu
 import numpy
 from mathutils import Matrix, Vector
 
-from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, STATIC_ASSETS, STATIC_FIXTURE, STATIC_ROCKS, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_scene, build_static_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -2727,8 +2727,16 @@ class TestExport(unittest.TestCase):
 
 
 def _bsn_lines(source):
-    source = re.sub(r"#Mesh\d+/", "#Mesh/", source)
+    source = re.sub(r"#Mesh\d+/", "#Mesh/", source.partition("\n")[2])
     return sorted(re.sub(r"#Material\d+", "#Material", source).splitlines())
+
+
+def _bsn_operator(rust_file, **values):
+    return SimpleNamespace(**{"filepath": str(rust_file), "assets_folder": "", "include_animations": True, **values})
+
+
+def _file_issues(rust_file, **values):
+    return [(issue.level, issue.message) for issue in addon.operator._bsn_issues(_bsn_operator(rust_file, **values), bpy.data.objects) if issue.obj is None]
 
 
 def _modified(folder):
@@ -2823,6 +2831,83 @@ class TestBsnExport(unittest.TestCase):
             bpy.ops.bevy_components.remove(index=list(obj.bevy_component_data.components).index(item))
         self.assertFalse(path.exists())
 
+    def test_crate_roots_block_export(self):
+        project = self.root / "roots"
+        (project / "src").mkdir(parents=True)
+        (project / "Cargo.toml").write_text('[package]\nname = "roots"\nversion = "0.1.0"\n')
+        main = project / "src" / "main.rs"
+        main.write_text("fn main() {}\n")
+        for rust_file in (main, project / "src" / "lib.rs"):
+            self.assertEqual(_file_issues(rust_file), [("ERROR", f"{rust_file.name} is a crate root, so exporting would replace your game's code. Pick a file of its own, such as src/scene.rs")])
+            with self.assertRaises(RuntimeError):
+                export_bsn_scene(rust_file)
+        self.assertEqual(main.read_text(), "fn main() {}\n")
+        self.assertFalse((project / "src" / "lib.rs").exists())
+        self.assertFalse((project / "assets").exists())
+
+    def test_hand_written_and_edited_files_warn(self):
+        folder = self.root / "guarded"
+        rust_file = folder / "src" / "scenes" / "mod.rs"
+        rust_file.parent.mkdir(parents=True)
+        rust_file.write_text("pub mod forest;\n")
+        self.assertEqual(_file_issues(rust_file), [("WARNING", "mod.rs was not written by the BSN export, so exporting replaces the module declarations of its folder")])
+        self.assertEqual(_file_issues(rust_file, again=True), [("ERROR", "mod.rs was not written by the BSN export, so exporting replaces the module declarations of its folder. Export from File > Export > Bevy Scene (BSN) to replace it")])
+        source = export_bsn_scene(rust_file, folder / "assets")
+        self.assertEqual(_file_issues(rust_file), [])
+        rust_file.write_text(source.replace("Visibility\n", "Visibility::Hidden\n", 1))
+        self.assertEqual(_file_issues(rust_file), [("WARNING", "mod.rs was edited since the last export, which replaces those edits")])
+        self.assertEqual(export_bsn_scene(rust_file, folder / "assets"), source)
+        level = rust_file.with_name("level.rs")
+        level.write_text("pub fn spawn_player() {}\n")
+        self.assertEqual(_file_issues(level), [("WARNING", "level.rs was not written by the BSN export, so exporting replaces its code")])
+        level.write_text(" \n")
+        self.assertEqual(_file_issues(level), [])
+
+    def test_files_from_earlier_exports_are_removed(self):
+        folder = self.root / "stale" / "assets"
+        rust_file = self.root / "stale" / "stale.rs"
+        item = next(item for item in bpy.data.objects["ground"].bevy_component_data.components if item.component_type == "LIGHTMAP")
+        renamed = self.root / "stale" / "baked" / "floor_lightmap.ktx2"
+        renamed.parent.mkdir(parents=True)
+        renamed.write_bytes(LIGHTMAP.read_bytes())
+        user_file = folder / "notes.txt"
+        try:
+            export_bsn_scene(rust_file, folder)
+            user_file.write_text("mine")
+            self.assertIn("ground_lightmap.ktx2", [path.name for path in folder.iterdir()])
+            item.probe_file = str(renamed)
+            source = export_bsn_scene(rust_file, folder)
+        finally:
+            item.probe_file = str(LIGHTMAP)
+        self.assertIn('Lightmap { image: "floor_lightmap.ktx2"', source)
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "notes.txt", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
+        record = json.loads(bpy.context.scene.bevy_bsn_export.written_files)
+        self.assertEqual(sorted(record["files"]), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
+        export_bsn_scene(self.root / "stale" / "renamed.rs", folder)
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "notes.txt", "probe_cubemap.ktx2", "renamed.glb", "windmill.glb"])
+
+    def test_library_projects_get_crate_paths(self):
+        project = self.root / "library_game"
+        (project / "src").mkdir(parents=True)
+        (project / "Cargo.toml").write_text('[package]\nname = "my_game"\nversion = "0.1.0"\n')
+        (project / "src" / "lib.rs").write_text("pub mod level;\n")
+        (project / "src" / "main.rs").write_text("fn main() {}\n")
+        self.assertIn("crate::Pickup {", export_bsn_scene(project / "src" / "level.rs"))
+        (project / "src" / "lib.rs").write_text("")
+        (project / "src" / "main.rs").write_text("mod level;\nfn main() {}\n")
+        source = export_bsn_scene(project / "src" / "level.rs")
+        self.assertIn("my_game::Pickup {", source)
+        self.assertNotIn("crate::", source)
+
+    def test_animated_scenes_keep_the_gltf_node_tree(self):
+        gltf = read_gltf(self.assets / "bsn" / "sample_scene.glb")
+        self.assertTrue(gltf["animations"])
+        self.assertEqual(len(gltf["nodes"]), len(read_gltf(FIXTURE)["nodes"]))
+        export_bsn_scene(self.root / "still" / "still.rs", self.root / "still" / "assets", include_animations=False)
+        gltf = read_gltf(self.root / "still" / "assets" / "still.glb")
+        self.assertEqual([key for key in ("animations", "nodes", "scenes", "scene") if key in gltf], [])
+        self.assertEqual(len(gltf["meshes"]), len(read_gltf(self.assets / "bsn" / "sample_scene.glb")["meshes"]))
+
     def test_dialog_shows_where_the_game_loads_the_scene(self):
         properties = bpy.ops.export_scene.bevy_components_bsn.get_rna_type()
         operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, filepath=str(self.rust_file), assets_folder=str(self.assets / "bsn"), prefab_functions=True, texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=True)
@@ -2832,6 +2917,43 @@ class TestBsnExport(unittest.TestCase):
         operator = SimpleNamespace(**{**vars(operator), "layout": FakeLayout(self), "assets_folder": str(self.root / "loose")})
         addon.operator.BEVY_OT_export_bsn.draw(operator, bpy.context)
         self.assertIn("loose is not inside an assets folder", " ".join(operator.layout.texts()))
+        operator = SimpleNamespace(**{**vars(operator), "layout": FakeLayout(self), "filepath": str(self.root / "src" / "main.rs")})
+        addon.operator.BEVY_OT_export_bsn.draw(operator, bpy.context)
+        self.assertIn("main.rs is a crate root", " ".join(operator.layout.texts()))
+
+
+class TestStaticBsnScene(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = tempfile.TemporaryDirectory()
+        cls.root = Path(cls.directory.name)
+        build_static_scene()
+        cls.assets = cls.root / "tests" / "assets" / "bsn_static"
+        cls.source = export_bsn_scene(cls.root / "tests" / "bsn" / "static_scene.rs", cls.assets)
+        cls.gltf = read_gltf(cls.assets / "static_scene.glb")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.directory.cleanup()
+
+    def test_fixture_is_current(self):
+        message = "importer/tests/bsn/static_scene.rs is out of date, run tests/blender/sample_scene.py to regenerate it"
+        self.assertTrue(STATIC_FIXTURE.is_file(), f"Missing {STATIC_FIXTURE}, run tests/blender/sample_scene.py to create it")
+        self.assertEqual(_bsn_lines(STATIC_FIXTURE.read_text(encoding="utf-8")), _bsn_lines(self.source), message)
+        fixture = read_gltf(STATIC_ASSETS / "static_scene.glb")
+        self.assertEqual([(node.get("scale"), fixture["meshes"][node["mesh"]]["name"]) for node in fixture["nodes"]], [(node.get("scale"), self.gltf["meshes"][node["mesh"]]["name"]) for node in self.gltf["nodes"]], message)
+        self.assertEqual(sorted(path.name for path in STATIC_ASSETS.iterdir()), sorted(path.name for path in self.assets.iterdir()), message)
+
+    def test_only_mirrored_meshes_keep_a_node(self):
+        self.assertEqual([(node.get("scale"), self.gltf["meshes"][node["mesh"]]["name"]) for node in self.gltf["nodes"]], [([-1.0, 1.0, 1.0], "statue")])
+        self.assertEqual(self.gltf["scenes"], [{"nodes": [0]}])
+        self.assertIn('MeshMaterial3d::<StandardMaterial>("bsn_static/static_scene.glb#Material0 (inverted)/std")', self.source)
+        self.assertFalse(self.gltf["materials"][0].get("doubleSided", False))
+
+    def test_long_children_lists_become_list_functions(self):
+        self.assertIn("            Children [\n                {children_1()}\n                --\n                {children_2()}\n            ]", self.source)
+        self.assertIn("fn children_2() -> impl SceneList {\n    return bsn_list! {\n", self.source)
+        self.assertEqual(self.source.count('Name("rock.'), STATIC_ROCKS)
 
 
 def _fake_blender(directory):

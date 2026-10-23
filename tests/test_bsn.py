@@ -34,8 +34,13 @@ def source(gltf, glb="scenes/level.glb", name="level", **options):
     return bsn.scene_source(gltf, glb, name, **options)
 
 
+def body(gltf, **options):
+    text, _warnings = source(gltf, **options)
+    return text.partition("\n")[2]
+
+
 def function(text, name):
-    start = text.index(f"fn {name}() -> impl Scene {{")
+    start = text.index(f"fn {name}() -> impl Scene")
     return text[start:text.index("\n}\n", start)]
 
 
@@ -152,19 +157,18 @@ class TestScene(unittest.TestCase):
     def test_plain_scene_needs_only_the_prelude(self):
         text, warnings = source(scene(node("marker"), meshes=0), name="Empty Level")
         self.assertEqual(warnings, [])
-        self.assertTrue(text.startswith("use bevy::prelude::*;\n\npub fn setup() -> impl Scene {\n    return bsn! {\n        #empty_level\n        Transform\n        Visibility\n"))
+        self.assertTrue(text.partition("\n")[2].startswith("use bevy::prelude::*;\n\npub fn setup() -> impl Scene {\n    return bsn! {\n        #empty_level\n        Transform\n        Visibility\n"))
         self.assertNotIn("preload", text)
 
     def test_meshes_preload_the_glb(self):
         text, _warnings = source(scene(node("rock", mesh=0)))
-        self.assertTrue(text.startswith("use bevy::{gltf::Gltf, prelude::*, scene::{ResolveContext, ResolveSceneError, ResolvedScene, SceneDependencies}};\n"))
+        self.assertTrue(text.partition("\n")[2].startswith("use bevy::{gltf::Gltf, prelude::*, scene::{ResolveContext, ResolveSceneError, ResolvedScene, SceneDependencies}};\n"))
         self.assertIn('@preload("scenes/level.glb")', function(text, "setup"))
         self.assertIn("dependencies.register::<Gltf>(self.0.into());", text)
         self.assertNotIn("avian3d", text)
 
     def test_physics_imports_avian(self):
-        text, _warnings = source(scene(node("rock", BODY, mesh=0)))
-        self.assertTrue(text.startswith("use avian3d::prelude::*;\nuse bevy::"))
+        self.assertTrue(body(scene(node("rock", BODY, mesh=0))).startswith("use avian3d::prelude::*;\nuse bevy::"))
 
     def test_primitives_and_materials(self):
         gltf = {"nodes": [node("statue", mesh=0, scale=[-1, 1, 1])], "scenes": [{"nodes": [0]}], "meshes": [{"primitives": [{"attributes": {}}, {"attributes": {}, "material": 2}]}]}
@@ -214,6 +218,44 @@ class TestScene(unittest.TestCase):
         self.assertIn("@joint(#frame, #door, |body1, body2| RevoluteJoint::new(body1, body2).with_local_frame1(Isometry3d::new(Vec3::new(0.5, 0.0, 0.0), Quat::from_xyzw(0.0, 0.0, 0.0, 1.0))).with_local_frame2(Isometry3d::new(Vec3::new(-0.5, 0.0, 0.0), Quat::from_xyzw(0.0, 0.0, 0.0, 1.0))).with_hinge_axis(Vec3::new(0.0, 1.0, 0.0)))", text)
         self.assertIn("fn joint<J: Component + Clone>", text)
 
+    def test_long_lists_move_into_list_functions(self):
+        joint = {"type": "joint", "kind": "fixed", "body1": "frame", "body2": "door"}
+        nodes = [node(f"rock_{index}", mesh=0) for index in range(600)]
+        nodes[100:100] = [node("frame", BODY), node("door", BODY), node("hinge", [joint])]
+        text, warnings = source(scene(*nodes))
+        self.assertEqual(warnings, [])
+        setup = function(text, "setup")
+        self.assertEqual([line.strip() for line in setup.splitlines() if line.strip().startswith(("{", "#", "Name("))], ["#level", "{children_1()}", "#frame", "#door", "#hinge", "Name(\"hinge joint\")", "{children_2()}", "{children_3()}"])
+        self.assertIn("@joint(#frame, #door,", setup)
+        self.assertEqual([function(text, f"children_{number}").count("#rock_") for number in range(1, 4)], [100, 256, 244])
+        self.assertIn("fn children_1() -> impl SceneList {\n    return bsn_list! {\n        #rock_0\n", text)
+        self.assertIn("        #rock_99\n        Transform\n        Visibility\n        Mesh3d(\"scenes/level.glb#Mesh0/Primitive0\")\n        MeshMaterial3d::<StandardMaterial>(\"scenes/level.glb#Material0/std\")\n    };\n}", text)
+
+    def test_short_lists_stay_inline(self):
+        text, _warnings = source(scene(*(node(f"rock_{index}", mesh=0) for index in range(256))))
+        self.assertNotIn("children_", text)
+        self.assertNotIn("SceneList", text)
+
+
+class TestSceneGraph(unittest.TestCase):
+    def test_unanimated_scenes_drop_their_nodes(self):
+        gltf = scene(node("rock", mesh=0), node("house", children=[2]), node("chimney", mesh=0))
+        self.assertTrue(bsn.drop_scenes(gltf))
+        self.assertEqual(sorted(gltf), ["meshes"])
+
+    def test_mirrored_meshes_keep_a_node_for_their_inverted_materials(self):
+        gltf = scene(node("statue", mesh=1, scale=[-1, 1, 1]), node("mirror", children=[2, 3], scale=[1, -1, 1]), node("flipped_back", mesh=0, scale=[1, 1, -1]), node("lamp", mesh=2), meshes=3)
+        self.assertTrue(bsn.drop_scenes(gltf))
+        self.assertEqual(gltf["nodes"], [{"mesh": 1, "scale": [-1.0, 1.0, 1.0]}, {"mesh": 2, "scale": [-1.0, 1.0, 1.0]}])
+        self.assertEqual((gltf["scenes"], gltf["scene"]), ([{"nodes": [0, 1]}], 0))
+
+    def test_animated_and_skinned_scenes_keep_their_nodes(self):
+        for extra in ({"animations": [{"name": "spin", "channels": []}]}, {"skins": [{"joints": [0]}]}):
+            gltf = scene(node("rock", mesh=0), **extra)
+            before = json.dumps(gltf)
+            self.assertFalse(bsn.drop_scenes(gltf))
+            self.assertEqual(json.dumps(gltf), before)
+
 
 class TestPaths(unittest.TestCase):
     def setUp(self):
@@ -231,18 +273,82 @@ class TestPaths(unittest.TestCase):
             (folder / "src" / "lib.rs").write_text("")
         return folder
 
+    def write(self, path, text=""):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        return path
+
     def test_cargo_projects(self):
         project = self.project()
         self.assertEqual(bsn.cargo_project(project / "src" / "scenes" / "level.rs"), project)
         self.assertIsNone(bsn.cargo_project(self.root / "loose" / "level.rs"))
-        self.assertEqual(bsn.binary_crate(project), "my_game")
-        self.assertIsNone(bsn.binary_crate(self.project("with_lib", library=True)))
-        self.assertIsNone(bsn.binary_crate(self.project("named_lib", manifest='\n[lib]\npath = "src/game.rs"\n')))
-        self.assertIsNone(bsn.binary_crate(None))
+        self.assertEqual(bsn.module_crate(project / "src" / "level.rs"), "my_game")
+        self.assertIsNone(bsn.module_crate(self.root / "loose" / "level.rs"))
         broken = self.root / "broken"
         broken.mkdir()
         (broken / "Cargo.toml").write_text("[package")
-        self.assertIsNone(bsn.binary_crate(broken))
+        self.assertIsNone(bsn.module_crate(broken / "src" / "level.rs"))
+
+    def test_scenes_under_a_library_use_crate_paths(self):
+        project = self.project(library=True)
+        self.write(project / "src" / "main.rs", "fn main() {}\n")
+        level = project / "src" / "level.rs"
+        self.assertEqual(bsn.module_crate(level), "my_game")
+        self.write(project / "src" / "lib.rs", "pub mod level;\n")
+        self.assertEqual(bsn.module_crate(level), "my_game")
+        self.write(project / "src" / "lib.rs", "")
+        self.write(project / "src" / "main.rs", "// mod level;\n#[cfg(feature = \"x\")]\npub(crate) mod level;\nfn main() {}\n")
+        self.assertIsNone(bsn.module_crate(level))
+        self.write(project / "src" / "main.rs", "mod scenes;\nfn main() {}\n")
+        self.write(project / "src" / "scenes" / "mod.rs", "pub mod forest;\n")
+        self.assertIsNone(bsn.module_crate(project / "src" / "scenes" / "forest.rs"))
+        self.assertEqual(bsn.module_crate(project / "src" / "scenes" / "desert.rs"), "my_game")
+        self.write(project / "src" / "lib.rs", "pub mod scenes {\n    pub mod desert;\n}\n")
+        self.assertEqual(bsn.module_crate(project / "src" / "scenes" / "desert.rs"), "my_game")
+
+    def test_named_libraries_and_binaries(self):
+        project = self.project("game", manifest='\n[lib]\nname = "game_core"\npath = "src/core.rs"\n\n[[bin]]\nname = "editor"\npath = "src/editor.rs"\n')
+        self.write(project / "src" / "core.rs")
+        self.write(project / "src" / "editor.rs", "mod level;\nfn main() {}\n")
+        self.assertEqual(bsn.module_crate(project / "src" / "level.rs"), "editor")
+        self.assertEqual(bsn.module_crate(project / "src" / "other.rs"), "game_core")
+        self.assertEqual([(target.name, target.path.name, target.library) for target in bsn.crate_targets(project)], [("game_core", "core.rs", True), ("editor", "editor.rs", False)])
+        self.write(project / "src" / "bin" / "tool.rs", "fn main() {}\n")
+        self.assertEqual(bsn.crate_targets(project)[-1].name, "tool")
+
+    def test_crate_roots(self):
+        project = self.project(manifest='\n[[bin]]\nname = "editor"\npath = "tools/editor.rs"\n')
+        self.write(project / "src" / "main.rs")
+        self.write(project / "tools" / "editor.rs")
+        self.write(project / "src" / "bin" / "tool.rs")
+        self.write(project / "build.rs")
+        for path in (project / "src" / "main.rs", project / "src" / "lib.rs", project / "tools" / "editor.rs", project / "src" / "bin" / "tool.rs", project / "build.rs", self.root / "loose" / "Main.rs"):
+            self.assertTrue(bsn.crate_root(path), path)
+        for path in (project / "src" / "level.rs", project / "src" / "scenes" / "mod.rs", project / "src" / "build.rs", self.root / "loose" / "level.rs"):
+            self.assertFalse(bsn.crate_root(path), path)
+
+    def test_generated_files_carry_a_checksum(self):
+        text, _warnings = source(scene(node("rock", BODY, mesh=0)))
+        self.assertTrue(text.startswith("// @generated by the Bevy Components BSN export, which replaces this file (checksum "))
+        self.assertEqual(bsn.file_state(text), "generated")
+        formatted = text.replace("use bevy::{gltf::Gltf, prelude::*, scene::{", "use bevy::{\n    gltf::Gltf,\n    prelude::*,\n    scene::{\n        ").replace("fn resolve(self, _context", "fn resolve(\n        self,\n        _context").replace("Result<(), ResolveSceneError> {", "Result<(), ResolveSceneError>,\n    {").replace("\n", "\r\n")
+        self.assertEqual(bsn.file_state(formatted), "generated")
+        self.assertEqual(bsn.file_state(text.replace("RigidBody::Dynamic", "RigidBody::Static")), "edited")
+        self.assertEqual(bsn.file_state(text + "\n// my notes\n"), "edited")
+        self.assertEqual(bsn.file_state(text.partition("\n")[2]), "foreign")
+        self.assertEqual(bsn.file_state("mod level;\n"), "foreign")
+        self.assertIsNone(bsn.file_state(" \n"))
+
+    def test_stale_files_are_removed(self):
+        folder = self.root / "assets" / "level"
+        files = {name: self.write(folder / name, name) for name in ("level.glb", "old_lightmap.ktx2", "replaced.ktx2", "kept.ktx2")}
+        outside = self.write(self.root / "assets" / "other.glb", "../other.glb")
+        previous = {name: bsn.digest(name.encode()) for name in (*files, "missing.ktx2", "../other.glb")}
+        files["replaced.ktx2"].write_text("the user's own file")
+        removed = bsn.remove_stale(previous, folder, {"level.glb": "", "kept.ktx2": ""})
+        self.assertEqual(removed, ["old_lightmap.ktx2"])
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["kept.ktx2", "level.glb", "replaced.ktx2"])
+        self.assertTrue(outside.is_file())
 
     def test_assets_folders(self):
         project = self.project()
