@@ -1,19 +1,21 @@
 use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionLayers, Friction, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
-use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
+use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, ecs::reflect::ReflectCommandExt, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 use std::iter;
-use crate::{component::*, data::*, joint::*, light, lightmap, texture::GltfTextures};
+use crate::{component::*, custom, data::*, joint::*, light, lightmap, texture::GltfTextures};
 
 const MAX_CUBEMAP_SIZE: u32 = 8192;
 const CUBE_FACES: u32 = 6;
 
-pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>, Option<&GltfTextures>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>) {
+pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>, Option<&GltfTextures>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>, registry: Res<AppTypeRegistry>) {
+    let registry = registry.read();
     for (entity, extras, name, textures) in &nodes {
         commands.entity(entity).insert(DecodedGltfExtras);
         let Some(exported) = decode_extras(&extras.value, name) else { continue; };
 
         let mut components = ImportedComponents::default();
         let mut custom = BlenderCustomComponents::default();
+        let mut reflected = Vec::new();
         let mut rigid_body = None;
         let mut audio = None;
         let mut joint = None;
@@ -98,7 +100,10 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     }
                 }
                 ExportedComponent::AmbientLight(_) => warn!("Ambient light belongs on the scene, not on {:?}", name),
-                ExportedComponent::Custom { type_path, data } => custom.0.push(BlenderCustomComponent { type_path, data }),
+                ExportedComponent::Custom { type_path, data } => match custom::reflected_component(&registry, &type_path, &data, name) {
+                    Some(component) => reflected.push(component),
+                    None => custom.0.push(BlenderCustomComponent { type_path, data }),
+                },
                 ExportedComponent::SceneReference { path, scene } => reference = Some(PendingSceneReference { path, scene }),
                 ExportedComponent::Animation { clip, repeat, speed } => animation = Some(PendingAnimation(AnimationSpec { clip, repeat, speed })),
                 ExportedComponent::FogVolume { size, color, density, absorption, scattering, anisotropy, light_tint, light_intensity } => {
@@ -139,6 +144,9 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         commands.entity(entity).insert(components);
         if !custom.0.is_empty() {
             commands.entity(entity).insert(custom);
+        }
+        for component in reflected {
+            commands.entity(entity).insert_reflect(component);
         }
         if let Some(audio) = audio {
             commands.entity(entity).insert(audio);

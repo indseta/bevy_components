@@ -1015,9 +1015,7 @@ class _Generator:
             power = settings.get("intensity") if settings is not None and settings.get("intensity") is not None else intensity * 4 * math.pi
             fields.append(f"intensity: {_float(power)}")
             fields.append(f"range: {_float(light.get('range', LIGHT_RANGE))}")
-            radius = light.get("range", 0.0) if kind == "spot" else 0.0
-            if settings is not None and settings.get("radius") is not None:
-                radius = settings["radius"]
+            radius = settings.get("radius") if settings is not None and settings.get("radius") is not None else 0.0
             fields.append(f"radius: {_float(radius)}")
             if kind == "spot":
                 spot = light.get("spot", {})

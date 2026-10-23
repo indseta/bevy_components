@@ -176,11 +176,12 @@ class TestScene(unittest.TestCase):
         self.assertIn("#house\n            Transform { translation: Vec3::new(0.0, 0.0, 5.0) }\n            Visibility\n            Children [\n                #chimney\n                Transform { translation: Vec3::new(0.0, 3.0, 0.0) }", text)
 
     def test_lights_follow_the_gltf_loader(self):
-        lights = [{"type": "point", "intensity": 10.0, "range": 5.0}, {"type": "spot", "color": [1.0, 0.5, 0.25], "intensity": 1.0, "spot": {"innerConeAngle": 0.1, "outerConeAngle": 0.5}}, {"type": "directional", "intensity": 3.0}]
-        gltf = scene(node("lamp", extensions={"KHR_lights_punctual": {"light": 0}}), node("spot", [{"type": "light", "shadows": True}], extensions={"KHR_lights_punctual": {"light": 1}}), node("sun", extensions={"KHR_lights_punctual": {"light": 2}}), meshes=0, extensions={"KHR_lights_punctual": {"lights": lights}})
+        lights = [{"type": "point", "intensity": 10.0, "range": 5.0}, {"type": "spot", "color": [1.0, 0.5, 0.25], "intensity": 1.0, "spot": {"innerConeAngle": 0.1, "outerConeAngle": 0.5}}, {"type": "directional", "intensity": 3.0}, {"type": "spot", "intensity": 1.0, "range": 8.0, "spot": {"innerConeAngle": 0.2, "outerConeAngle": 0.6}}]
+        gltf = scene(node("lamp", extensions={"KHR_lights_punctual": {"light": 0}}), node("spot", [{"type": "light", "shadows": True}], extensions={"KHR_lights_punctual": {"light": 1}}), node("sun", extensions={"KHR_lights_punctual": {"light": 2}}), node("ranged_spot", extensions={"KHR_lights_punctual": {"light": 3}}), meshes=0, extensions={"KHR_lights_punctual": {"lights": lights}})
         text, _warnings = source(gltf)
         self.assertIn("PointLight { color: Color::srgb(1.0, 1.0, 1.0), intensity: 125.663704, range: 5.0, radius: 0.0 }", text)
         self.assertIn("SpotLight { color: Color::srgb(1.0, 0.5, 0.25), intensity: 12.566371, range: 20.0, radius: 0.0, inner_angle: 0.1, outer_angle: 0.5, shadow_maps_enabled: true }", text)
+        self.assertIn("SpotLight { color: Color::srgb(1.0, 1.0, 1.0), intensity: 12.566371, range: 8.0, radius: 0.0, inner_angle: 0.2, outer_angle: 0.6 }", text)
         self.assertIn("DirectionalLight { color: Color::srgb(1.0, 1.0, 1.0), illuminance: 3.0 }", text)
 
     def test_scene_references(self):

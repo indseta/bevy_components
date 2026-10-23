@@ -18,6 +18,40 @@ struct Pickup {
     glow: Color,
 }
 
+mod stats {
+    use bevy::prelude::*;
+
+    #[derive(Component, Reflect, Debug, PartialEq)]
+    #[reflect(Component, Default)]
+    pub struct Health {
+        pub current: f32,
+        pub maximum: f32,
+    }
+
+    impl Default for Health {
+        fn default() -> Self {
+            return Health { current: 100.0, maximum: 100.0 };
+        }
+    }
+
+    #[derive(Component, Reflect, Debug, PartialEq)]
+    #[reflect(Component)]
+    pub struct Armor(pub i32);
+
+    #[derive(Component, Reflect, Debug, PartialEq)]
+    #[reflect(Component)]
+    pub struct Loot {
+        pub item: String,
+        pub tint: Color,
+        pub offset: Vec3,
+    }
+
+    #[derive(Component, Reflect, Debug, PartialEq)]
+    pub struct Unmarked {
+        pub value: f32,
+    }
+}
+
 fn node(world: &mut World, name: &str) -> Entity {
     let mut nodes = world.query_filtered::<(Entity, &Name), Without<Mesh3d>>();
     return nodes.iter(world).find(|(_, node_name)| node_name.as_str() == name).map(|(entity, _)| entity).unwrap_or_else(|| panic!("No node named {name}"));
@@ -55,7 +89,7 @@ fn light_entity(world: &mut World, name: &str) -> Entity {
     return children.iter().find(|child| world.get::<PointLight>(*child).is_some() || world.get::<SpotLight>(*child).is_some() || world.get::<DirectionalLight>(*child).is_some()).unwrap_or_else(|| panic!("{name} has no glTF light"));
 }
 
-fn light_extras(components: Value) -> GltfExtras {
+fn component_extras(components: Value) -> GltfExtras {
     return GltfExtras { value: json!({"bevy_components": json!({"version": 1, "components": components}).to_string()}).to_string() };
 }
 
@@ -250,6 +284,62 @@ fn custom_component_fields_deserialize_into_rust_types() {
 }
 
 #[test]
+fn registered_custom_components_are_inserted() {
+    let mut app = SceneApp::default().build();
+    let hero = json!([{"type": "custom", "type_path": "sample_scene::Health", "data": {"current": 5}}, {"type": "custom", "type_path": "sample_scene::stats::Armor", "data": 3}, {"type": "custom", "type_path": "sample_scene::stats::Loot", "data": {"item": "coin", "tint": {"Srgba": {"red": 1.0, "green": 0.8, "blue": 0.2, "alpha": 1.0}}, "offset": [0.0, 1.5, 0.0]}}, {"type": "custom", "type_path": "my_game::Unknown", "data": {"level": 2}}]);
+    let villain = json!([{"type": "custom", "type_path": "sample_scene::stats::Health", "data": {"current": 5, "shield": 2}}, {"type": "custom", "type_path": "sample_scene::stats::Loot", "data": {"item": "coin"}}, {"type": "custom", "type_path": "sample_scene::stats::Unmarked", "data": {"value": 1.0}}, {"type": "custom", "type_path": "other_game::Health", "data": {"current": 1}}]);
+    let world = app.world_mut();
+    let hero = world.spawn((Name::new("hero"), Transform::default(), component_extras(hero))).id();
+    let villain = world.spawn((Name::new("villain"), Transform::default(), component_extras(villain))).id();
+    app.update();
+    let world = app.world();
+    assert_eq!(world.get::<stats::Health>(hero), Some(&stats::Health { current: 5.0, maximum: 100.0 }));
+    assert_eq!(world.get::<stats::Armor>(hero), Some(&stats::Armor(3)));
+    assert_eq!(world.get::<stats::Loot>(hero), Some(&stats::Loot { item: "coin".to_string(), tint: Color::srgba(1.0, 0.8, 0.2, 1.0), offset: Vec3::new(0.0, 1.5, 0.0) }));
+    let kept = |entity: Entity| world.get::<BlenderCustomComponents>(entity).map(|custom| custom.0.iter().map(|component| component.type_path.clone()).collect::<Vec<_>>());
+    assert_eq!(kept(hero), Some(vec!["my_game::Unknown".to_string()]));
+    assert!(world.get::<stats::Health>(villain).is_none());
+    assert!(world.get::<stats::Loot>(villain).is_none());
+    assert!(world.get::<stats::Unmarked>(villain).is_none());
+    assert_eq!(kept(villain), Some(vec!["sample_scene::stats::Health".to_string(), "sample_scene::stats::Loot".to_string(), "sample_scene::stats::Unmarked".to_string(), "other_game::Health".to_string()]));
+}
+
+#[test]
+fn components_are_ready_on_the_first_frame() {
+    let mut app = SceneApp::default().build();
+    let _gltf = load_gltf(&mut app, SCENE).unwrap_or_else(|error| panic!("{SCENE} did not load: {error}"));
+    let scene: Handle<WorldAsset> = app.world().resource::<AssetServer>().load(format!("{SCENE}#Scene0"));
+    app.world_mut().spawn(WorldAssetRoot(scene));
+    app.update();
+    let world = app.world_mut();
+    assert_eq!(world.resource::<ReadyInstances>().0, 1);
+    let crate_node = node(world, "crate");
+    assert_eq!(world.get::<RigidBody>(crate_node), Some(&RigidBody::Dynamic));
+    assert!(world.get::<Collider>(crate_node).is_some());
+    for crate_mesh in meshes(world, "crate") {
+        assert!(world.get::<VisibilityRange>(crate_mesh).is_some());
+    }
+    assert!(mesh_collider(world, "ground").shape().as_trimesh().is_some());
+    let water = mesh(world, "water");
+    assert!(world.get::<NotShadowCaster>(water).is_some());
+    let ground = mesh(world, "ground");
+    assert!(world.get::<Lightmap>(ground).is_some());
+    let lamp = light_entity(world, "lamp_light");
+    assert!(world.get::<PointLight>(lamp).is_some_and(|point| point.shadow_maps_enabled));
+    assert_eq!(world.resource::<GlobalAmbientLight>().brightness, 120.0);
+}
+
+#[test]
+fn spot_lights_get_a_radius_only_from_light_settings() {
+    let mut app = load_scene("spot_lights.gltf");
+    let world = app.world_mut();
+    let plain = light_entity(world, "plain_spot");
+    assert_eq!(world.get::<SpotLight>(plain).map(|spot| (spot.range, spot.radius)), Some((12.0, 0.0)));
+    let set = light_entity(world, "set_spot");
+    assert_eq!(world.get::<SpotLight>(set).map(|spot| (spot.range, spot.radius)), Some((12.0, 0.3)));
+}
+
+#[test]
 fn only_component_data_is_exported() {
     let mut app = load_scene(SCENE);
     let world = app.world_mut();
@@ -332,7 +422,7 @@ fn shared_exponent_texel(image: &Image, x: usize, y: usize) -> Vec3 {
 }
 
 fn lightmap_extras(texture: Value) -> GltfExtras {
-    return light_extras(json!([{"type": "lightmap", "bicubic": false, "texture": texture}]));
+    return component_extras(json!([{"type": "lightmap", "bicubic": false, "texture": texture}]));
 }
 
 #[test]
@@ -966,9 +1056,9 @@ fn invalid_light_settings_are_skipped() {
     let mut app = SceneApp::default().build();
     let light = json!({"type": "light", "kind": "directional", "shadows": true, "contact_shadows": false, "volumetric": false, "baked": true, "cascades": {"count": 3, "minimum_distance": 10.0, "first_cascade_far_bound": 5.0, "maximum_distance": 100.0, "overlap_proportion": 0.2}});
     let world = app.world_mut();
-    let sun = world.spawn((Name::new("bad_cascades"), Transform::default(), light_extras(json!([light])))).with_child(DirectionalLight::default()).id();
-    let candle = world.spawn((Name::new("candle"), Transform::default(), light_extras(json!([{"type": "light", "kind": "candle", "shadows": true, "contact_shadows": false, "volumetric": false, "baked": false}])))).with_child(PointLight::default()).id();
-    let lonely = world.spawn((Name::new("lonely"), Transform::default(), light_extras(json!([{"type": "light", "kind": "point", "shadows": true, "contact_shadows": false, "volumetric": true, "baked": false}, {"type": "ambient_light", "color": [1.0, 0.0, 0.0], "brightness": 5.0, "baked": false}])))).id();
+    let sun = world.spawn((Name::new("bad_cascades"), Transform::default(), component_extras(json!([light])))).with_child(DirectionalLight::default()).id();
+    let candle = world.spawn((Name::new("candle"), Transform::default(), component_extras(json!([{"type": "light", "kind": "candle", "shadows": true, "contact_shadows": false, "volumetric": false, "baked": false}])))).with_child(PointLight::default()).id();
+    let lonely = world.spawn((Name::new("lonely"), Transform::default(), component_extras(json!([{"type": "light", "kind": "point", "shadows": true, "contact_shadows": false, "volumetric": true, "baked": false}, {"type": "ambient_light", "color": [1.0, 0.0, 0.0], "brightness": 5.0, "baked": false}])))).id();
     for _ in 0..3 {
         app.update();
     }

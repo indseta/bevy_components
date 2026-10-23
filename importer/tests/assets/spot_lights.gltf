@@ -1,0 +1,67 @@
+{
+    "asset": {
+        "version": "2.0"
+    },
+    "extensionsUsed": [
+        "KHR_lights_punctual"
+    ],
+    "extensions": {
+        "KHR_lights_punctual": {
+            "lights": [
+                {
+                    "name": "plain_spot",
+                    "type": "spot",
+                    "intensity": 10.0,
+                    "range": 12.0,
+                    "spot": {
+                        "innerConeAngle": 0.2,
+                        "outerConeAngle": 0.6
+                    }
+                },
+                {
+                    "name": "set_spot",
+                    "type": "spot",
+                    "intensity": 10.0,
+                    "range": 12.0,
+                    "spot": {
+                        "innerConeAngle": 0.2,
+                        "outerConeAngle": 0.6
+                    }
+                }
+            ]
+        }
+    },
+    "nodes": [
+        {
+            "name": "plain_spot",
+            "extras": {
+                "note": "no Bevy components"
+            },
+            "extensions": {
+                "KHR_lights_punctual": {
+                    "light": 0
+                }
+            }
+        },
+        {
+            "name": "set_spot",
+            "extras": {
+                "bevy_components": "{\"version\":1,\"components\":[{\"type\":\"light\",\"kind\":\"spot\",\"radius\":0.3,\"shadows\":false,\"contact_shadows\":false,\"volumetric\":false,\"baked\":false}]}"
+            },
+            "extensions": {
+                "KHR_lights_punctual": {
+                    "light": 1
+                }
+            }
+        }
+    ],
+    "scenes": [
+        {
+            "nodes": [
+                0,
+                1
+            ]
+        }
+    ],
+    "scene": 0
+}

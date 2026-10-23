@@ -15,7 +15,9 @@ const ROOT: &str = "sample_scene";
 const BSN_SCENE: &str = "bsn/sample_scene.glb";
 const DECIMALS: usize = 4;
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Reflect, Clone, Default)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
 pub struct Pickup {
     pub item: String,
     pub amount: i32,
@@ -25,25 +27,35 @@ pub struct Pickup {
     pub glow: Color,
 }
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Reflect, Clone, Default)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
 pub struct Wave {
     pub count: i32,
     pub delay: f32,
 }
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Reflect, Clone, Default)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
 pub struct PlayerSpawn;
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Reflect, Clone, Default)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
 pub struct EnemySpawn;
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Reflect, Clone, Default)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
 pub struct Glow {
     pub color: Vec3,
     pub label: String,
 }
 
-#[derive(Component, Clone, Default)]
+#[derive(Component, Reflect, Clone, Default)]
+#[reflect(Component, Default)]
+#[type_path = "my_game"]
 pub struct Flicker(pub f32);
 
 struct Tree {

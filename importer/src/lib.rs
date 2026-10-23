@@ -1,4 +1,5 @@
 mod component;
+mod custom;
 mod data;
 mod extension;
 mod joint;
@@ -7,7 +8,7 @@ mod lightmap;
 mod system;
 mod texture;
 
-use bevy::{gltf::extensions::GltfExtensionHandlers, prelude::*};
+use bevy::{app::SceneSpawnerSystems, gltf::extensions::GltfExtensionHandlers, prelude::*};
 
 pub use component::{BlenderCustomComponent, BlenderCustomComponents};
 pub use texture::GltfTextures;
@@ -18,8 +19,8 @@ impl Plugin for BlenderBevyComponentsPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((texture::TexturePlugin, light::LightingPlugin, lightmap::LightmapPlugin));
         app.register_type::<component::SceneAnimations>();
-        app.add_systems(Update, (system::read_gltf_components, system::apply_default_bodies, system::build_joints, system::spawn_scene_references, system::play_animations, system::apply_mesh_components, system::build_colliders).chain());
-        app.add_systems(Update, system::apply_reflection_probes.after(system::read_gltf_components));
+        app.add_systems(SpawnScene, (system::read_gltf_components, system::apply_default_bodies, system::build_joints, system::spawn_scene_references, system::play_animations, system::apply_mesh_components, system::build_colliders).chain().after(SceneSpawnerSystems::WorldInstanceSpawn));
+        app.add_systems(SpawnScene, system::apply_reflection_probes.after(system::read_gltf_components));
     }
 
     fn finish(&self, app: &mut App) {

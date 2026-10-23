@@ -86,7 +86,7 @@ A **Custom Component** carries any of your game's components as a Rust type path
 
 **Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values.
 
-The fields export as the JSON object that serde reads into a struct with the same field names, so `serde_json::from_value` turns the data into your component:
+The importer inserts the component itself when your type derives `Reflect` with `#[reflect(Component)]`, found by its type path or by crate and type name, so `my_game::Health` also finds `my_game::stats::Health`. Add `#[reflect(Default)]` to fill in fields the data leaves out. Other types arrive as JSON in `BlenderCustomComponents`, which `serde_json::from_value` reads into a struct with the same field names. Either way, the fields map to these Rust types:
 
 | Field | Rust type |
 | --- | --- |
