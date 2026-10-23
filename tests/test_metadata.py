@@ -127,6 +127,24 @@ class TestMetadata(unittest.TestCase):
         with self.assertRaises(ValueError):
             metadata.serialize_items([component])
 
+    def test_scene_reference(self):
+        component = item(component_type="SCENE_REFERENCE", scene_file="props\\windmill.glb", scene_index=2)
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "scene_reference", "path": "props/windmill.glb", "scene": 2})
+        located = json.loads(metadata.serialize_items([component], lambda path: f"located/{path}"))["components"][0]
+        self.assertEqual(located["path"], "located/props\\windmill.glb")
+        self.assertEqual(metadata.validate_items([component]), [])
+        component.scene_file = " "
+        self.assertEqual(metadata.validate_items([component], "mill"), ["mill: Scene Reference needs a glTF file"])
+
+    def test_relative_path(self):
+        self.assertEqual(metadata.relative_path("/game/assets/props/windmill.glb", "/game/assets/levels"), "../props/windmill.glb")
+        self.assertEqual(metadata.relative_path("/game/assets/levels/house.glb", "/game/assets/levels"), "house.glb")
+
+    def test_animation(self):
+        component = item(component_type="ANIMATION", animation_clip="door_open", animation_loop=False, animation_speed=0.30000001192092896)
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "animation", "clip": "door_open", "repeat": False, "speed": 0.3})
+        self.assertEqual(metadata.validate_items([component]), [])
+
     def test_component_errors_leave_out_the_object_name(self):
         component = item(component_type="CUSTOM", custom_type=" ", custom_json="oops", use_fields=False)
         self.assertEqual(metadata.component_errors(component), ["Custom Component needs a Rust type path", "invalid JSON in Custom Component"])

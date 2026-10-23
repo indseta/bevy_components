@@ -67,6 +67,15 @@ pub enum ExportedComponent {
         type_path: String,
         data: Value,
     },
+    SceneReference {
+        path: String,
+        scene: usize,
+    },
+    Animation {
+        clip: String,
+        repeat: bool,
+        speed: f32,
+    },
     #[serde(other)]
     Unsupported,
 }

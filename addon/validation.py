@@ -1,14 +1,16 @@
+import os
 import re
 import textwrap
 from collections import namedtuple
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from .metadata import EXTRAS_KEY, component_errors, visibility_range_problems
 from .property import AUDIO_FORMATS
-from .system import MESH_TYPES, children_map, component_of, components_for, has_faces, inherited, mesh_sources, subtree
+from .reference import SCENE_EXTENSIONS, read_scenes
+from .system import MESH_TYPES, children_map, component_of, components_for, file_path, has_faces, inherited, level_path, mesh_sources, object_actions, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 
@@ -51,13 +53,13 @@ def draw_issues(layout, rows, limit, more, select=False, width=300):
         layout.label(text=f"{len(rows) - limit} more {more}", icon="BLANK1")
 
 
-def check_objects(objects):
+def check_objects(objects, level=None, animations=True):
     objects = list(objects)
     children = children_map(objects)
     exported = set(objects)
     issues = []
     for obj in objects:
-        issues.extend(_object_issues(obj, children, exported))
+        issues.extend(_object_issues(obj, children, exported, level, animations))
     issues.extend(_visibility_range_issues(objects))
     return issues
 
@@ -67,7 +69,7 @@ def check_object(obj, objects):
     return _object_issues(obj, children_map(objects), set(objects)) + _visibility_range_issues(objects, obj)
 
 
-def _object_issues(obj, children, exported):
+def _object_issues(obj, children, exported, level=None, animations=True):
     issues = []
     custom_types = set()
     for item in components_for(obj):
@@ -84,6 +86,10 @@ def _object_issues(obj, children, exported):
             issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item))
         elif item.component_type == "JOINT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _joint_warnings(obj, item, exported))
+        elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
+            issues.extend(_scene_reference_issues(obj, item, level))
+        elif item.component_type == "ANIMATION":
+            issues.extend(Issue("WARNING", obj, item, message) for message in _animation_warnings(obj, item, children, animations))
         elif item.component_type == "CUSTOM" and item.custom_type.strip():
             if not TYPE_PATH.fullmatch(item.custom_type):
                 issues.append(Issue("WARNING", obj, item, f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
@@ -183,6 +189,44 @@ def _audio_warnings(item):
         warnings.append("The sound file has no extension, so Bevy cannot tell how to load it")
     elif extension not in AUDIO_FORMATS:
         warnings.append(f"Bevy cannot play {extension} files, use .ogg, .wav, .mp3 or .flac")
+    return warnings
+
+
+def _scene_reference_issues(obj, item, level):
+    path = file_path(item.scene_file)
+    try:
+        level_path(item.scene_file, None if level is None else level.parent)
+    except ValueError:
+        return [Issue("ERROR", obj, item, f"{path.name} is on another drive than the level, so the game cannot load it")]
+    if path.suffix.lower() not in SCENE_EXTENSIONS:
+        return [Issue("WARNING", obj, item, f"{path.name} is not a .glb or .gltf file")]
+    if level is not None and path == Path(os.path.abspath(level)):
+        return [Issue("WARNING", obj, item, "Spawns the exported level inside itself, so the game skips it")]
+    try:
+        scenes = read_scenes(path)
+    except OSError:
+        return [Issue("WARNING", obj, item, f"No file at {item.scene_file}")]
+    except ValueError:
+        return [Issue("WARNING", obj, item, f"{path.name} is not a valid glTF file")]
+    if item.scene_index >= len(scenes):
+        return [Issue("WARNING", obj, item, f"{path.name} has {count(len(scenes), 'scene')}, numbered from 0")]
+    return []
+
+
+def _animation_warnings(obj, item, children, animations):
+    clip = item.animation_clip
+    if not clip.strip():
+        return ["No clip picked, so nothing plays"]
+    if clip not in bpy.data.actions:
+        return [f"No action named {clip}"]
+    warnings = []
+    root = obj
+    while root.parent is not None:
+        root = root.parent
+    if not any(clip in object_actions(member) for member, _matrix in subtree(root, children, lambda child: False, instances=False)):
+        warnings.append(f"{clip} animates nothing on or under {'this object' if root == obj else root.name}, so nothing plays")
+    if not animations:
+        warnings.append("Include Animations is off in the export, so nothing plays")
     return warnings
 
 

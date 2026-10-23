@@ -53,6 +53,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 **Joint** (under Physics) connects two bodies with an Avian Fixed, Hinge, Slider or Ball joint. Put it on an empty at the pivot, or on one of the bodies, and pick Body 1 and Body 2 from objects with a Rigid Body or Collider. Leave one empty to pin the other to that spot in the level. The object's position and its Axis set the pivot, and limits count from where the bodies sit in Blender.
 
+**Scene Reference** (under Scene) spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy level, then point an empty at it. The path is stored relative to the exported level, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. **Animation** (under Animation) plays an action when the level loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
+
 Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Dynamic Rigid Bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Bevy Components** panel in Properties is expanded, and resize handles show on the selected object. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
 
 ## Checks
@@ -68,6 +70,8 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 - Custom Component type paths that aren't Rust paths, or that repeat on one object
 - Shadows with no mesh on or under its object
 - an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
+- a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported level itself (a file on another drive than the level is an error)
+- an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
 
 ## Custom components
 
@@ -129,7 +133,7 @@ pip install bpy==4.2.23
 python tests/blender/run.py
 ```
 
-The importer tests load `importer/tests/assets/sample_level.glb` and its compressed copies `sample_level_etc1s.glb`, `sample_level_uastc.glb` and `sample_level_automatic.glb`, which `python tests/blender/sample_level.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
+The importer tests load `importer/tests/assets/sample_level.glb` and its compressed copies `sample_level_etc1s.glb`, `sample_level_uastc.glb` and `sample_level_automatic.glb`, plus the `props/windmill.glb` prop that the sample level references, which `python tests/blender/sample_level.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
 
 The rendering test compares compressed and uncompressed levels on a real GPU and is skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
 

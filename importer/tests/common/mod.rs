@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use avian3d::prelude::*;
-use bevy::{app::PluginsState, asset::{AssetPlugin, LoadState, UntypedAssetId}, audio::{AudioPlugin, Volume}, gilrs::GilrsPlugin, gltf::{Gltf, GltfExtras}, image::{CompressedImageFormatSupport, CompressedImageFormats}, log::LogPlugin, prelude::*, render::{RenderPlugin, pipelined_rendering::PipelinedRenderingPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin};
+use bevy::{app::PluginsState, asset::{AssetPlugin, LoadState, UntypedAssetId}, audio::{AudioPlugin, Volume}, gilrs::GilrsPlugin, gltf::{Gltf, GltfExtras}, image::{CompressedImageFormatSupport, CompressedImageFormats}, log::LogPlugin, prelude::*, render::{RenderPlugin, pipelined_rendering::PipelinedRenderingPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin, world_serialization::WorldInstanceReady};
 use bevy_components_importer::BlenderBevyComponentsPlugin;
 use std::{thread, time::Duration};
 
@@ -11,6 +11,9 @@ pub const COMPRESSED_LEVELS: [&str; 3] = ["sample_level_etc1s.glb", "sample_leve
 
 #[derive(Resource, Clone, Copy)]
 pub struct DeviceFormats(pub CompressedImageFormats);
+
+#[derive(Resource, Default)]
+pub struct ReadyInstances(pub usize);
 
 pub struct LevelApp {
     pub assets: String,
@@ -43,6 +46,8 @@ impl LevelApp {
             app.add_plugins(BlenderBevyComponentsPlugin);
         }
         app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(1.0 / 60.0)));
+        app.init_resource::<ReadyInstances>();
+        app.add_observer(|_ready: On<WorldInstanceReady>, mut instances: ResMut<ReadyInstances>| instances.0 += 1);
         while app.plugins_state() == PluginsState::Adding {
             thread::sleep(Duration::from_millis(1));
         }
@@ -78,6 +83,7 @@ fn wait_for(app: &mut App, id: UntypedAssetId, file: &str, spawned: bool) -> Res
         }
         let mut extras = app.world_mut().query::<&GltfExtras>();
         if asset_server.is_loaded_with_dependencies(id) && (!spawned || extras.iter(app.world()).count() > 0) {
+            wait_for_references(app)?;
             for _ in 0..10 {
                 app.update();
             }
@@ -86,6 +92,21 @@ fn wait_for(app: &mut App, id: UntypedAssetId, file: &str, spawned: bool) -> Res
         thread::sleep(Duration::from_millis(10));
     }
     return Err(format!("{file} did not load"));
+}
+
+fn wait_for_references(app: &mut App) -> Result<(), String> {
+    let mut settled = 0;
+    for _ in 0..1000 {
+        app.update();
+        let mut roots = app.world_mut().query::<&WorldAssetRoot>();
+        let pending = roots.iter(app.world()).count();
+        settled = if app.world().resource::<ReadyInstances>().0 >= pending { settled + 1 } else { 0 };
+        if settled == 2 {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    return Err("Scene references did not load".to_string());
 }
 
 pub fn load_level(file: &str) -> App {

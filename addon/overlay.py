@@ -13,7 +13,8 @@ from mathutils import Matrix, Vector
 from .geometry import arrow_lines, box_lines, capsule_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines
 from .metadata import EXTRAS_KEY, initial_velocities
 from .property import JOINT_LABELS
-from .system import children_map, component_of, components_for, mesh_sources, panel_expanded, redraw_viewports
+from .reference import read_scenes
+from .system import children_map, component_of, components_for, file_path, mesh_sources, panel_expanded, redraw_viewports
 
 DRAW_3D = None
 DRAW_2D = None
@@ -45,6 +46,7 @@ JOINT_SIZES = (0.25, 5.0)
 VELOCITY_SECONDS = 0.25
 VELOCITY_LENGTHS = (0.3, 5.0)
 JOINT_TAG = '"type":"joint"'
+SCENE_COLOR = (1.0, 0.42, 0.70, 0.85)
 
 
 def preview_objects(context, settings):
@@ -213,6 +215,19 @@ def _bounds(points):
     return tuple(min(point[axis] for point in points) for axis in range(3)), tuple(max(point[axis] for point in points) for axis in range(3))
 
 
+def scene_bounds(item):
+    if not item.scene_file.strip():
+        return None
+    try:
+        scenes = read_scenes(file_path(item.scene_file))
+    except (OSError, ValueError):
+        return None
+    if item.scene_index >= len(scenes) or scenes[item.scene_index] is None:
+        return None
+    minimum, maximum = scenes[item.scene_index]
+    return (minimum[0], -maximum[2], minimum[1]), (maximum[0], -minimum[2], maximum[1])
+
+
 def _draw_lines(shader, matrix, lines, color, width=1.5):
     if not lines:
         return
@@ -267,6 +282,10 @@ def preview_batches(context, settings):
         body = component_of(obj, "RIGID_BODY")
         if body and settings.velocities:
             batches.extend(velocity_batches(obj, body))
+        reference = component_of(obj, "SCENE_REFERENCE")
+        bounds = scene_bounds(reference) if reference and settings.scene_references else None
+        if bounds:
+            batches.append((obj.matrix_world, box_lines(*bounds), SCENE_COLOR, 1.5))
     if settings.joints:
         for obj in joint_objects(context, settings, objects):
             batches.extend(joint_batches(obj, component_of(obj, "JOINT")))
@@ -338,6 +357,13 @@ def _label_lines(obj, settings, children):
         else:
             details.append("same volume everywhere")
         descriptions.append(f"Audio · {' · '.join(details)}")
+    reference = component_of(obj, "SCENE_REFERENCE")
+    if reference and settings.scene_references:
+        name = file_path(reference.scene_file).name if reference.scene_file.strip() else "no file"
+        descriptions.append(f"Scene · {name}#Scene{reference.scene_index}")
+    animation = component_of(obj, "ANIMATION")
+    if animation:
+        descriptions.append(f"Animation · {animation.animation_clip or 'no clip'} · {'loop' if animation.animation_loop else 'once'} · {animation.animation_speed:g}×")
     return descriptions + _joint_label(obj, settings)
 
 

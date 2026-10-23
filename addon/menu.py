@@ -41,6 +41,8 @@ class BEVY_MT_component_add(bpy.types.Menu):
         layout.menu(BEVY_MT_component_add_physics.bl_idname)
         layout.menu(BEVY_MT_component_add_rendering.bl_idname)
         layout.menu(BEVY_MT_component_add_audio.bl_idname)
+        layout.menu(BEVY_MT_component_add_animation.bl_idname)
+        layout.menu(BEVY_MT_component_add_scene.bl_idname)
 
 
 class BEVY_MT_component_add_physics(bpy.types.Menu):
@@ -68,6 +70,24 @@ class BEVY_MT_component_add_audio(bpy.types.Menu):
 
     def draw(self, context):
         _draw_add_items(self.layout, context.object, ("AUDIO_PLAYER",))
+
+
+class BEVY_MT_component_add_animation(bpy.types.Menu):
+    bl_idname = "BEVY_MT_component_add_animation"
+    bl_label = "Animation"
+    bl_options = {"SEARCH_ON_KEY_PRESS"}
+
+    def draw(self, context):
+        _draw_add_items(self.layout, context.object, ("ANIMATION",))
+
+
+class BEVY_MT_component_add_scene(bpy.types.Menu):
+    bl_idname = "BEVY_MT_component_add_scene"
+    bl_label = "Scene"
+    bl_options = {"SEARCH_ON_KEY_PRESS"}
+
+    def draw(self, context):
+        _draw_add_items(self.layout, context.object, ("SCENE_REFERENCE",))
 
 
 class BEVY_MT_component_context_menu(bpy.types.Menu):

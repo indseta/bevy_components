@@ -1,6 +1,7 @@
 use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionLayers, Friction, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
-use bevy::{audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, math::Affine3A, prelude::*};
+use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
+use std::iter;
 use crate::{component::*, data::*, joint::*};
 
 pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>) {
@@ -25,6 +26,8 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         let mut rigid_body = None;
         let mut audio = None;
         let mut joint = None;
+        let mut reference = None;
+        let mut animation = None;
 
         for component in exported.components {
             match component {
@@ -99,6 +102,8 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     }
                 }
                 ExportedComponent::Custom { type_path, data } => custom.0.push(BlenderCustomComponent { type_path, data }),
+                ExportedComponent::SceneReference { path, scene } => reference = Some(PendingSceneReference { path, scene }),
+                ExportedComponent::Animation { clip, repeat, speed } => animation = Some(PendingAnimation(AnimationSpec { clip, repeat, speed })),
                 ExportedComponent::Unsupported => warn!("Unsupported Bevy component on {:?}", name),
             }
         }
@@ -121,6 +126,12 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         }
         if let Some(spec) = joint {
             commands.entity(entity).insert(PendingJoint(spec));
+        }
+        if let Some(reference) = reference {
+            commands.entity(entity).insert(reference);
+        }
+        if let Some(animation) = animation {
+            commands.entity(entity).insert(animation);
         }
     }
 }
@@ -180,6 +191,73 @@ pub fn build_joints(mut commands: Commands, joints: Query<(Entity, &PendingJoint
         }
         let mut joint = commands.spawn((Name::new(format!("{label} joint")), ChildOf(entity)));
         insert_joint(&mut joint, spec, connected, frames);
+    }
+}
+
+pub fn spawn_scene_references(mut commands: Commands, references: Query<(Entity, &PendingSceneReference, Option<&Name>)>, parents: Query<&ChildOf>, roots: Query<&WorldAssetRoot>, asset_server: Res<AssetServer>) {
+    for (entity, reference, name) in &references {
+        commands.entity(entity).remove::<PendingSceneReference>();
+        let levels: Vec<AssetPath<'static>> = parents.iter_ancestors(entity).filter_map(|ancestor| roots.get(ancestor).ok()?.0.path().cloned()).collect();
+        let base = levels.first().map(|level| level.without_label().clone_owned()).unwrap_or_default();
+        let Ok(path) = base.resolve_embed_str(&reference.path) else {
+            warn!("Invalid scene reference path {} on {:?}", reference.path, name);
+            continue;
+        };
+        let path = path.with_label(GltfAssetLabel::Scene(reference.scene).to_string());
+        if levels.contains(&path) {
+            warn!("Scene reference on {:?} would spawn {} inside itself", name, path);
+            continue;
+        }
+        commands.entity(entity).insert(WorldAssetRoot(asset_server.load(path)));
+    }
+}
+
+pub fn play_animations(mut commands: Commands, animations: Query<(Entity, &PendingAnimation, Option<&Name>)>, parents: Query<&ChildOf>, scenes: Query<&SceneAnimations>, mut players: Query<(&mut AnimationPlayer, Option<&AnimationGraphHandle>)>, mut graphs: ResMut<Assets<AnimationGraph>>) {
+    let mut created = HashMap::new();
+    for (entity, pending, name) in &animations {
+        commands.entity(entity).remove::<PendingAnimation>();
+        let spec = &pending.0;
+        let mut player = None;
+        let mut clips = None;
+        for current in iter::once(entity).chain(parents.iter_ancestors(entity)) {
+            if player.is_none() && players.contains(current) {
+                player = Some(current);
+            }
+            if let Ok(scene) = scenes.get(current) {
+                clips = Some(scene);
+                break;
+            }
+        }
+        let Some(clips) = clips else {
+            warn!("Animation on {:?} is not part of a glTF scene", name);
+            continue;
+        };
+        let Some(clip) = clips.0.get(&spec.clip) else {
+            warn!("No animation named {} for {:?}", spec.clip, name);
+            continue;
+        };
+        let Some(player) = player else {
+            warn!("Animation {} does not animate {:?} or its parents", spec.clip, name);
+            continue;
+        };
+        let Ok((mut animation_player, graph)) = players.get_mut(player) else { continue; };
+        let handle = match graph.map(|graph| graph.0.clone()).or_else(|| created.get(&player).cloned()) {
+            Some(handle) => handle,
+            None => {
+                let handle = graphs.add(AnimationGraph::new());
+                commands.entity(player).insert(AnimationGraphHandle(handle.clone()));
+                created.insert(player, handle.clone());
+                handle
+            }
+        };
+        let Some(mut graph) = graphs.get_mut(&handle) else { continue; };
+        let root = graph.root;
+        let node = graph.add_clip(clip.clone(), 1.0, root);
+        let active = animation_player.play(node);
+        active.set_speed(spec.speed);
+        if spec.repeat {
+            active.repeat();
+        }
     }
 }
 

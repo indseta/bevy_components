@@ -12,7 +12,7 @@ from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
-from .system import apply_definitions, asset_path, copy_component, copy_to_object, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .system import apply_definitions, asset_path, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import body_kind, check_objects, count, describe, draw_issues, issue_summary
 
 TEXTURE_COMPRESSION = [
@@ -22,6 +22,11 @@ TEXTURE_COMPRESSION = [
     ("AUTOMATIC", "Automatic", "UASTC for normal maps, data textures such as metallic-roughness and pixel art with Closest sampling, ETC1S for other color textures"),
 ]
 PROGRESS_INTERVAL = 0.1
+IDENTITY_PROPERTIES = {
+    "CUSTOM": {"custom_type"},
+    "SCENE_REFERENCE": {"scene_file"},
+    "ANIMATION": {"animation_clip"},
+}
 
 _exports = {}
 
@@ -74,6 +79,10 @@ def _unique(base, taken, separator):
     return name
 
 
+def _export_path(filepath):
+    return Path(os.path.abspath(bpy.path.abspath(filepath))) if filepath else None
+
+
 def _show_scene_properties(context):
     areas = [context.area] if context.area and context.area.type == "PROPERTIES" else [area for area in context.screen.areas if area.type == "PROPERTIES"] if context.screen else []
     for area in areas[:1]:
@@ -109,6 +118,8 @@ class BEVY_OT_add_component(bpy.types.Operator):
             item.custom_type = self.type_path
         if self.component_type == "JOINT" and body_kind(obj) is not None:
             item.joint_body2 = obj
+        if self.component_type == "ANIMATION":
+            item.animation_clip = default_clip(obj)
         sync_object(obj)
         redraw_viewports()
         return {"FINISHED"}
@@ -211,9 +222,8 @@ class BEVY_OT_reset_component(bpy.types.Operator):
         if items is None:
             return {"CANCELLED"}
         item = items[self.index]
-        custom = item.component_type == "CUSTOM"
-        typed = custom and item.use_fields
-        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers", "show_velocity", "show_dynamics"} | ({"custom_type"} if custom else set()) | ({"use_fields"} if typed else set())
+        typed = item.component_type == "CUSTOM" and item.use_fields
+        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers", "show_velocity", "show_dynamics"} | IDENTITY_PROPERTIES.get(item.component_type, set()) | ({"use_fields"} if typed else set())
         for field in item.bl_rna.properties:
             if field.identifier not in kept and field.type != "COLLECTION" and not field.is_readonly:
                 item.property_unset(field.identifier)
@@ -652,9 +662,10 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 column.prop(self, "uastc_zstd", text="Supercompression")
             if self.texture_compression != "DISABLED":
                 draw_encoder_status(body, context)
+        key = (self.selected_only, self.include_animations, self.filepath)
         checks = getattr(self, "_checks", None)
-        if checks is None or checks[0] != self.selected_only:
-            checks = (self.selected_only, check_objects(context.selected_objects if self.selected_only else bpy.data.objects))
+        if checks is None or checks[0] != key:
+            checks = (key, check_objects(context.selected_objects if self.selected_only else bpy.data.objects, level=_export_path(self.filepath), animations=self.include_animations))
             self._checks = checks
         issues = checks[1]
         header, body = layout.panel("BEVY_export_checks")
@@ -676,7 +687,8 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
             return {"CANCELLED"}
         objects = context.selected_objects if self.selected_only else bpy.data.objects
-        issues = check_objects(objects)
+        level = _export_path(self.filepath)
+        issues = check_objects(objects, level=level, animations=self.include_animations)
         errors = [issue for issue in issues if issue.level == "ERROR"]
         if errors:
             self.report({"ERROR"}, f"Cannot export: {describe(errors[0])}")
@@ -690,7 +702,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 self.report({"ERROR"}, f"{error}. {HINT}")
                 return {"CANCELLED"}
         for obj in objects:
-            sync_object(obj)
+            sync_object(obj, level.parent if level else None)
         if encoder is None:
             result = self._export_gltf(Path(self.filepath))
             if "FINISHED" in result:
@@ -728,7 +740,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
 
     def _export_gltf(self, path):
         try:
-            return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, check_existing=False)
+            return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
         except Exception as error:
             self.report({"ERROR"}, f"GLB export failed: {error}")
             return {"CANCELLED"}

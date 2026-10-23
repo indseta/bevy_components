@@ -1,5 +1,6 @@
 import json
 import mimetypes
+import os
 import tempfile
 import uuid
 from pathlib import Path
@@ -8,7 +9,7 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, convert_value, field_data, serialize_items
+from .metadata import EXTRAS_KEY, FIELD_VALUES, convert_value, field_data, relative_path, serialize_items
 
 MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 PANEL_EXPANDED = True
@@ -110,7 +111,40 @@ def mesh_sources(obj, children, kind, instances=True):
     return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
 
 
-def sync_object(obj):
+def blend_directory():
+    return bpy.path.abspath("//") or os.getcwd()
+
+
+def file_path(path):
+    return Path(os.path.abspath(bpy.path.abspath(path)))
+
+
+def level_path(path, directory=None):
+    if not path.strip():
+        return ""
+    return relative_path(str(file_path(path)), str(directory or blend_directory()))
+
+
+def object_actions(obj):
+    found = set()
+    for owner in (obj, getattr(obj.data, "shape_keys", None)):
+        animation = getattr(owner, "animation_data", None)
+        if animation is None:
+            continue
+        if animation.action is not None:
+            found.add(animation.action.name)
+        found.update(strip.action.name for track in animation.nla_tracks for strip in track.strips if strip.action is not None)
+    return found
+
+
+def default_clip(obj):
+    animation = obj.animation_data
+    if animation is not None and animation.action is not None:
+        return animation.action.name
+    return next(iter(sorted(object_actions(obj))), "")
+
+
+def sync_object(obj, directory=None):
     if not obj or not isinstance(obj, bpy.types.Object) or obj.library:
         return
     data = getattr(obj, "bevy_component_data", None)
@@ -119,7 +153,7 @@ def sync_object(obj):
     items = components_for(obj)
     if items:
         try:
-            obj[EXTRAS_KEY] = serialize_items(items)
+            obj[EXTRAS_KEY] = serialize_items(items, lambda path: level_path(path, directory))
         except ValueError:
             obj.pop(EXTRAS_KEY, None)
     else:

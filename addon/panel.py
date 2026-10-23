@@ -210,6 +210,19 @@ def _draw_custom(layout, obj, index, item):
     row.prop(item, "custom_json")
 
 
+def _draw_scene_reference(layout, obj, index, item):
+    row = layout.row()
+    row.alert = not item.scene_file.strip()
+    row.prop(item, "scene_file")
+    layout.prop(item, "scene_index")
+
+
+def _draw_animation(layout, obj, index, item):
+    layout.prop_search(item, "animation_clip", bpy.data, "actions", icon="ACTION")
+    layout.prop(item, "animation_loop")
+    layout.prop(item, "animation_speed")
+
+
 DRAWERS = {
     "VISIBILITY_RANGE": _draw_visibility_range,
     "COLLIDER": _draw_collider,
@@ -218,6 +231,8 @@ DRAWERS = {
     "AUDIO_PLAYER": _draw_audio_player,
     "CUSTOM": _draw_custom,
     "JOINT": _draw_joint,
+    "SCENE_REFERENCE": _draw_scene_reference,
+    "ANIMATION": _draw_animation,
 }
 
 
@@ -381,6 +396,7 @@ class BEVY_PT_overlay(bpy.types.Panel):
         column.prop(settings, "velocities")
         column.prop(settings, "visibility_ranges")
         column.prop(settings, "audio_ranges")
+        column.prop(settings, "scene_references")
         column = split.column()
         column.prop(settings, "labels")
         column.prop(settings, "xray")

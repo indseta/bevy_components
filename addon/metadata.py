@@ -1,4 +1,5 @@
 import json
+import os
 import struct
 
 SCHEMA_VERSION = 1
@@ -115,7 +116,15 @@ def invalid_names(names):
     return {name for name in names if not name.strip() or names.count(name) > 1}
 
 
-def serialize_component(item):
+def relative_path(path, directory):
+    return os.path.relpath(path, directory).replace(os.sep, "/")
+
+
+def _portable(path):
+    return path.replace("\\", "/")
+
+
+def serialize_component(item, locate=_portable):
     kind = item.component_type
     if kind == "VISIBILITY_RANGE":
         return {
@@ -193,6 +202,19 @@ def serialize_component(item):
         except json.JSONDecodeError as error:
             raise ValueError(f"Custom JSON for {item.custom_type} is invalid: {error}") from error
         return {"type": "custom", "type_path": item.custom_type, "data": value}
+    if kind == "SCENE_REFERENCE":
+        return {
+            "type": "scene_reference",
+            "path": locate(item.scene_file),
+            "scene": int(item.scene_index),
+        }
+    if kind == "ANIMATION":
+        return {
+            "type": "animation",
+            "clip": item.animation_clip,
+            "repeat": bool(item.animation_loop),
+            "speed": _float32(item.animation_speed),
+        }
     raise ValueError(f"Unsupported component: {kind}")
 
 
@@ -207,8 +229,8 @@ def _layer_bits(layers):
     return sum(1 << index for index, enabled in enumerate(layers) if enabled)
 
 
-def serialize_items(items):
-    return json.dumps({"version": SCHEMA_VERSION, "components": [serialize_component(item) for item in items]}, separators=(",", ":"), ensure_ascii=False)
+def serialize_items(items, locate=_portable):
+    return json.dumps({"version": SCHEMA_VERSION, "components": [serialize_component(item, locate) for item in items]}, separators=(",", ":"), ensure_ascii=False)
 
 
 def component_errors(item):
@@ -234,6 +256,9 @@ def component_errors(item):
             errors.append("collider radius must be positive")
     elif item.component_type == "JOINT" and joint_limits_inverted(item):
         errors.append("Joint limit Min is above Max")
+    elif item.component_type == "SCENE_REFERENCE":
+        if not item.scene_file.strip():
+            errors.append("Scene Reference needs a glTF file")
     return errors
 
 

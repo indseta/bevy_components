@@ -1,12 +1,12 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, prelude::*};
+use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, prelude::*};
 use bevy_components_importer::BlenderCustomComponents;
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{thread, time::Duration};
+use std::{f32::consts::{FRAC_PI_2, FRAC_PI_4}, thread, time::Duration};
 
 #[derive(Deserialize, Debug, PartialEq)]
 struct Pickup {
@@ -60,6 +60,36 @@ fn joint<'a, T: Component>(world: &'a mut World, name: &str) -> &'a T {
 
 fn physics_time(app: &App) -> f32 {
     return app.world().resource::<Time<Physics>>().elapsed_secs();
+}
+
+fn nodes(world: &mut World, name: &str) -> Vec<Entity> {
+    let mut nodes = world.query_filtered::<(Entity, &Name), Without<Mesh3d>>();
+    return nodes.iter(world).filter(|(_, node_name)| node_name.as_str() == name).map(|(entity, _)| entity).collect();
+}
+
+fn is_under(world: &World, entity: Entity, ancestor: Entity) -> bool {
+    let mut cursor = world.get::<ChildOf>(entity).map(ChildOf::parent);
+    while let Some(current) = cursor {
+        if current == ancestor {
+            return true;
+        }
+        cursor = world.get::<ChildOf>(current).map(ChildOf::parent);
+    }
+    return false;
+}
+
+fn instance_node(world: &mut World, instance: &str, name: &str) -> Entity {
+    let root = node(world, instance);
+    return nodes(world, name).into_iter().find(|entity| is_under(world, *entity, root)).unwrap_or_else(|| panic!("{instance} has no {name}"));
+}
+
+fn rotation(app: &App, entity: Entity) -> Quat {
+    return app.world().get::<Transform>(entity).map(|transform| transform.rotation).expect("animated node has a transform");
+}
+
+fn scene_reference(name: &str, path: &str, scene: usize) -> (Name, Transform, GltfExtras) {
+    let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "scene_reference", "path": path, "scene": scene}]}).to_string()});
+    return (Name::new(name.to_string()), Transform::default(), GltfExtras { value: extras.to_string() });
 }
 
 fn colliders(world: &mut World, name: &str) -> Vec<Entity> {
@@ -208,7 +238,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 43);
+    assert_eq!(count, 50);
 }
 
 #[test]
@@ -647,4 +677,93 @@ fn audio_players_are_skipped_without_the_audio_plugin() {
     assert!(world.get_resource::<Assets<AudioSource>>().is_none());
     let mut players = world.query::<&AudioPlayer>();
     assert_eq!(players.iter(world).count(), 0);
+}
+
+#[test]
+fn scene_references_spawn_their_scenes() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    for (name, translation) in [("windmill_a", Vec3::new(-7.0, 1.5, 9.5)), ("windmill_b", Vec3::new(6.0, 1.125, 9.5))] {
+        let root = node(world, name);
+        let path = world.get::<WorldAssetRoot>(root).and_then(|root| root.0.path()).map(|path| path.to_string());
+        assert_eq!(path.as_deref(), Some("props/windmill.glb#Scene0"), "{name}");
+        let tower = instance_node(world, name, "windmill_tower");
+        let found = world.get::<GlobalTransform>(tower).map(|transform| transform.translation()).expect("tower has a global transform");
+        assert!(found.distance(translation) < 1e-4, "{name} tower is at {found}");
+        assert!(world.get::<Collider>(tower).and_then(|collider| collider.shape().as_capsule()).is_some(), "{name}");
+        assert_eq!(world.get::<RigidBody>(tower), Some(&RigidBody::Static), "{name}");
+        instance_node(world, name, "windmill_blades");
+    }
+    assert_eq!(nodes(world, "windmill_tower").len(), 2);
+}
+
+#[test]
+fn scene_references_resolve_from_their_level() {
+    let mut app = LevelApp::default().build();
+    let level: Handle<WorldAsset> = app.world().resource::<AssetServer>().load("props/level.glb#Scene0");
+    let root = app.world_mut().spawn(WorldAssetRoot(level)).id();
+    let beside = app.world_mut().spawn((scene_reference("beside", "windmill.glb", 1), ChildOf(root))).id();
+    let above = app.world_mut().spawn((scene_reference("above", "../windmill.glb", 0), ChildOf(root))).id();
+    let itself = app.world_mut().spawn((scene_reference("itself", "level.glb", 0), ChildOf(root))).id();
+    let other_scene = app.world_mut().spawn((scene_reference("other_scene", "level.glb", 2), ChildOf(root))).id();
+    let outside = app.world_mut().spawn(scene_reference("outside", "props/windmill.glb", 0)).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    let path = |entity: Entity| world.get::<WorldAssetRoot>(entity).and_then(|root| root.0.path()).map(|path| path.to_string());
+    assert_eq!(path(beside).as_deref(), Some("props/windmill.glb#Scene1"));
+    assert_eq!(path(above).as_deref(), Some("windmill.glb#Scene0"));
+    assert_eq!(path(itself), None);
+    assert_eq!(path(other_scene).as_deref(), Some("props/level.glb#Scene2"));
+    assert_eq!(path(outside).as_deref(), Some("props/windmill.glb#Scene0"));
+}
+
+#[test]
+fn animations_start_when_the_level_loads() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let mut expected = vec![(node(world, "gate"), "sample_level.glb#Animation0", RepeatAnimation::Never, 1.0)];
+    for name in ["windmill_a", "windmill_b"] {
+        expected.push((instance_node(world, name, "windmill_tower"), "props/windmill.glb#Animation0", RepeatAnimation::Forever, 0.5));
+    }
+    for (player, clip, repeat, speed) in expected {
+        let handle = world.get::<AnimationGraphHandle>(player).expect("animated node has a graph");
+        let graph = world.resource::<Assets<AnimationGraph>>().get(&handle.0).expect("graph is loaded");
+        let clips: Vec<String> = graph.nodes().filter_map(|index| match &graph.get(index)?.node_type {
+            AnimationNodeType::Clip(clip) => clip.path().map(|path| path.to_string()),
+            _ => None,
+        }).collect();
+        assert_eq!(clips, vec![clip.to_string()]);
+        let animation_player = world.get::<AnimationPlayer>(player).expect("animated node has a player");
+        let playing: Vec<(RepeatAnimation, f32)> = animation_player.playing_animations().map(|(_, active)| (active.repeat_mode(), active.speed())).collect();
+        assert_eq!(playing, vec![(repeat, speed)], "{clip}");
+    }
+    let mut graphs = world.query::<&AnimationGraphHandle>();
+    assert_eq!(graphs.iter(world).count(), 3);
+}
+
+#[test]
+fn animations_move_their_targets() {
+    let mut app = load_level(LEVEL);
+    let gate = node(app.world_mut(), "gate");
+    let blades: Vec<Entity> = ["windmill_a", "windmill_b"].iter().map(|name| instance_node(app.world_mut(), name, "windmill_blades")).collect();
+    for _ in 0..120 {
+        app.update();
+    }
+    assert!(rotation(&app, gate).angle_between(Quat::from_rotation_y(FRAC_PI_2)) < 1e-3, "gate stopped at {:?}", rotation(&app, gate).to_euler(EulerRot::YXZ));
+    assert!(app.world().get::<AnimationPlayer>(gate).is_some_and(AnimationPlayer::all_finished));
+    for wait in [0, 180] {
+        for _ in 0..wait {
+            app.update();
+        }
+        let before: Vec<Quat> = blades.iter().map(|entity| rotation(&app, *entity)).collect();
+        for _ in 0..30 {
+            app.update();
+        }
+        for (entity, start) in blades.iter().zip(before) {
+            let turned = rotation(&app, *entity) * start.inverse();
+            assert!(turned.angle_between(Quat::from_rotation_z(-FRAC_PI_4)) < 1e-3, "blades turned {:?} in half a second", turned.to_axis_angle());
+        }
+    }
 }

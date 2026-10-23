@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_level.glb"
 SOUNDS = FIXTURE.parent / "sounds"
 COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_level_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
+PROP = Path("props") / "windmill.glb"
 REPOSITORY = "bevy_components_test"
 RAMP_CENTER = (0, 8, 2)
 RAMP_ANGLE = 30
@@ -45,7 +46,7 @@ def uninstall_addon():
 
 
 def clear_scene():
-    for collection in (bpy.data.objects, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups):
+    for collection in (bpy.data.objects, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups, bpy.data.actions):
         for block in list(collection):
             collection.remove(block)
     if hasattr(bpy.context.scene, "bevy_component_definitions"):
@@ -271,13 +272,40 @@ def pick_sound(obj, path):
     return bpy.ops.bevy_components.pick_sound(index=index, filepath=str(path))
 
 
+def animate(obj, name, path, index, frames):
+    for frame, value in frames:
+        getattr(obj, path)[index] = value
+        obj.keyframe_insert(path, index=index, frame=frame)
+    getattr(obj, path)[index] = frames[0][1]
+    action = obj.animation_data.action
+    action.name = name
+    curves = [curve for layer in action.layers for strip in layer.strips for bag in strip.channelbags for curve in bag.fcurves] if hasattr(action, "layers") else action.fcurves
+    for curve in curves:
+        for point in curve.keyframe_points:
+            point.interpolation = "LINEAR"
+    return action
+
+
+def build_windmill():
+    clear_scene()
+    tower = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "windmill_tower", radius=0.3, depth=3, location=(0, 0, 1.5))
+    add_component(tower, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.3, collider_height=2.4)
+    blades = add_mesh(bpy.ops.mesh.primitive_cube_add, "windmill_blades", size=1)
+    blades.data.transform(Matrix.Diagonal((2.4, 0.1, 0.3, 1)))
+    blades.parent = tower
+    blades.location = (0, -0.4, 1.2)
+    animate(blades, "windmill_spin", "rotation_euler", 1, [(1, 0.0), (49, 2 * math.pi)])
+    add_component(blades, "ANIMATION", animation_speed=0.5)
+    select()
+
+
 def apply_lod_preset(obj, preset):
     select(obj)
     index = next(index for index, item in enumerate(obj.bevy_component_data.components) if item.component_type == "VISIBILITY_RANGE")
     bpy.ops.bevy_components.lod_preset(index=index, preset=preset)
 
 
-def build_sample_level():
+def build_sample_level(directory=FIXTURE.parent):
     clear_scene()
     define_component("my_game::Wave", ("count", "INT", 1), ("delay", "FLOAT", 1.0))
     define_component("my_game::Pickup", ("item", "STRING", "coin"), ("amount", "INT", 1), ("respawn", "BOOL", False), ("weight", "FLOAT", 0.1), ("spin", "VECTOR", (0.0, 1.5, 0.0)), ("glow", "COLOR", (1.0, 0.8, 0.2, 1.0)))
@@ -412,6 +440,17 @@ def build_sample_level():
     add_component(bullet, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_gravity_scale=0, rigid_body_ccd="ALL", rigid_body_linear_velocity=(80, 0, 0))
     add_box_body("bullet_target", (-6, 9.5, 1), (0.02, 1, 1), rigid_body_gravity_scale=0)
 
+    gate = add_mesh(bpy.ops.mesh.primitive_cube_add, "gate", size=1, location=(3.5, -9.5, 1))
+    gate.data.transform(Matrix.Diagonal((1, 0.1, 2, 1)))
+    animate(gate, "gate_open", "rotation_euler", 2, [(1, 0.0), (25, math.pi / 2)])
+    add_component(gate, "ANIMATION", animation_loop=False)
+
+    for name, location, angle, scale in (("windmill_a", (-7, -9.5, 0), 0, 1), ("windmill_b", (6, -9.5, 0), 45, 0.75)):
+        windmill = add_empty(name, location)
+        windmill.rotation_euler = (0, 0, math.radians(angle))
+        windmill.scale = (scale, scale, scale)
+        add_component(windmill, "SCENE_REFERENCE", scene_file=str(Path(directory) / PROP))
+
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 10))
     bpy.context.object.name = "sun"
     add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp)
@@ -420,18 +459,26 @@ def build_sample_level():
 
 def export_sample_level(path, **options):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    result = bpy.ops.export_scene.bevy_components_glb(filepath=str(path), **options)
+    result = bpy.ops.export_scene.bevy_components_glb(filepath=str(path), **{"include_animations": True, **options})
     if "FINISHED" not in result:
         raise RuntimeError(f"Export failed: {result}")
     return read_gltf(path)
 
 
+def export_props(directory):
+    build_windmill()
+    return export_sample_level(Path(directory) / PROP)
+
+
 if __name__ == "__main__":
     install_addon()
-    build_sample_level()
     if sys.argv[-1].endswith(".glb"):
+        export_props(Path(sys.argv[-1]).parent)
+        build_sample_level(Path(sys.argv[-1]).parent)
         export_sample_level(Path(sys.argv[-1]))
     else:
+        export_props(FIXTURE.parent)
+        build_sample_level()
         export_sample_level(FIXTURE)
         for mode, path in COMPRESSED_FIXTURES.items():
             export_sample_level(path, texture_compression=mode)

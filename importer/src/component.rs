@@ -1,5 +1,5 @@
 use avian3d::prelude::{CollisionLayers, LockedAxes, RigidBody, SweptCcd};
-use bevy::{camera::visibility::VisibilityRange, prelude::*};
+use bevy::{camera::visibility::VisibilityRange, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 
 #[derive(Clone, Debug)]
@@ -123,3 +123,23 @@ pub struct PendingMeshCollider(pub ColliderSpec);
 
 #[derive(Component)]
 pub struct PendingJoint(pub JointSpec);
+
+#[derive(Component, Clone, Debug, Default, Reflect)]
+#[reflect(Component, Clone, Default)]
+pub struct SceneAnimations(pub HashMap<String, Handle<AnimationClip>>);
+
+#[derive(Clone, Debug)]
+pub struct AnimationSpec {
+    pub clip: String,
+    pub repeat: bool,
+    pub speed: f32,
+}
+
+#[derive(Component)]
+pub struct PendingAnimation(pub AnimationSpec);
+
+#[derive(Component)]
+pub struct PendingSceneReference {
+    pub path: String,
+    pub scene: usize,
+}

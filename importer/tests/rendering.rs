@@ -18,6 +18,7 @@ struct Render {
 fn render(file: &str, formats: Option<CompressedImageFormats>) -> Render {
     let mut app = LevelApp { gpu: true, formats, ..default() }.build();
     app.world_mut().resource_mut::<Time<Physics>>().pause();
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
     if let Err(error) = spawn_level(&mut app, file) {
         panic!("{file} did not load: {error}");
     }

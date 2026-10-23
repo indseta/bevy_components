@@ -15,7 +15,7 @@ import bpy
 import gpu
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, define_component, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, FIXTURE, PROP, add_component, add_empty, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -26,6 +26,7 @@ KINEMATIC_BODY = {**STATIC_BODY, "kind": "kinematic", "linear_velocity": [0.0, 0
 DYNAMIC_BODY = {**KINEMATIC_BODY, "kind": "dynamic", "gravity_scale": 1.0, "linear_damping": 0.0, "angular_damping": 0.0, "lock_translation": [False, False, False], "lock_rotation": [False, False, False], "ccd": "default"}
 DEFAULT_JOINT = {"type": "joint", "kind": "revolute", "body1": None, "body2": None, "axis": [0.0, 1.0, 0.0], "angle_limits": None, "distance_limits": None, "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.0, "collide": False}
 DEFAULT_AUDIO = {"type": "audio_player", "path": "", "volume": 1.0, "loop": False, "autoplay": True, "spatial": True, "distance": 5.0}
+WINDMILL = {"type": "scene_reference", "path": "props/windmill.glb", "scene": 0}
 EXPECTED_COMPONENTS = {
     "ground": [
         {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
@@ -185,6 +186,15 @@ EXPECTED_COMPONENTS = {
     "bullet_target": [
         {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.02, 1.0, 1.0]}},
         {**DYNAMIC_BODY, "gravity_scale": 0.0},
+    ],
+    "gate": [
+        {"type": "animation", "clip": "gate_open", "repeat": False, "speed": 1.0},
+    ],
+    "windmill_a": [
+        WINDMILL,
+    ],
+    "windmill_b": [
+        WINDMILL,
     ],
 }
 
@@ -366,7 +376,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
         for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
@@ -387,7 +397,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(_operator_exists("bevy_components.add"))
 
     def test_add_menus_search_on_key_press(self):
-        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_audio):
+        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_audio, addon.menu.BEVY_MT_component_add_animation, addon.menu.BEVY_MT_component_add_scene):
             self.assertEqual(menu.bl_options, {"SEARCH_ON_KEY_PRESS"})
 
     def test_disable_and_enable_keeps_components(self):
@@ -647,6 +657,48 @@ class TestOperators(unittest.TestCase):
             self.assertEqual(bpy.ops.bevy_components.pick_sound(index=0, filepath=str(cases[0][0])), {"CANCELLED"})
             self.assertEqual(audio.audio_path, "loose.flac")
 
+    def test_scene_references_are_stored_relative_to_the_blend_file(self):
+        holder = add_empty("holder", (0, 0, 0))
+        item = add_component(holder, "SCENE_REFERENCE")
+        self.assertEqual(_stored(holder)["components"], [{"type": "scene_reference", "path": "", "scene": 0}])
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="SCENE_REFERENCE"), {"CANCELLED"})
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "levels").mkdir()
+            bpy.ops.wm.save_as_mainfile(filepath=str(root / "levels" / "level.blend"))
+            item.scene_file = "//props/tree.glb"
+            item.scene_index = 2
+            self.assertEqual(_stored(holder)["components"], [{"type": "scene_reference", "path": "props/tree.glb", "scene": 2}])
+            item.scene_file = str(root / "shared" / "rock.gltf")
+            self.assertEqual(_stored(holder)["components"][0]["path"], "../shared/rock.gltf")
+            bpy.ops.wm.save_mainfile()
+            bpy.ops.wm.open_mainfile(filepath=str(root / "levels" / "level.blend"))
+            self.assertEqual(_stored(bpy.data.objects["holder"])["components"], [{"type": "scene_reference", "path": "../shared/rock.gltf", "scene": 2}])
+
+    def test_animation_starts_with_the_objects_action(self):
+        spin = animate(self.obj, "spin", "rotation_euler", 2, [(1, 0.0), (10, 1.0)])
+        animate(add_mesh(bpy.ops.mesh.primitive_cube_add, "other"), "wave", "location", 0, [(1, 0.0), (10, 1.0)])
+        select(self.obj)
+        item = add_component(self.obj, "ANIMATION")
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "animation", "clip": "spin", "repeat": True, "speed": 1.0}])
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="ANIMATION"), {"CANCELLED"})
+        item.animation_loop = False
+        item.animation_speed = 0.30000001192092896
+        self.assertEqual(_stored(self.obj)["components"][0], {"type": "animation", "clip": "spin", "repeat": False, "speed": 0.3})
+        track = self.obj.animation_data.nla_tracks.new()
+        track.strips.new("spin", 1, spin)
+        self.obj.animation_data.action = None
+        self.assertEqual(addon.system.default_clip(self.obj), "spin")
+        self.assertEqual(addon.system.default_clip(add_empty("still", (0, 0, 0))), "")
+
+    def test_reset_keeps_the_scene_file_and_clip(self):
+        reference = add_component(self.obj, "SCENE_REFERENCE", scene_file="//props/tree.glb", scene_index=3)
+        animation = add_component(self.obj, "ANIMATION", animation_clip="spin", animation_loop=False, animation_speed=2)
+        bpy.ops.bevy_components.reset(index=0)
+        bpy.ops.bevy_components.reset(index=1)
+        self.assertEqual((reference.scene_file, reference.scene_index), ("//props/tree.glb", 0))
+        self.assertEqual((animation.animation_clip, animation.animation_loop, animation.animation_speed), ("spin", True, 1.0))
+
     def test_invalid_custom_json_is_not_stored(self):
         add_component(self.obj, "CUSTOM", custom_json="{broken")
         self.assertNotIn("bevy_components", self.obj.keys())
@@ -689,7 +741,7 @@ class TestPanels(unittest.TestCase):
         self.obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "subject")
 
     def test_object_panel_draws_every_component(self):
-        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM", "SHADOWS", "AUDIO_PLAYER", "JOINT"):
+        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM", "SHADOWS", "AUDIO_PLAYER", "JOINT", "SCENE_REFERENCE", "ANIMATION"):
             add_component(self.obj, kind)
         collider = self.obj.bevy_component_data.components[1]
         for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE"):
@@ -699,9 +751,9 @@ class TestPanels(unittest.TestCase):
             addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
             text, add_menu, enabled = panel.layout.buttons()[0]
             self.assertEqual((text, add_menu.name), ("Add Component", "BEVY_MT_component_add"))
-            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 7)
-            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_expanded", "show_layers", "show_expanded", "show_expanded", "show_expanded", "show_expanded", "show_expanded"])
-            self.assertEqual(panel.layout.props().count("enabled"), 7)
+            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 9)
+            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_expanded", "show_layers", "show_expanded", "show_expanded", "show_expanded", "show_expanded", "show_expanded", "show_expanded", "show_expanded"])
+            self.assertEqual(panel.layout.props().count("enabled"), 9)
         self.assertIn("collider_height", panel.layout.props())
         self.assertNotIn("Fade distances must increase from top to bottom", panel.layout.texts())
 
@@ -736,13 +788,13 @@ class TestPanels(unittest.TestCase):
         add_component(self.obj, "CUSTOM")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio"])
+        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene"])
         found = {}
-        for menu_type in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_audio):
+        for menu_type in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_audio, addon.menu.BEVY_MT_component_add_animation, addon.menu.BEVY_MT_component_add_scene):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "AUDIO_PLAYER": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_audio.draw(menu, _menu_context(self.obj))
@@ -930,6 +982,26 @@ class TestPanels(unittest.TestCase):
         self.assertFalse(_prop_layout(panel.layout, "audio_path").alert)
         self.assertFalse(_prop_layout(panel.layout, "audio_distance").active)
 
+    def test_scene_reference_card(self):
+        reference = add_component(self.obj, "SCENE_REFERENCE")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-2:], ["scene_file", "scene_index"])
+        self.assertTrue(_prop_layout(panel.layout, "scene_file").alert)
+        reference.scene_file = "//props/tree.glb"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertFalse(_prop_layout(panel.layout, "scene_file").alert)
+        self.assertEqual(addon.property.BEVY_PG_component.bl_rna.properties["scene_file"].subtype, "FILE_PATH")
+
+    def test_animation_card(self):
+        add_component(self.obj, "ANIMATION")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        searches = [(bound["property"], bound["search_data"], bound["search_property"]) for name, bound, layout in panel.layout.calls if name == "prop_search"]
+        self.assertEqual(searches, [("animation_clip", bpy.data, "actions")])
+        self.assertEqual(panel.layout.props()[-2:], ["animation_loop", "animation_speed"])
+
     def test_sidebar_draws_components(self):
         add_component(self.obj, "RIGID_BODY")
         select(self.obj)
@@ -944,7 +1016,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.props(), ["enabled"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
-        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "scene_references", "labels", "xray", "edit_handles", "max_mesh_edges"])
         settings.enabled = False
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
@@ -992,7 +1064,7 @@ class TestPanels(unittest.TestCase):
             "AUTOMATIC": include + ["etc1s_quality", "etc1s_effort", "uastc_quality", "uastc_zstd"],
         }
         for mode, props in expected.items():
-            operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, texture_compression=mode, selected_only=False, include_lights=True, include_cameras=False, include_animations=False, etc1s_quality=128, etc1s_effort=2, uastc_quality=2, uastc_zstd=18)
+            operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, filepath="", texture_compression=mode, selected_only=False, include_lights=True, include_cameras=False, include_animations=False, etc1s_quality=128, etc1s_effort=2, uastc_quality=2, uastc_zstd=18)
             addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
             self.assertEqual(operator.layout.props(), props, mode)
             self.assertIn("Texture Compression", operator.layout.texts())
@@ -1370,6 +1442,44 @@ class TestViewport(unittest.TestCase):
             shadows.shadows_cast = cast
             shadows.shadows_receive = receive
             self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [f"Shadows · {label}", "Audio · wind.ogg · loop · paused · same volume everywhere"])
+
+    def test_scene_reference_preview_shows_the_scene_bounds(self):
+        holder = add_empty("holder", (4, 5, 6))
+        holder.rotation_euler = (0, 0, 0.5)
+        holder.scale = (2, 2, 2)
+        bpy.context.view_layer.update()
+        reference = add_component(holder, "SCENE_REFERENCE", scene_file=str(FIXTURE.parent / PROP))
+        select(holder)
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        self.assertEqual([(color, width) for matrix, lines, color, width in batches], [(addon.overlay.SCENE_COLOR, 1.5)])
+        matrix, lines, color, width = batches[0]
+        self.assertEqual(matrix, holder.matrix_world)
+        points = [Vector(point) for line in lines for point in line]
+        minimum = [min(point[axis] for point in points) for axis in range(3)]
+        maximum = [max(point[axis] for point in points) for axis in range(3)]
+        self.assertEqual(_rounded(minimum + maximum), [-1.2, -0.45, 0.0, 1.2, 0.3, 3.0])
+        self.assertEqual(addon.overlay._label_lines(holder, self.settings, {}), ["Scene · windmill.glb#Scene0"])
+        reference.scene_index = 1
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        reference.scene_file = "//missing.glb"
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(holder, self.settings, {}), ["Scene · missing.glb#Scene1"])
+        reference.scene_file = ""
+        self.assertEqual(addon.overlay._label_lines(holder, self.settings, {}), ["Scene · no file#Scene1"])
+        reference.scene_file = str(FIXTURE.parent / PROP)
+        reference.scene_index = 0
+        self.settings.scene_references = False
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(holder, self.settings, {}), [])
+        self.settings.scene_references = True
+
+    def test_animation_labels(self):
+        animation = add_component(self.obj, "ANIMATION")
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Animation · no clip · loop · 1×"])
+        animation.animation_clip = "door_open"
+        animation.animation_loop = False
+        animation.animation_speed = 0.5
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Animation · door_open · once · 0.5×"])
 
     def test_preview_batches(self):
         add_component(self.obj, "COLLIDER", collider_sensor=True)
@@ -1782,6 +1892,60 @@ class TestValidation(unittest.TestCase):
         body.rigid_body_kind = "KINEMATIC"
         self.assertEqual(self._messages(), [])
 
+    def test_scene_reference_files(self):
+        holder = add_empty("holder", (0, 0, 0))
+        reference = add_component(holder, "SCENE_REFERENCE")
+        self.assertEqual(self._messages(), ["holder: Scene Reference needs a glTF file"])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "notes.txt").write_text("windmill")
+            (root / "broken.glb").write_bytes(b"glTF broken")
+            cases = (
+                (str(FIXTURE.parent / PROP), 0, []),
+                (str(FIXTURE.parent / PROP), 1, ["windmill.glb has 1 scene, numbered from 0"]),
+                (str(root / "missing.glb"), 0, [f"No file at {root / 'missing.glb'}"]),
+                (str(root / "notes.txt"), 0, ["notes.txt is not a .glb or .gltf file"]),
+                (str(root / "broken.glb"), 0, ["broken.glb is not a valid glTF file"]),
+            )
+            for path, index, messages in cases:
+                reference.scene_file = path
+                reference.scene_index = index
+                self.assertEqual(self._messages(), [f"holder: {message}" for message in messages], (path, index))
+            reference.scene_file = str(root / "level.glb")
+            (root / "level.glb").write_bytes((FIXTURE.parent / PROP).read_bytes())
+            issues = addon.validation.check_objects(bpy.data.objects, level=root / "level.glb")
+            self.assertEqual([addon.validation.describe(issue) for issue in issues], ["holder: Spawns the exported level inside itself, so the game skips it"])
+
+    def test_scene_references_on_another_drive_block_export(self):
+        holder = add_empty("holder", (0, 0, 0))
+        add_component(holder, "SCENE_REFERENCE", scene_file=str(FIXTURE.parent / PROP))
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(addon.validation, "level_path", side_effect=ValueError("path is on mount 'D:', start on mount 'C:'")):
+            path = Path(directory) / "level.glb"
+            with self.assertRaisesRegex(RuntimeError, "Cannot export: holder: windmill.glb is on another drive than the level, so the game cannot load it"):
+                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+            self.assertFalse(path.exists())
+
+    def test_animation_clips(self):
+        mill = add_empty("mill", (0, 0, 0))
+        blade = add_mesh(bpy.ops.mesh.primitive_cube_add, "blade")
+        blade.parent = mill
+        animate(blade, "spin", "rotation_euler", 1, [(1, 0.0), (10, 1.0)])
+        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door")
+        animate(door, "open", "rotation_euler", 2, [(1, 0.0), (10, 1.0)])
+        animation = add_component(mill, "ANIMATION", animation_clip="")
+        self.assertEqual(self._messages(), ["mill: No clip picked, so nothing plays"])
+        for clip, messages in (("spin", []), ("missing", ["No action named missing"]), ("open", ["open animates nothing on or under this object, so nothing plays"])):
+            animation.animation_clip = clip
+            self.assertEqual(self._messages(), [f"mill: {message}" for message in messages], clip)
+        add_component(blade, "ANIMATION", animation_clip="spin")
+        animation.animation_clip = "spin"
+        self.assertEqual(self._messages(), [])
+        blade.bevy_component_data.components[0].animation_clip = "open"
+        self.assertEqual(self._messages(), ["blade: open animates nothing on or under mill, so nothing plays"])
+        blade.bevy_component_data.components[0].animation_clip = "spin"
+        issues = addon.validation.check_objects(bpy.data.objects, animations=False)
+        self.assertEqual([addon.validation.describe(issue) for issue in issues], ["blade: Include Animations is off in the export, so nothing plays", "mill: Include Animations is off in the export, so nothing plays"])
+
     def test_custom_component_type_paths(self):
         marker = add_empty("marker", (0, 0, 0))
         add_component(marker, "CUSTOM", custom_type="my_game::Wrapper<f32>")
@@ -1830,12 +1994,12 @@ class TestValidation(unittest.TestCase):
 
     def test_export_dialog_lists_problems(self):
         properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
-        operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
+        operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, filepath="", texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
         addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
         self.assertIn("No problems found", operator.layout.texts())
         for index in range(8):
             add_component(add_empty(f"holder_{index}", (index, 0, 0)), "VISIBILITY_RANGE")
-        operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
+        operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, filepath="", texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
         addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
         texts = operator.layout.texts()
         self.assertIn("8 warnings", texts)
@@ -1846,8 +2010,9 @@ class TestValidation(unittest.TestCase):
 class TestExport(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        build_sample_level()
         cls.directory = tempfile.TemporaryDirectory()
+        cls.props = export_props(cls.directory.name)
+        build_sample_level(cls.directory.name)
         cls.gltf = export_sample_level(Path(cls.directory.name) / "sample_level.glb")
         cls.nodes = {node["name"]: node for node in cls.gltf["nodes"]}
 
@@ -1885,6 +2050,26 @@ class TestExport(unittest.TestCase):
     def test_fixture_is_current(self):
         self.assertTrue(FIXTURE.is_file(), f"Missing {FIXTURE}, run tests/blender/sample_level.py to create it")
         self.assertEqual(_node_summary(read_gltf(FIXTURE)), _node_summary(self.gltf), "importer/tests/assets/sample_level.glb is out of date, run tests/blender/sample_level.py to regenerate it")
+
+    def test_prop_fixture_is_current(self):
+        path = FIXTURE.parent / PROP
+        self.assertTrue(path.is_file(), f"Missing {path}, run tests/blender/sample_level.py to create it")
+        self.assertEqual(_node_summary(read_gltf(path)), _node_summary(self.props), f"importer/tests/assets/{PROP.as_posix()} is out of date, run tests/blender/sample_level.py to regenerate it")
+
+    def test_animations_start_at_zero(self):
+        for gltf, name in ((self.gltf, "gate_open"), (self.props, "windmill_spin")):
+            self.assertEqual([animation["name"] for animation in gltf["animations"]], [name])
+            inputs = {gltf["accessors"][sampler["input"]]["min"][0] for sampler in gltf["animations"][0]["samplers"]}
+            self.assertEqual(inputs, {0.0}, name)
+        blades = json.loads(next(node for node in self.props["nodes"] if node["name"] == "windmill_blades")["extras"]["bevy_components"])
+        self.assertEqual(blades["components"], [{"type": "animation", "clip": "windmill_spin", "repeat": True, "speed": 0.5}])
+
+    def test_scene_reference_paths_follow_the_level(self):
+        path = Path(self.directory.name) / "levels" / "level.glb"
+        gltf = export_sample_level(path, include_animations=False)
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertEqual(json.loads(nodes["windmill_a"]["extras"]["bevy_components"])["components"], [{**WINDMILL, "path": "../props/windmill.glb"}])
+        self.assertNotIn("animations", gltf)
 
     def test_plain_gltf_export_leaves_out_editor_state(self):
         path = Path(self.directory.name) / "plain.glb"
@@ -1963,9 +2148,10 @@ def _material_summary(gltf):
 class TestTextureCompression(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        build_sample_level()
-        cls.images = _image_state()
         cls.directory = tempfile.TemporaryDirectory()
+        export_props(cls.directory.name)
+        build_sample_level(cls.directory.name)
+        cls.images = _image_state()
         cls.cache = Path(cls.directory.name) / "texture_cache"
         cls.cache.mkdir()
         cls.cache_patch = mock.patch.object(addon.operator, "texture_cache", return_value=cls.cache)

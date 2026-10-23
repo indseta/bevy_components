@@ -11,6 +11,8 @@ COMPONENT_TYPES = [
     ("RIGID_BODY", "Rigid Body", "Avian rigid body that is static, dynamic or kinematic", "RIGID_BODY", 2),
     ("CUSTOM", "Custom Component", "Any Rust component, filled in from JSON by your game", "FILE_SCRIPT", 4),
     ("JOINT", "Joint", "Avian joint that connects two rigid bodies, or pins one body to a spot in the level", "CON_PIVOT", 5),
+    ("SCENE_REFERENCE", "Scene Reference", "Spawn a scene from another glTF file at this object, like a prefab", "OUTLINER_OB_GROUP_INSTANCE", 10),
+    ("ANIMATION", "Animation", "Play an animation clip when the level loads", "ACTION", 11),
     ("SHADOWS", "Shadows", "Stop the object's meshes from casting or receiving shadows", "SHADING_RENDERED", 15),
     ("AUDIO_PLAYER", "Audio Player", "Play a sound from your game's assets folder, optionally in 3D at the object's position", "SPEAKER", 16),
 ]
@@ -18,6 +20,7 @@ COMPONENT_TYPES = [
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
 LAYER_COUNT = 32
 AUDIO_FORMATS = (".ogg", ".oga", ".spx", ".wav", ".mp3", ".flac")
+PATH_OPTIONS = {"PATH_SUPPORTS_BLEND_RELATIVE"} if "is_path_supports_blend_relative" in bpy.types.Property.bl_rna.properties else set()
 
 FIELD_TYPES = [
     ("FLOAT", "Float", "Decimal number, read as f32"),
@@ -140,6 +143,11 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
     use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")
     fields: CollectionProperty(type=BEVY_PG_field)
+    scene_file: StringProperty(name="File", description="glTF file whose scene spawns at this object. It is stored relative to the exported level, so keep both in your game's assets folder", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    scene_index: IntProperty(name="Scene", description="Which scene of the file to spawn, counting from 0 like Bevy's Scene0 label", default=0, min=0, update=sync_changed)
+    animation_clip: StringProperty(name="Clip", description="Action to play, exported as the glTF animation of the same name", update=sync_changed)
+    animation_loop: BoolProperty(name="Loop", description="Start over at the end instead of stopping on the last frame", default=True, update=sync_changed)
+    animation_speed: FloatProperty(name="Speed", description="Playback speed, where 1 matches the timing in Blender", default=1.0, min=0.0, soft_max=4.0, update=sync_changed)
 
 
 class BEVY_PG_object_data(bpy.types.PropertyGroup):
@@ -169,6 +177,7 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     velocities: BoolProperty(name="Velocities", description="Draw the velocity and spin rigid bodies start with as arrows", default=True, update=redraw_viewports)
     visibility_ranges: BoolProperty(name="Visibility Ranges", description="Draw fade distances as spheres", default=True, update=redraw_viewports)
     audio_ranges: BoolProperty(name="Audio Ranges", description="Draw where spatial sounds play at full volume and where they fade to 1%", default=True, update=redraw_viewports)
+    scene_references: BoolProperty(name="Scene References", description="Draw the bounds of referenced scenes", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
     edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders and spatial audio ranges", default=True, update=redraw_viewports)

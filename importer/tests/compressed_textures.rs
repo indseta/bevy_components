@@ -45,6 +45,7 @@ fn images(world: &mut World) -> BTreeMap<String, Image> {
 fn load(file: &str, formats: Option<CompressedImageFormats>) -> App {
     let mut app = LevelApp { formats, ..default() }.build();
     app.world_mut().resource_mut::<Time<Physics>>().pause();
+    app.world_mut().resource_mut::<Time<Virtual>>().pause();
     if let Err(error) = spawn_level(&mut app, file) {
         panic!("{file} did not load: {error}");
     }
@@ -83,9 +84,23 @@ fn psnr(expected: &[u8], found: &[u8]) -> f64 {
     return 10.0 * (255.0 * 255.0 / error.max(1e-9)).log10();
 }
 
+fn name_path(world: &World, entity: Entity) -> String {
+    let mut names = Vec::new();
+    let mut cursor = Some(entity);
+    while let Some(current) = cursor {
+        if let Some(name) = world.get::<Name>(current) {
+            names.push(name.to_string());
+        }
+        cursor = world.get::<ChildOf>(current).map(ChildOf::parent);
+    }
+    names.reverse();
+    return names.join("/");
+}
+
 fn component_snapshot(world: &mut World) -> BTreeMap<String, String> {
-    let mut entities = world.query::<(Entity, &Name)>();
-    let entities: Vec<(Entity, String)> = entities.iter(world).map(|(entity, name)| (entity, name.to_string())).collect();
+    let mut named = world.query_filtered::<Entity, With<Name>>();
+    let named: Vec<Entity> = named.iter(world).collect();
+    let entities: Vec<(Entity, String)> = named.into_iter().map(|entity| (entity, name_path(world, entity))).collect();
     let mut snapshot = BTreeMap::new();
     for (entity, name) in entities {
         let parent = world.get::<ChildOf>(entity).and_then(|child_of| world.get::<Name>(child_of.parent())).map(|name| name.to_string());
