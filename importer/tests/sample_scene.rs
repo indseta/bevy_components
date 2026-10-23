@@ -122,7 +122,7 @@ fn scale(world: &World, entity: Entity) -> Option<Vec3> {
 
 #[test]
 fn visibility_ranges_are_set_on_meshes() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let expected = [("crate", 20.0..25.0, 80.0..85.0, false), ("crate_copy", 20.0..25.0, 80.0..85.0, false), ("house", 80.0..85.0, 250.0..260.0, true), ("chimney", 80.0..85.0, 250.0..260.0, true), ("tree_lod0", 0.0..0.0, 20.0..25.0, false), ("tree_lod1", 20.0..25.0, 100.0..120.0, false)];
     for (name, start, end, use_aabb) in expected {
@@ -142,7 +142,7 @@ fn visibility_ranges_are_set_on_meshes() {
 
 #[test]
 fn colliders_match_exported_shapes() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     assert!(mesh_collider(world, "ground").shape().as_trimesh().is_some());
     assert!(mesh_collider(world, "house").shape().as_trimesh().is_some());
@@ -170,7 +170,7 @@ fn colliders_match_exported_shapes() {
 
 #[test]
 fn primitive_colliders_are_added_once_per_object() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone", "cart_shape", "cart_handle", "bouncy_ball", "ghost", "ramp", "ice_block", "rubber_block"] {
         let node = node(world, name);
@@ -184,7 +184,7 @@ fn primitive_colliders_are_added_once_per_object() {
 
 #[test]
 fn sensors_are_marked() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     for name in ["trigger_zone", "pickup_zone"] {
         let node = node(world, name);
@@ -196,7 +196,7 @@ fn sensors_are_marked() {
 
 #[test]
 fn rigid_bodies_own_their_colliders() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house"), ("cart_shape", RigidBody::Dynamic, "cart"), ("cart_handle", RigidBody::Dynamic, "cart"), ("bouncy_ball", RigidBody::Dynamic, "bouncy_ball"), ("ghost", RigidBody::Dynamic, "ghost"), ("ramp", RigidBody::Static, "ramp"), ("ice_block", RigidBody::Dynamic, "ice_block"), ("rubber_block", RigidBody::Dynamic, "rubber_block")];
     for (name, kind, owner) in expected {
@@ -214,7 +214,7 @@ fn rigid_bodies_own_their_colliders() {
 
 #[test]
 fn empties_keep_positions() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     for (name, translation) in [("player_spawn", Vec3::new(2.0, 0.0, -3.0)), ("enemy_spawn", Vec3::new(-6.0, 0.0, 6.0))] {
         let node = node(world, name);
@@ -224,7 +224,7 @@ fn empties_keep_positions() {
 
 #[test]
 fn custom_components_keep_type_paths_and_data() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let expected = [("player_spawn", vec![("my_game::PlayerSpawn", json!({}))]), ("enemy_spawn", vec![("my_game::EnemySpawn", json!({})), ("my_game::Wave", json!({"count": 3, "delay": 1.5}))]), ("lamp", vec![("my_game::Glow", json!({"color": [1.0, 0.8, 0.6], "label": "Lamp ✦"})), ("my_game::Flicker", json!(0.25))]), ("pickup_zone", vec![("my_game::Pickup", json!({"item": "coin", "amount": 5, "respawn": true, "weight": 0.1, "spin": [0.0, 1.5, 0.0], "glow": {"Srgba": {"red": 1.0, "green": 0.8, "blue": 0.2, "alpha": 1.0}}}))])];
     for (name, components) in expected {
@@ -240,7 +240,7 @@ fn custom_components_keep_type_paths_and_data() {
 
 #[test]
 fn custom_component_fields_deserialize_into_rust_types() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let node = node(world, "pickup_zone");
     let custom = world.get::<BlenderCustomComponents>(node).expect("pickup_zone has custom components");
@@ -251,7 +251,7 @@ fn custom_component_fields_deserialize_into_rust_types() {
 
 #[test]
 fn only_component_data_is_exported() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let mut extras = world.query::<(&Name, &GltfExtras)>();
     let mut count = 0;
@@ -265,7 +265,7 @@ fn only_component_data_is_exported() {
 
 #[test]
 fn fog_volumes_fill_their_boxes() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let volume = child_with::<FogVolume>(world, "fog_bank");
     let fog = world.get::<FogVolume>(volume).expect("fog_bank has a fog volume");
@@ -276,7 +276,7 @@ fn fog_volumes_fill_their_boxes() {
 
 #[test]
 fn reflection_probes_filter_embedded_cubemaps() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let probe = child_with::<LightProbe>(world, "room_probe");
     assert_eq!(world.get::<LightProbe>(probe).map(|probe| probe.falloff), Some(Vec3::splat(0.25)));
@@ -291,7 +291,7 @@ fn reflection_probes_filter_embedded_cubemaps() {
 
 #[test]
 fn irradiance_volumes_light_from_embedded_voxels() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let volume = child_with::<IrradianceVolume>(world, "gi_volume");
     assert_eq!(world.get::<LightProbe>(volume).map(|probe| probe.falloff), Some(Vec3::splat(0.1)));
@@ -304,7 +304,7 @@ fn irradiance_volumes_light_from_embedded_voxels() {
 
 #[test]
 fn light_probes_need_usable_textures() {
-    let mut app = LevelApp::default().build();
+    let mut app = SceneApp::default().build();
     let mut images = app.world_mut().resource_mut::<Assets<Image>>();
     let cubemaps: Vec<Handle<Image>> = [8, 12].into_iter().map(|size| images.add(Image::new_fill(Extent3d { width: size, height: size, depth_or_array_layers: 6 }, TextureDimension::D2, &[0; 8], TextureFormat::Rgba16Float, RenderAssetUsages::default()))).collect();
     let probe = |texture: Value| json!({"type": "reflection_probe", "size": [2.0, 2.0, 2.0], "falloff": [0.0, 0.0, 0.0], "intensity": 100.0, "parallax_correction": false, "texture": texture});
@@ -337,7 +337,7 @@ fn lightmap_extras(texture: Value) -> GltfExtras {
 
 #[test]
 fn lightmaps_light_meshes_from_embedded_textures() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let ground = mesh(world, "ground");
     let lightmap = world.get::<Lightmap>(ground).expect("ground has a lightmap").clone();
@@ -356,7 +356,7 @@ fn lightmaps_light_meshes_from_embedded_textures() {
 
 #[test]
 fn lightmaps_need_a_mesh_with_two_uv_maps() {
-    let mut app = LevelApp::default().build();
+    let mut app = SceneApp::default().build();
     let world = app.world_mut();
     let image = world.resource_mut::<Assets<Image>>().add(Image::default());
     let plain = Mesh::from(Plane3d::default());
@@ -385,7 +385,7 @@ fn lightmaps_need_a_mesh_with_two_uv_maps() {
 
 #[test]
 fn dynamic_bodies_rest_on_the_ground() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     for _ in 0..120 {
         app.update();
     }
@@ -400,7 +400,7 @@ fn dynamic_bodies_rest_on_the_ground() {
 
 #[test]
 fn colliders_keep_surface_and_layer_settings() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let expected = [("ground", 0.5, 0.0, CollisionLayers::DEFAULT), ("crate", 0.8, 0.1, CollisionLayers::DEFAULT), ("crate_copy", 0.8, 0.1, CollisionLayers::DEFAULT), ("rock", 0.5, 0.0, CollisionLayers::DEFAULT), ("house", 0.5, 0.0, CollisionLayers::DEFAULT), ("chimney", 0.5, 0.0, CollisionLayers::DEFAULT), ("trigger_zone", 0.5, 0.0, CollisionLayers::from_bits(0b100, 0b010)), ("cart_shape", 0.5, 0.0, CollisionLayers::DEFAULT), ("bouncy_ball", 0.5, 1.0, CollisionLayers::DEFAULT), ("ghost", 0.5, 0.0, CollisionLayers::from_bits(0b10, 0b10)), ("ice_block", 0.0, 0.0, CollisionLayers::DEFAULT), ("rubber_block", 1.0, 0.0, CollisionLayers::DEFAULT)];
     for (name, friction, restitution, layers) in expected {
@@ -416,7 +416,7 @@ fn colliders_keep_surface_and_layer_settings() {
 
 #[test]
 fn masses_set_the_total_body_mass() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     for (name, mass) in [("rock", 25.0), ("cart", 12.0)] {
         let node = node(world, name);
@@ -434,7 +434,7 @@ fn masses_set_the_total_body_mass() {
 
 #[test]
 fn restitution_makes_bodies_bounce() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let ball = node(app.world_mut(), "bouncy_ball");
     let mut fell = false;
     let mut bounced = false;
@@ -456,7 +456,7 @@ fn restitution_makes_bodies_bounce() {
 
 #[test]
 fn collision_layers_let_bodies_pass_through() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     for _ in 0..60 {
         app.update();
     }
@@ -468,7 +468,7 @@ fn collision_layers_let_bodies_pass_through() {
 
 #[test]
 fn friction_decides_whether_bodies_slide() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     for _ in 0..60 {
         app.update();
     }
@@ -483,7 +483,7 @@ fn friction_decides_whether_bodies_slide() {
 
 #[test]
 fn older_exports_keep_avian_defaults() {
-    let mut app = LevelApp::default().build();
+    let mut app = SceneApp::default().build();
     let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "collider", "shape": "cuboid", "size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": false}, {"type": "rigid_body", "kind": "dynamic"}]}).to_string()});
     let entity = app.world_mut().spawn((Name::new("old_crate"), Transform::default(), GltfExtras { value: extras.to_string() })).id();
     for _ in 0..3 {
@@ -506,7 +506,7 @@ fn older_exports_keep_avian_defaults() {
 
 #[test]
 fn locked_axes_cancel_initial_velocity() {
-    let mut app = LevelApp::default().build();
+    let mut app = SceneApp::default().build();
     let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "rigid_body", "kind": "dynamic", "gravity_scale": 0.0, "lock_translation": [true, false, false], "lock_rotation": [false, true, false], "linear_velocity": [1.0, 2.0, 3.0], "angular_velocity": [4.0, 5.0, 6.0]}]}).to_string()});
     let entity = app.world_mut().spawn((Name::new("locked"), Transform::default(), GltfExtras { value: extras.to_string() })).id();
     app.update();
@@ -518,7 +518,7 @@ fn locked_axes_cancel_initial_velocity() {
 
 #[test]
 fn rigid_bodies_keep_their_tuning() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let balloon = node(world, "balloon");
     assert_eq!(world.get::<GravityScale>(balloon), Some(&GravityScale(-0.5)));
@@ -543,7 +543,7 @@ fn rigid_bodies_keep_their_tuning() {
 
 #[test]
 fn negative_gravity_and_damping_make_bodies_rise_slowly() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let balloon = node(app.world_mut(), "balloon");
     let start = transform(app.world(), balloon).translation;
     for _ in 0..300 {
@@ -558,7 +558,7 @@ fn negative_gravity_and_damping_make_bodies_rise_slowly() {
 
 #[test]
 fn kinematic_bodies_keep_their_initial_spin() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let spinner = node(app.world_mut(), "spinner");
     let before = transform(app.world(), spinner);
     let start = physics_time(&app);
@@ -576,7 +576,7 @@ fn kinematic_bodies_keep_their_initial_spin() {
 
 #[test]
 fn locked_axes_keep_bodies_from_turning_or_lifting() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     for _ in 0..60 {
         app.update();
     }
@@ -591,7 +591,7 @@ fn locked_axes_keep_bodies_from_turning_or_lifting() {
 
 #[test]
 fn continuous_collision_stops_fast_bodies() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     for _ in 0..20 {
         app.update();
     }
@@ -601,11 +601,11 @@ fn continuous_collision_stops_fast_bodies() {
     assert!(bullet.x < target.x, "the bullet passed the target to {bullet}");
     assert!(target.x > -5.9, "the bullet did not push the target, which is at {target}");
 
-    let mut app = LevelApp::default().build();
+    let mut app = SceneApp::default().build();
     app.add_observer(|added: On<Add<SweptCcd>>, mut commands: Commands| {
         commands.entity(added.event_target()).remove::<SweptCcd>();
     });
-    spawn_level(&mut app, LEVEL).expect("level loads");
+    spawn_scene(&mut app, SCENE).expect("scene loads");
     for _ in 0..20 {
         app.update();
     }
@@ -618,7 +618,7 @@ fn continuous_collision_stops_fast_bodies() {
 
 #[test]
 fn joints_connect_the_named_bodies() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let (door_frame, door) = (node(world, "door_frame"), node(world, "door"));
     let hinge = joint::<RevoluteJoint>(world, "door_hinge").clone();
@@ -656,7 +656,7 @@ fn joints_connect_the_named_bodies() {
 
 #[test]
 fn hinges_turn_until_their_limit() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let door = node(app.world_mut(), "door");
     let frame = node(app.world_mut(), "door_frame");
     let mut widest = 0.0_f32;
@@ -677,7 +677,7 @@ fn hinges_turn_until_their_limit() {
 
 #[test]
 fn ball_joints_hold_chains_together() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let first = node(app.world_mut(), "chain_link_1");
     let second = node(app.world_mut(), "chain_link_2");
     let start = transform(app.world(), second).translation;
@@ -695,7 +695,7 @@ fn ball_joints_hold_chains_together() {
 
 #[test]
 fn sliders_stop_at_their_limit() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     for _ in 0..60 {
         app.update();
     }
@@ -708,7 +708,7 @@ fn sliders_stop_at_their_limit() {
 
 #[test]
 fn fixed_joints_move_bodies_as_one() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     for _ in 0..120 {
         app.update();
     }
@@ -722,7 +722,7 @@ fn fixed_joints_move_bodies_as_one() {
 
 #[test]
 fn joints_to_missing_bodies_are_skipped() {
-    let mut app = LevelApp::default().build();
+    let mut app = SceneApp::default().build();
     let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "joint", "kind": "revolute", "body1": "nowhere", "body2": null, "axis": [0.0, 1.0, 0.0], "collide": false}]}).to_string()});
     app.world_mut().spawn((Name::new("lost_hinge"), Transform::default(), GltfExtras { value: extras.to_string() }));
     for _ in 0..3 {
@@ -736,23 +736,23 @@ fn joints_to_missing_bodies_are_skipped() {
 }
 
 #[test]
-fn joints_pick_bodies_from_their_own_level() {
-    let mut app = LevelApp::default().build();
+fn joints_pick_bodies_from_their_own_scene() {
+    let mut app = SceneApp::default().build();
     let extras = |components: Value| GltfExtras { value: json!({"bevy_components": json!({"version": 1, "components": components}).to_string()}).to_string() };
     let body = json!([{"type": "collider", "shape": "sphere", "size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": false}, {"type": "rigid_body", "kind": "dynamic"}]);
     let hinge = json!([{"type": "joint", "kind": "spherical", "body1": null, "body2": "weight", "axis": [0.0, 1.0, 0.0], "collide": true}]);
-    let mut levels = Vec::new();
+    let mut scenes = Vec::new();
     for offset in [0.0, 10.0] {
-        let root = app.world_mut().spawn((Name::new("level"), Transform::from_xyz(offset, 0.0, 0.0))).id();
+        let root = app.world_mut().spawn((Name::new("scene"), Transform::from_xyz(offset, 0.0, 0.0))).id();
         let weight = app.world_mut().spawn((Name::new("weight"), Transform::from_xyz(0.0, -1.0, 0.0), extras(body.clone()), ChildOf(root))).id();
         let pivot = app.world_mut().spawn((Name::new("pivot"), Transform::from_xyz(0.0, 0.5, 0.0), extras(hinge.clone()), ChildOf(root))).id();
-        levels.push((root, weight, pivot));
+        scenes.push((root, weight, pivot));
     }
     for _ in 0..3 {
         app.update();
     }
     let world = app.world_mut();
-    for (root, weight, pivot) in levels {
+    for (root, weight, pivot) in scenes {
         let mut joints = world.query::<(Entity, &SphericalJoint, &ChildOf)>();
         let (joint, anchor, body) = joints.iter(world).find(|(_, _, parent)| parent.parent() == pivot).map(|(entity, joint, _)| (entity, joint.body1, joint.body2)).expect("each pivot has a joint");
         assert_eq!(body, weight);
@@ -764,7 +764,7 @@ fn joints_pick_bodies_from_their_own_level() {
 
 #[test]
 fn shadow_flags_reach_meshes_on_and_under_the_object() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     for (name, cast, receive) in [("water", false, false), ("bush_a", false, true), ("bush_b", true, true), ("ground", true, true), ("crate", true, true)] {
         let meshes = meshes(world, name);
@@ -782,9 +782,9 @@ fn shadow_flags_reach_meshes_on_and_under_the_object() {
 
 #[test]
 fn audio_players_load_sounds_from_the_assets_folder() {
-    let mut app = LevelApp { audio: true, ..default() }.build();
-    if let Err(error) = spawn_level(&mut app, LEVEL) {
-        panic!("{LEVEL} did not load: {error}");
+    let mut app = SceneApp { audio: true, ..default() }.build();
+    if let Err(error) = spawn_scene(&mut app, SCENE) {
+        panic!("{SCENE} did not load: {error}");
     }
     let expected = [("campfire", "sounds/campfire.ogg", true, 0.8, false, true, Some(Vec3::splat(0.25))), ("jingle", "sounds/chime.ogg", false, 0.5, true, false, None)];
     for (name, path, looping, volume, paused, spatial, scale) in expected {
@@ -814,7 +814,7 @@ fn audio_players_load_sounds_from_the_assets_folder() {
 
 #[test]
 fn audio_players_are_skipped_without_the_audio_plugin() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     assert!(world.get_resource::<Assets<AudioSource>>().is_none());
     let mut players = world.query::<&AudioPlayer>();
@@ -823,7 +823,7 @@ fn audio_players_are_skipped_without_the_audio_plugin() {
 
 #[test]
 fn scene_references_spawn_their_scenes() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     for (name, translation) in [("windmill_a", Vec3::new(-7.0, 1.5, 9.5)), ("windmill_b", Vec3::new(6.0, 1.125, 9.5))] {
         let root = node(world, name);
@@ -840,14 +840,14 @@ fn scene_references_spawn_their_scenes() {
 }
 
 #[test]
-fn scene_references_resolve_from_their_level() {
-    let mut app = LevelApp::default().build();
-    let level: Handle<WorldAsset> = app.world().resource::<AssetServer>().load("props/level.glb#Scene0");
-    let root = app.world_mut().spawn(WorldAssetRoot(level)).id();
+fn scene_references_resolve_from_their_scene() {
+    let mut app = SceneApp::default().build();
+    let scene: Handle<WorldAsset> = app.world().resource::<AssetServer>().load("props/scene.glb#Scene0");
+    let root = app.world_mut().spawn(WorldAssetRoot(scene)).id();
     let beside = app.world_mut().spawn((scene_reference("beside", "windmill.glb", 1), ChildOf(root))).id();
     let above = app.world_mut().spawn((scene_reference("above", "../windmill.glb", 0), ChildOf(root))).id();
-    let itself = app.world_mut().spawn((scene_reference("itself", "level.glb", 0), ChildOf(root))).id();
-    let other_scene = app.world_mut().spawn((scene_reference("other_scene", "level.glb", 2), ChildOf(root))).id();
+    let itself = app.world_mut().spawn((scene_reference("itself", "scene.glb", 0), ChildOf(root))).id();
+    let other_scene = app.world_mut().spawn((scene_reference("other_scene", "scene.glb", 2), ChildOf(root))).id();
     let outside = app.world_mut().spawn(scene_reference("outside", "props/windmill.glb", 0)).id();
     for _ in 0..3 {
         app.update();
@@ -857,15 +857,15 @@ fn scene_references_resolve_from_their_level() {
     assert_eq!(path(beside).as_deref(), Some("props/windmill.glb#Scene1"));
     assert_eq!(path(above).as_deref(), Some("windmill.glb#Scene0"));
     assert_eq!(path(itself), None);
-    assert_eq!(path(other_scene).as_deref(), Some("props/level.glb#Scene2"));
+    assert_eq!(path(other_scene).as_deref(), Some("props/scene.glb#Scene2"));
     assert_eq!(path(outside).as_deref(), Some("props/windmill.glb#Scene0"));
 }
 
 #[test]
-fn animations_start_when_the_level_loads() {
-    let mut app = load_level(LEVEL);
+fn animations_start_when_the_scene_loads() {
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
-    let mut expected = vec![(node(world, "gate"), "sample_level.glb#Animation0", RepeatAnimation::Never, 1.0)];
+    let mut expected = vec![(node(world, "gate"), "sample_scene.glb#Animation0", RepeatAnimation::Never, 1.0)];
     for name in ["windmill_a", "windmill_b"] {
         expected.push((instance_node(world, name, "windmill_tower"), "props/windmill.glb#Animation0", RepeatAnimation::Forever, 0.5));
     }
@@ -887,7 +887,7 @@ fn animations_start_when_the_level_loads() {
 
 #[test]
 fn animations_move_their_targets() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let gate = node(app.world_mut(), "gate");
     let blades: Vec<Entity> = ["windmill_a", "windmill_b"].iter().map(|name| instance_node(app.world_mut(), name, "windmill_blades")).collect();
     for _ in 0..120 {
@@ -912,7 +912,7 @@ fn animations_move_their_targets() {
 
 #[test]
 fn lights_get_the_settings_gltf_leaves_out() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let lamp = light_entity(world, "lamp_light");
     let point = world.get::<PointLight>(lamp).expect("lamp_light is a point light");
@@ -942,7 +942,7 @@ fn lights_get_the_settings_gltf_leaves_out() {
 
 #[test]
 fn area_lights_become_rect_lights() {
-    let mut app = load_level(LEVEL);
+    let mut app = load_scene(SCENE);
     let world = app.world_mut();
     let mut lights = world.query::<(&Name, &RectLight, &GlobalTransform)>();
     let found: Vec<(String, RectLight, Vec3)> = lights.iter(world).map(|(name, light, transform)| (name.to_string(), *light, Vec3::from(transform.forward()))).collect();
@@ -956,14 +956,14 @@ fn area_lights_become_rect_lights() {
 
 #[test]
 fn ambient_light_comes_from_the_scene() {
-    let app = load_level(LEVEL);
+    let app = load_scene(SCENE);
     let ambient = app.world().resource::<GlobalAmbientLight>();
     assert_eq!((ambient.color, ambient.brightness, ambient.affects_lightmapped_meshes), (Color::linear_rgb(0.9, 0.95, 1.0), 120.0, true));
 }
 
 #[test]
 fn invalid_light_settings_are_skipped() {
-    let mut app = LevelApp::default().build();
+    let mut app = SceneApp::default().build();
     let light = json!({"type": "light", "kind": "directional", "shadows": true, "contact_shadows": false, "volumetric": false, "baked": true, "cascades": {"count": 3, "minimum_distance": 10.0, "first_cascade_far_bound": 5.0, "maximum_distance": 100.0, "overlap_proportion": 0.2}});
     let world = app.world_mut();
     let sun = world.spawn((Name::new("bad_cascades"), Transform::default(), light_extras(json!([light])))).with_child(DirectionalLight::default()).id();

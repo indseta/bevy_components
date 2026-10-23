@@ -11,7 +11,7 @@ from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, visibi
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, children_map, component_of, components_for, file_path, has_faces, inherited, level_path, lightmap_uv_map, mesh_sources, object_actions, subtree
+from .system import MESH_TYPES, children_map, component_of, components_for, file_path, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -63,13 +63,13 @@ def draw_issues(layout, rows, limit, more, select=False, width=300):
         layout.label(text=f"{len(rows) - limit} more {more}", icon="BLANK1")
 
 
-def check_objects(objects, level=None, animations=True):
+def check_objects(objects, destination=None, animations=True):
     objects = list(objects)
     children = children_map(objects)
     exported = set(objects)
     issues = []
     for obj in objects:
-        issues.extend(_object_issues(obj, children, exported, level, animations))
+        issues.extend(_object_issues(obj, children, exported, destination, animations))
     issues.extend(_visibility_range_issues(objects))
     return issues
 
@@ -79,7 +79,7 @@ def check_object(obj, objects):
     return _object_issues(obj, children_map(objects), set(objects)) + _visibility_range_issues(objects, obj)
 
 
-def _object_issues(obj, children, exported, level=None, animations=True):
+def _object_issues(obj, children, exported, destination=None, animations=True):
     issues = []
     custom_types = set()
     for item in components_for(obj):
@@ -97,7 +97,7 @@ def _object_issues(obj, children, exported, level=None, animations=True):
         elif item.component_type == "JOINT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _joint_warnings(obj, item, exported))
         elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
-            issues.extend(_scene_reference_issues(obj, item, level))
+            issues.extend(_scene_reference_issues(obj, item, destination))
         elif item.component_type == "ANIMATION":
             issues.extend(Issue("WARNING", obj, item, message) for message in _animation_warnings(obj, item, children, animations))
         elif item.component_type == "LIGHTMAP":
@@ -201,7 +201,7 @@ def _joint_warnings(obj, item, exported):
         kind = body_kind(body)
         kinds.append(kind)
         if body not in exported:
-            warnings.append(f"{body.name} is not exported with this level, so the joint holds nothing")
+            warnings.append(f"{body.name} is not exported with this scene, so the joint holds nothing")
         elif kind is None:
             parent, _owner = inherited(body.parent, "RIGID_BODY")
             warnings.append(f"{body.name} is part of {parent.name}'s body, so pick {parent.name}" if parent is not None else f"{body.name} has no Rigid Body or Collider, so the joint holds nothing")
@@ -240,16 +240,16 @@ def _audio_warnings(item):
     return warnings
 
 
-def _scene_reference_issues(obj, item, level):
+def _scene_reference_issues(obj, item, destination):
     path = file_path(item.scene_file)
     try:
-        level_path(item.scene_file, None if level is None else level.parent)
+        scene_path(item.scene_file, None if destination is None else destination.parent)
     except ValueError:
-        return [Issue("ERROR", obj, item, f"{path.name} is on another drive than the level, so the game cannot load it")]
+        return [Issue("ERROR", obj, item, f"{path.name} is on another drive than the exported scene, so the game cannot load it")]
     if path.suffix.lower() not in SCENE_EXTENSIONS:
         return [Issue("WARNING", obj, item, f"{path.name} is not a .glb or .gltf file")]
-    if level is not None and path == Path(os.path.abspath(level)):
-        return [Issue("WARNING", obj, item, "Spawns the exported level inside itself, so the game skips it")]
+    if destination is not None and path == Path(os.path.abspath(destination)):
+        return [Issue("WARNING", obj, item, "Spawns the exported scene inside itself, so the game skips it")]
     try:
         scenes = read_scenes(path)
     except OSError:

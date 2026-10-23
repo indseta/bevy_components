@@ -252,14 +252,14 @@ pub fn build_joints(mut commands: Commands, joints: Query<(Entity, &PendingJoint
 pub fn spawn_scene_references(mut commands: Commands, references: Query<(Entity, &PendingSceneReference, Option<&Name>)>, parents: Query<&ChildOf>, roots: Query<&WorldAssetRoot>, asset_server: Res<AssetServer>) {
     for (entity, reference, name) in &references {
         commands.entity(entity).remove::<PendingSceneReference>();
-        let levels: Vec<AssetPath<'static>> = parents.iter_ancestors(entity).filter_map(|ancestor| roots.get(ancestor).ok()?.0.path().cloned()).collect();
-        let base = levels.first().map(|level| level.without_label().clone_owned()).unwrap_or_default();
+        let scenes: Vec<AssetPath<'static>> = parents.iter_ancestors(entity).filter_map(|ancestor| roots.get(ancestor).ok()?.0.path().cloned()).collect();
+        let base = scenes.first().map(|scene| scene.without_label().clone_owned()).unwrap_or_default();
         let Ok(path) = base.resolve_embed_str(&reference.path) else {
             warn!("Invalid scene reference path {} on {:?}", reference.path, name);
             continue;
         };
         let path = path.with_label(GltfAssetLabel::Scene(reference.scene).to_string());
-        if levels.contains(&path) {
+        if scenes.contains(&path) {
             warn!("Scene reference on {:?} would spawn {} inside itself", name, path);
             continue;
         }

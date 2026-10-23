@@ -43,10 +43,10 @@ fn images(world: &mut World) -> BTreeMap<String, Image> {
 }
 
 fn load(file: &str, formats: Option<CompressedImageFormats>) -> App {
-    let mut app = LevelApp { formats, ..default() }.build();
+    let mut app = SceneApp { formats, ..default() }.build();
     app.world_mut().resource_mut::<Time<Physics>>().pause();
     app.world_mut().resource_mut::<Time<Virtual>>().pause();
-    if let Err(error) = spawn_level(&mut app, file) {
+    if let Err(error) = spawn_scene(&mut app, file) {
         panic!("{file} did not load: {error}");
     }
     return app;
@@ -138,8 +138,8 @@ fn material_snapshot(world: &mut World) -> BTreeMap<String, String> {
 }
 
 #[test]
-fn compressed_levels_load_from_the_ordinary_scene_path() {
-    for file in COMPRESSED_LEVELS {
+fn compressed_scenes_load_from_the_ordinary_scene_path() {
+    for file in COMPRESSED_SCENES {
         let mut app = load(file, None);
         let images = images(app.world_mut());
         assert_eq!(images.len(), 14, "{file}");
@@ -152,9 +152,9 @@ fn compressed_levels_load_from_the_ordinary_scene_path() {
 }
 
 #[test]
-fn typed_gltf_handles_load_compressed_levels() {
-    for file in COMPRESSED_LEVELS {
-        let mut app = LevelApp::default().build();
+fn typed_gltf_handles_load_compressed_scenes() {
+    for file in COMPRESSED_SCENES {
+        let mut app = SceneApp::default().build();
         let handle = load_gltf(&mut app, file).unwrap_or_else(|error| panic!("{file} did not load: {error}"));
         let gltf = app.world().resource::<Assets<Gltf>>().get(&handle).unwrap_or_else(|| panic!("{file} has no Gltf asset"));
         assert_eq!(gltf.materials.len(), 7, "{file}");
@@ -163,22 +163,22 @@ fn typed_gltf_handles_load_compressed_levels() {
 }
 
 #[test]
-fn components_match_the_uncompressed_level() {
-    let expected = component_snapshot(load(LEVEL, None).world_mut());
+fn components_match_the_uncompressed_scene() {
+    let expected = component_snapshot(load(SCENE, None).world_mut());
     assert!(expected.len() > 20);
-    for file in COMPRESSED_LEVELS {
+    for file in COMPRESSED_SCENES {
         let found = component_snapshot(load(file, None).world_mut());
         assert_eq!(found, expected, "{file}");
     }
 }
 
 #[test]
-fn materials_match_the_uncompressed_level() {
-    let expected = material_snapshot(load(LEVEL, None).world_mut());
+fn materials_match_the_uncompressed_scene() {
+    let expected = material_snapshot(load(SCENE, None).world_mut());
     assert_eq!(expected.len(), 8);
     assert!(expected["crate.crate_metal"].contains("Blend"));
     assert!(expected["ground.ground_wood"].contains("uv_transform"));
-    for file in COMPRESSED_LEVELS {
+    for file in COMPRESSED_SCENES {
         let found = material_snapshot(load(file, None).world_mut());
         assert_eq!(found, expected, "{file}");
     }
@@ -187,7 +187,7 @@ fn materials_match_the_uncompressed_level() {
 #[test]
 fn textures_transcode_to_supported_gpu_formats() {
     let format_sets = [CompressedImageFormats::BC, CompressedImageFormats::ETC2, CompressedImageFormats::ASTC_LDR, CompressedImageFormats::ETC2 | CompressedImageFormats::ASTC_LDR, CompressedImageFormats::BC | CompressedImageFormats::ETC2 | CompressedImageFormats::ASTC_LDR];
-    for file in COMPRESSED_LEVELS {
+    for file in COMPRESSED_SCENES {
         for formats in format_sets {
             let mut app = load(file, Some(formats));
             let images = images(app.world_mut());
@@ -217,8 +217,8 @@ fn expected_size(image: &Image) -> usize {
 
 #[test]
 fn decoded_textures_match_the_source_images() {
-    let expected = images(load(LEVEL, None).world_mut());
-    for file in COMPRESSED_LEVELS {
+    let expected = images(load(SCENE, None).world_mut());
+    for file in COMPRESSED_SCENES {
         let found = images(load(file, None).world_mut());
         for (key, image) in &found {
             let source = &expected[key];
@@ -236,7 +236,7 @@ fn decoded_textures_match_the_source_images() {
 
 #[test]
 fn shared_textures_and_materials_keep_shared_handles() {
-    for file in std::iter::once(LEVEL).chain(COMPRESSED_LEVELS) {
+    for file in std::iter::once(SCENE).chain(COMPRESSED_SCENES) {
         let mut app = load(file, None);
         let materials = materials(app.world_mut());
         assert_eq!(materials["crate.crate_wood"], materials["crate_copy.crate_wood"], "{file}");
@@ -248,27 +248,27 @@ fn shared_textures_and_materials_keep_shared_handles() {
 }
 
 #[test]
-fn compressed_levels_need_the_plugin() {
-    for file in COMPRESSED_LEVELS {
-        let mut app = LevelApp { plugin: false, ..default() }.build();
-        let error = spawn_level(&mut app, file).expect_err("compressed levels fail without the plugin");
+fn compressed_scenes_need_the_plugin() {
+    for file in COMPRESSED_SCENES {
+        let mut app = SceneApp { plugin: false, ..default() }.build();
+        let error = spawn_scene(&mut app, file).expect_err("compressed scenes fail without the plugin");
         assert!(error.contains("KHR_texture_basisu"), "{file}: {error}");
     }
-    let mut app = LevelApp { plugin: false, ..default() }.build();
-    assert!(spawn_level(&mut app, LEVEL).is_ok());
+    let mut app = SceneApp { plugin: false, ..default() }.build();
+    assert!(spawn_scene(&mut app, SCENE).is_ok());
 }
 
 #[test]
 fn broken_textures_report_an_error() {
     let directory = std::env::temp_dir().join(format!("bevy_components_broken_{}", std::process::id()));
     fs::create_dir_all(&directory).expect("temporary directory");
-    let mut bytes = fs::read(format!("{ASSETS}/sample_level_uastc.glb")).expect("fixture");
+    let mut bytes = fs::read(format!("{ASSETS}/sample_scene_uastc.glb")).expect("fixture");
     let identifier = [0xAB, b'K', b'T', b'X', b' ', b'2', b'0', 0xBB];
     let start = bytes.windows(identifier.len()).position(|window| window == identifier).expect("embedded KTX2 texture");
     bytes[start + 80..start + 200].fill(0xFF);
-    fs::write(directory.join("broken.glb"), &bytes).expect("broken level");
-    let mut app = LevelApp { assets: directory.to_string_lossy().to_string(), ..default() }.build();
-    let error = spawn_level(&mut app, "broken.glb").expect_err("broken textures fail to load");
+    fs::write(directory.join("broken.glb"), &bytes).expect("broken scene");
+    let mut app = SceneApp { assets: directory.to_string_lossy().to_string(), ..default() }.build();
+    let error = spawn_scene(&mut app, "broken.glb").expect_err("broken textures fail to load");
     fs::remove_dir_all(&directory).ok();
     assert!(error.contains("Basis Universal") || error.contains("KTX2"), "{error}");
 }

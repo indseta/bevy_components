@@ -139,7 +139,7 @@ def file_path(path):
     return Path(os.path.abspath(bpy.path.abspath(path)))
 
 
-def level_path(path, directory=None):
+def scene_path(path, directory=None):
     if not path.strip():
         return ""
     return relative_path(str(file_path(path)), str(directory or blend_directory()))
@@ -173,7 +173,7 @@ def sync_object(obj, directory=None):
     items = components_for(obj)
     if items:
         try:
-            obj[EXTRAS_KEY] = serialize_items(items, lambda path: level_path(path, directory))
+            obj[EXTRAS_KEY] = serialize_items(items, lambda path: scene_path(path, directory))
         except ValueError:
             obj.pop(EXTRAS_KEY, None)
     else:

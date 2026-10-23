@@ -2,7 +2,7 @@ schema_version = "1.0.0"
 id = "bevy_components"
 version = "0.4.0"
 name = "Bevy Components"
-tagline = "Author Bevy object components and export complete glTF levels"
+tagline = "Author Bevy object components and export complete glTF scenes"
 maintainer = "Ask Indset"
 type = "add-on"
 website = "https://github.com/indseta/bevy_components"
@@ -12,4 +12,4 @@ license = ["SPDX:MIT"]
 copyright = ["2026 Ask Indset"]
 
 [permissions]
-files = "Export levels and run the KTX-Software texture encoder"
+files = "Export scenes and run the KTX-Software texture encoder"

@@ -213,8 +213,8 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual(metadata.validate_items([component], "mill"), ["mill: Scene Reference needs a glTF file"])
 
     def test_relative_path(self):
-        self.assertEqual(metadata.relative_path("/game/assets/props/windmill.glb", "/game/assets/levels"), "../props/windmill.glb")
-        self.assertEqual(metadata.relative_path("/game/assets/levels/house.glb", "/game/assets/levels"), "house.glb")
+        self.assertEqual(metadata.relative_path("/game/assets/props/windmill.glb", "/game/assets/scenes"), "../props/windmill.glb")
+        self.assertEqual(metadata.relative_path("/game/assets/scenes/house.glb", "/game/assets/scenes"), "house.glb")
 
     def test_animation(self):
         component = item(component_type="ANIMATION", animation_clip="door_open", animation_loop=False, animation_speed=0.30000001192092896)

@@ -20,10 +20,10 @@ fn render(file: &str, formats: Option<CompressedImageFormats>) -> Render {
 }
 
 fn render_with(file: &str, formats: Option<CompressedImageFormats>, variant: &str, change: impl FnOnce(&mut World, Entity)) -> Render {
-    let mut app = LevelApp { gpu: true, formats, ..default() }.build();
+    let mut app = SceneApp { gpu: true, formats, ..default() }.build();
     app.world_mut().resource_mut::<Time<Physics>>().pause();
     app.world_mut().resource_mut::<Time<Virtual>>().pause();
-    if let Err(error) = spawn_level(&mut app, file) {
+    if let Err(error) = spawn_scene(&mut app, file) {
         panic!("{file} did not load: {error}");
     }
     let world = app.world_mut();
@@ -111,19 +111,19 @@ fn colors(pixels: &[u8]) -> usize {
 
 #[test]
 #[ignore = "needs a GPU, run with cargo test -- --ignored"]
-fn compressed_levels_render_like_the_uncompressed_level() {
-    let reference = render(LEVEL, None);
+fn compressed_scenes_render_like_the_uncompressed_scene() {
+    let reference = render(SCENE, None);
     println!("Adapter {} supports {:?}", reference.adapter, reference.device);
     assert!(colors(&reference.pixels) > 500, "the reference render shows no textures");
     let candidates = [CompressedImageFormats::NONE, CompressedImageFormats::BC, CompressedImageFormats::ETC2, CompressedImageFormats::ASTC_LDR];
     let mut rendered = 0;
     for formats in candidates.into_iter().filter(|formats| reference.device.contains(*formats)) {
-        for file in COMPRESSED_LEVELS {
+        for file in COMPRESSED_SCENES {
             let found = render(file, Some(formats));
             let (mean, percentile) = difference(&reference.pixels, &found.pixels);
             println!("{file} with {formats:?} as {:?}: mean difference {mean:.2}, 99th percentile {percentile}", found.formats);
             assert!(found.formats.iter().all(|format| formats.supports(*format) && format.is_compressed() != formats.is_empty()), "{file} with {formats:?} used {:?}", found.formats);
-            assert!(mean < 3.5 && percentile < 48.0, "{file} with {formats:?} differs from the uncompressed level: mean {mean:.2}, 99th percentile {percentile}");
+            assert!(mean < 3.5 && percentile < 48.0, "{file} with {formats:?} differs from the uncompressed scene: mean {mean:.2}, 99th percentile {percentile}");
             rendered += 1;
         }
     }
@@ -133,25 +133,25 @@ fn compressed_levels_render_like_the_uncompressed_level() {
 #[test]
 #[ignore = "needs a GPU, run with cargo test -- --ignored"]
 fn light_probes_and_fog_volumes_change_the_render() {
-    let reference = render(LEVEL, None);
-    let without_probes = render_with(LEVEL, None, "_without_probes", |world, _camera| despawn::<LightProbe>(world));
-    let without_fog = render_with(LEVEL, None, "_without_fog", |world, camera| {
+    let reference = render(SCENE, None);
+    let without_probes = render_with(SCENE, None, "_without_probes", |world, _camera| despawn::<LightProbe>(world));
+    let without_fog = render_with(SCENE, None, "_without_fog", |world, camera| {
         volumetric(world, camera);
         despawn::<FogVolume>(world);
     });
-    let foggy = render_with(LEVEL, None, "_foggy", volumetric);
+    let foggy = render_with(SCENE, None, "_foggy", volumetric);
     let (probes, _) = difference(&reference.pixels, &without_probes.pixels);
     let (fog, _) = difference(&without_fog.pixels, &foggy.pixels);
     println!("Light probes change the render by {probes:.2} on average, the fog volume by {fog:.2}");
-    assert!(probes > 5.0, "the light probes barely light the level: {probes:.2}");
+    assert!(probes > 5.0, "the light probes barely light the scene: {probes:.2}");
     assert!(fog > 1.0, "the fog volume is not visible: {fog:.2}");
 }
 
 #[test]
 #[ignore = "needs a GPU, run with cargo test -- --ignored"]
 fn lightmaps_change_the_render() {
-    let reference = render(LEVEL, None);
-    let without_lightmaps = render_with(LEVEL, None, "_without_lightmaps", |world, _camera| {
+    let reference = render(SCENE, None);
+    let without_lightmaps = render_with(SCENE, None, "_without_lightmaps", |world, _camera| {
         let mut lightmaps = world.query_filtered::<Entity, With<Lightmap>>();
         for entity in lightmaps.iter(world).collect::<Vec<_>>() {
             world.entity_mut(entity).remove::<Lightmap>();
@@ -159,5 +159,5 @@ fn lightmaps_change_the_render() {
     });
     let (lightmaps, _) = difference(&reference.pixels, &without_lightmaps.pixels);
     println!("The ground lightmap changes the render by {lightmaps:.2} on average");
-    assert!(lightmaps > 3.0, "the ground lightmap barely lights the level: {lightmaps:.2}");
+    assert!(lightmaps > 3.0, "the ground lightmap barely lights the scene: {lightmaps:.2}");
 }

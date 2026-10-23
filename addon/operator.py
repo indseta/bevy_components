@@ -605,7 +605,7 @@ class BEVY_OT_select_object(bpy.types.Operator):
 class BEVY_OT_validate(bpy.types.Operator):
     bl_idname = "bevy_components.validate"
     bl_label = "Validate Components"
-    bl_description = "Check every object for problems that block export or that make the level behave differently in Bevy"
+    bl_description = "Check every object for problems that block export or that make the scene behave differently in Bevy"
 
     def execute(self, context):
         issues = check_objects(bpy.data.objects)
@@ -643,7 +643,7 @@ class BEVY_OT_cancel_export(bpy.types.Operator):
 
 class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
     bl_idname = "export_scene.bevy_components_glb"
-    bl_label = "Bevy Level (.glb)"
+    bl_label = "Bevy Scene (.glb)"
     bl_description = "Export the scene and its Bevy components as one GLB file"
     bl_options = {"REGISTER"}
 
@@ -661,7 +661,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
 
     _interactive = False
     _directory = None
-    _level = None
+    _scene = None
     _task = None
     _shown = None
     _issues = ()
@@ -669,7 +669,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
     @classmethod
     def poll(cls, context):
         if running_export() is not None:
-            cls.poll_message_set("A Bevy level export is still compressing textures")
+            cls.poll_message_set("A Bevy scene export is still compressing textures")
             return False
         return True
 
@@ -701,7 +701,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         key = (self.selected_only, self.include_animations, self.filepath)
         checks = getattr(self, "_checks", None)
         if checks is None or checks[0] != key:
-            checks = (key, check_objects(context.selected_objects if self.selected_only else bpy.data.objects, level=_export_path(self.filepath), animations=self.include_animations))
+            checks = (key, check_objects(context.selected_objects if self.selected_only else bpy.data.objects, destination=_export_path(self.filepath), animations=self.include_animations))
             self._checks = checks
         issues = checks[1]
         header, body = layout.panel("BEVY_export_checks")
@@ -723,8 +723,8 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
             return {"CANCELLED"}
         objects = context.selected_objects if self.selected_only else bpy.data.objects
-        level = _export_path(self.filepath)
-        issues = check_objects(objects, level=level, animations=self.include_animations)
+        destination = _export_path(self.filepath)
+        issues = check_objects(objects, destination=destination, animations=self.include_animations)
         errors = [issue for issue in issues if issue.level == "ERROR"]
         if errors:
             self.report({"ERROR"}, f"Cannot export: {describe(errors[0])}")
@@ -738,15 +738,15 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 self.report({"ERROR"}, f"{error}. {HINT}")
                 return {"CANCELLED"}
         for obj in objects:
-            sync_object(obj, level.parent if level else None)
+            sync_object(obj, destination.parent if destination else None)
         if encoder is None and not _has_probes(objects):
             result = self._export_gltf(Path(self.filepath))
             if "FINISHED" in result:
-                self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
+                self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}")
                 self._report_warnings()
             return result
         self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
-        result = self._export_level(context, encoder)
+        result = self._export_scene(context, encoder)
         if "RUNNING_MODAL" not in result:
             self._release()
         return result
@@ -759,7 +759,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             return {"PASS_THROUGH"}
         self._stop_background(context)
         if self._task.cancelled:
-            self.report({"INFO"}, "Cancelled the Bevy level export")
+            self.report({"INFO"}, "Cancelled the Bevy scene export")
             result = {"CANCELLED"}
         elif self._task.error is not None:
             result = self._failed(self._task.error)
@@ -781,24 +781,24 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             self.report({"ERROR"}, f"GLB export failed: {error}")
             return {"CANCELLED"}
 
-    def _export_level(self, context, encoder):
-        path = Path(self._directory.name) / "level.glb"
+    def _export_scene(self, context, encoder):
+        path = Path(self._directory.name) / "scene.glb"
         result = self._export_gltf(path)
         if "FINISHED" not in result:
             return result
         try:
             gltf, binary = embed_files(*read_glb(path.read_bytes()), read=_read_file)
         except OSError as error:
-            self.report({"ERROR"}, f"Could not embed {Path(error.filename or '').name or 'a probe file'} in the level: {error.strerror}")
+            self.report({"ERROR"}, f"Could not embed {Path(error.filename or '').name or 'a probe file'} in the scene: {error.strerror}")
             return {"CANCELLED"}
         if encoder is None:
-            self._level = (gltf, binary, [])
+            self._scene = (gltf, binary, [])
             return self._finish([])
         try:
             jobs = plan_textures(gltf, binary, self.texture_compression, convert=image_to_png)
         except ValueError as error:
             return self._failed(error)
-        self._level = (gltf, binary, jobs)
+        self._scene = (gltf, binary, jobs)
         settings = {
             "etc1s_quality": self.etc1s_quality,
             "etc1s_effort": self.etc1s_effort,
@@ -830,7 +830,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
     def _release(self):
         self._directory.cleanup()
         self._directory = None
-        self._level = None
+        self._scene = None
         self._task = None
 
     def _report_warnings(self):
@@ -844,7 +844,7 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         return {"CANCELLED"}
 
     def _finish(self, encoded):
-        gltf, binary, jobs = self._level
+        gltf, binary, jobs = self._scene
         for job, data in zip(jobs, encoded):
             problem = check_encoded(job, data)
             if problem:
@@ -864,9 +864,9 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         if resized:
             self.report({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need")
         if jobs:
-            self.report({"INFO"}, f"Exported Bevy level with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {self.filepath}")
+            self.report({"INFO"}, f"Exported Bevy scene with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {self.filepath}")
         else:
-            self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
+            self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}")
         self._report_warnings()
         return {"FINISHED"}
 
@@ -979,7 +979,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
             if ambient is None or not ambient.enabled or not ambient.baked:
                 draw_message(layout, "Bevy's ambient light adds to the sky light baked into lightmaps. Turn on Bevy Ambient Light and its Baked option in World properties", icon="INFO", width=width)
         elif any(job["kind"] == "VOXELS" for job in jobs) and ambient is not None and ambient.enabled:
-            draw_message(layout, "Bevy Ambient Light adds to the sky light baked into irradiance volumes. Turn it off in World properties unless the level needs it outside the volumes", icon="INFO", width=width)
+            draw_message(layout, "Bevy Ambient Light adds to the sky light baked into irradiance volumes. Turn it off in World properties unless the scene needs it outside the volumes", icon="INFO", width=width)
 
     def invoke(self, context, event):
         self._interactive = True
@@ -1049,7 +1049,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
 
     def _start(self, context, settings, binary):
         self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_bake_")
-        blend = Path(self._directory.name) / "level.blend"
+        blend = Path(self._directory.name) / "scene.blend"
         job_path = Path(self._directory.name) / "bake.json"
         try:
             bpy.ops.wm.save_as_mainfile(filepath=str(blend), copy=True, check_existing=False)

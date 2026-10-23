@@ -87,7 +87,7 @@ jobs:
             - name: Test importer
               run: cargo test --manifest-path importer/Cargo.toml
 
-            - name: Render compressed levels on the GPU
+            - name: Render compressed scenes on the GPU
               env:
                   BEVY_COMPONENTS_RENDER_OUTPUT: ${{ github.workspace }}/renders
               run: cargo test --manifest-path importer/Cargo.toml --test rendering -- --ignored --nocapture

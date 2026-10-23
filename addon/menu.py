@@ -133,11 +133,11 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
         layout.separator()
         layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
         layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake Lighting...", icon="RENDER_STILL")
-        layout.operator(BEVY_OT_export_glb.bl_idname, text="Export Bevy Level (.glb)...", icon="EXPORT")
+        layout.operator(BEVY_OT_export_glb.bl_idname, text="Export Bevy Scene (.glb)...", icon="EXPORT")
 
 
 def export_menu(self, context):
-    self.layout.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Level (.glb)")
+    self.layout.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Scene (.glb)")
 
 
 def export_status(self, context):

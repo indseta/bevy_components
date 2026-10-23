@@ -40,7 +40,7 @@ def _volume(width=4, height=8, depth=12, **options):
     return _ktx2(width, height, depth, faces=1, **options)
 
 
-def _level(*components_per_node):
+def _scene(*components_per_node):
     nodes = [{"name": f"node_{index}", "extras": {"bevy_components": json.dumps({"version": 1, "components": components}, separators=(",", ":"))}} for index, components in enumerate(components_per_node)]
     gltf = {"asset": {"version": "2.0"}, "nodes": nodes + [{"name": "plain"}], "images": [{"bufferView": 0, "mimeType": "image/png"}], "textures": [{"source": 0}], "samplers": [{}], "bufferViews": [{"buffer": 0, "byteOffset": 0, "byteLength": 5}], "buffers": [{"byteLength": 5}]}
     return gltf, b"\x89PNG!"
@@ -74,11 +74,11 @@ class TestTextureChecks(unittest.TestCase):
         self.assertEqual(probe.check_texture(_ktx2(), "LIGHTMAP"), ("ERROR", "is not a 2D texture"))
         self.assertEqual(probe.check_texture(_volume(), "LIGHTMAP"), ("ERROR", "is not a 2D texture"))
         self.assertEqual(probe.check_texture(_ktx2(faces=1, layers=3), "LIGHTMAP"), ("ERROR", "is not a 2D texture"))
-        self.assertEqual(probe.check_texture(_ktx2(64, 64, faces=1, vk_format=BC6H), "LIGHTMAP"), ("WARNING", "64 × 64 lightmap in a block-compressed format, so the level fails to load on GPUs without it"))
+        self.assertEqual(probe.check_texture(_ktx2(64, 64, faces=1, vk_format=BC6H), "LIGHTMAP"), ("WARNING", "64 × 64 lightmap in a block-compressed format, so the scene fails to load on GPUs without it"))
 
     def test_formats_bevy_cannot_load_everywhere(self):
         self.assertEqual(probe.check_texture(_ktx2(vk_format=0), "CUBEMAP")[0], "ERROR")
-        self.assertEqual(probe.check_texture(_ktx2(vk_format=BC6H), "CUBEMAP"), ("WARNING", "16 × 16 cubemap in a block-compressed format, so the level fails to load on GPUs without it"))
+        self.assertEqual(probe.check_texture(_ktx2(vk_format=BC6H), "CUBEMAP"), ("WARNING", "16 × 16 cubemap in a block-compressed format, so the scene fails to load on GPUs without it"))
         self.assertEqual(probe.check_texture(_volume(vk_format=1000066000), "VOXELS")[0], "WARNING")
         self.assertEqual(probe.check_texture(_ktx2(vk_format=122), "CUBEMAP"), (None, "16 × 16 cubemap"))
 
@@ -127,12 +127,12 @@ class TestEmbedding(unittest.TestCase):
         cubemap = _ktx2() + b"c"
         voxels = _volume() + b"v"
         lightmap = _ktx2(faces=1) + b"l"
-        files = {"/levels/room.ktx2": cubemap, "/levels/gi.ktx2": voxels, "/levels/floor.ktx2": lightmap}
+        files = {"/scenes/room.ktx2": cubemap, "/scenes/gi.ktx2": voxels, "/scenes/floor.ktx2": lightmap}
         reads = []
-        gltf, binary = _level([{"type": "reflection_probe", "size": [1, 1, 1], "file": "/levels/room.ktx2"}, {"type": "custom", "type_path": "game::Tag", "data": {"file": "kept"}}], [{"type": "irradiance_volume", "file": "/levels/gi.ktx2"}, {"type": "reflection_probe", "file": "/levels/room.ktx2"}], [{"type": "reflection_probe", "file": None}, {"type": "lightmap", "bicubic": False, "file": "/levels/floor.ktx2"}])
+        gltf, binary = _scene([{"type": "reflection_probe", "size": [1, 1, 1], "file": "/scenes/room.ktx2"}, {"type": "custom", "type_path": "game::Tag", "data": {"file": "kept"}}], [{"type": "irradiance_volume", "file": "/scenes/gi.ktx2"}, {"type": "reflection_probe", "file": "/scenes/room.ktx2"}], [{"type": "reflection_probe", "file": None}, {"type": "lightmap", "bicubic": False, "file": "/scenes/floor.ktx2"}])
         self.assertTrue(probe.needs_embedding(gltf))
         gltf, binary = probe.embed_files(gltf, binary, lambda path: reads.append(path) or files[path])
-        self.assertEqual(reads, ["/levels/room.ktx2", "/levels/gi.ktx2", "/levels/floor.ktx2"])
+        self.assertEqual(reads, ["/scenes/room.ktx2", "/scenes/gi.ktx2", "/scenes/floor.ktx2"])
         self.assertEqual(_components(gltf, 0), [{"type": "reflection_probe", "size": [1, 1, 1], "texture": 1}, {"type": "custom", "type_path": "game::Tag", "data": {"file": "kept"}}])
         self.assertEqual(_components(gltf, 1), [{"type": "irradiance_volume", "texture": 2}, {"type": "reflection_probe", "texture": 1}])
         self.assertEqual(_components(gltf, 2), [{"type": "reflection_probe", "texture": None}, {"type": "lightmap", "bicubic": False, "texture": 3}])
@@ -148,23 +148,23 @@ class TestEmbedding(unittest.TestCase):
         self.assertFalse(probe.needs_embedding(gltf))
 
     def test_probes_without_files_only_lose_the_path(self):
-        gltf, binary = _level([{"type": "irradiance_volume", "file": None}])
+        gltf, binary = _scene([{"type": "irradiance_volume", "file": None}])
         embedded, embedded_binary = probe.embed_files(gltf, binary, lambda path: self.fail(path))
         self.assertEqual(_components(embedded, 0), [{"type": "irradiance_volume", "texture": None}])
         self.assertEqual((len(embedded["images"]), len(embedded["samplers"]), embedded_binary), (1, 1, binary))
 
-    def test_levels_without_buffers_get_one(self):
+    def test_scenes_without_buffers_get_one(self):
         gltf = {"asset": {"version": "2.0"}, "nodes": [{"name": "probe", "extras": {"bevy_components": json.dumps({"version": 1, "components": [{"type": "reflection_probe", "file": "room.ktx2"}]})}}]}
         gltf, binary = probe.embed_files(gltf, b"", lambda path: b"ktx2")
         self.assertEqual((gltf["buffers"], gltf["bufferViews"], binary), ([{"byteLength": 4}], [{"buffer": 0, "byteOffset": 0, "byteLength": 4}], b"ktx2"))
 
-    def test_other_levels_are_untouched(self):
-        gltf, binary = _level([{"type": "collider", "shape": "cuboid"}])
+    def test_other_scenes_are_untouched(self):
+        gltf, binary = _scene([{"type": "collider", "shape": "cuboid"}])
         self.assertFalse(probe.needs_embedding(gltf))
         self.assertEqual(probe.embed_files(json.loads(json.dumps(gltf)), binary, lambda path: self.fail(path)), (gltf, binary))
 
     def test_plan_textures_skips_embedded_ktx2(self):
-        gltf, binary = _level([{"type": "reflection_probe", "file": "room.ktx2"}])
+        gltf, binary = _scene([{"type": "reflection_probe", "file": "room.ktx2"}])
         png = _png(8, 8)
         gltf["bufferViews"][0]["byteLength"] = len(png)
         gltf, binary = probe.embed_files(gltf, png, lambda path: _ktx2())

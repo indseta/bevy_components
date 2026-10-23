@@ -35,6 +35,6 @@ def inspect(path):
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("Usage: python inspect_glb.py path/to/level.glb")
+        print("Usage: python inspect_glb.py path/to/scene.glb")
         sys.exit(2)
     inspect(sys.argv[1])

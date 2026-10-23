@@ -11,9 +11,9 @@ import bpy
 from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
-FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_level.glb"
+FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_scene.glb"
 SOUNDS = FIXTURE.parent / "sounds"
-COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_level_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
+COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_scene_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
 PROP = Path("props") / "windmill.glb"
 REPOSITORY = "bevy_components_test"
 RAMP_CENTER = (0, 8, 2)
@@ -393,7 +393,7 @@ def apply_lod_preset(obj, preset):
     bpy.ops.bevy_components.lod_preset(index=index, preset=preset)
 
 
-def build_sample_level(directory=FIXTURE.parent):
+def build_sample_scene(directory=FIXTURE.parent):
     clear_scene()
     define_component("my_game::Wave", ("count", "INT", 1), ("delay", "FLOAT", 1.0))
     define_component("my_game::Pickup", ("item", "STRING", "coin"), ("amount", "INT", 1), ("respawn", "BOOL", False), ("weight", "FLOAT", 0.1), ("spin", "VECTOR", (0.0, 1.5, 0.0)), ("glow", "COLOR", (1.0, 0.8, 0.2, 1.0)))
@@ -567,7 +567,7 @@ def build_sample_level(directory=FIXTURE.parent):
     select()
 
 
-def export_sample_level(path, **options):
+def export_sample_scene(path, **options):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     result = bpy.ops.export_scene.bevy_components_glb(filepath=str(path), **{"include_animations": True, **options})
     if "FINISHED" not in result:
@@ -577,22 +577,22 @@ def export_sample_level(path, **options):
 
 def export_props(directory):
     build_windmill()
-    return export_sample_level(Path(directory) / PROP)
+    return export_sample_scene(Path(directory) / PROP)
 
 
 if __name__ == "__main__":
     module = install_addon()
     if sys.argv[-1].endswith(".glb"):
         export_props(Path(sys.argv[-1]).parent)
-        build_sample_level(Path(sys.argv[-1]).parent)
-        export_sample_level(Path(sys.argv[-1]))
+        build_sample_scene(Path(sys.argv[-1]).parent)
+        export_sample_scene(Path(sys.argv[-1]))
     else:
         make_probe_textures(sys.modules[module].encoder.check_encoder()[0])
         export_props(FIXTURE.parent)
-        build_sample_level()
-        export_sample_level(FIXTURE)
+        build_sample_scene()
+        export_sample_scene(FIXTURE)
         for mode, path in COMPRESSED_FIXTURES.items():
-            export_sample_level(path, texture_compression=mode)
+            export_sample_scene(path, texture_compression=mode)
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)

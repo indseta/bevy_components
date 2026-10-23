@@ -162,7 +162,7 @@ def _draw_joint(layout, obj, index, item):
     layout.prop(item, "joint_collide")
     if (item.joint_body1 is None) != (item.joint_body2 is None):
         pinned = item.joint_body1 or item.joint_body2
-        draw_message(layout, f"Pins {pinned.name} to this spot in the level", icon="INFO")
+        draw_message(layout, f"Pins {pinned.name} to this spot in the scene", icon="INFO")
 
 
 def _draw_shadows(layout, obj, index, item):

@@ -62,7 +62,7 @@ def check_texture(data, kind):
             return "ERROR", f"is {width} × {height} × {depth}, but an irradiance volume of X × Y × Z voxels is X × 2Y × 3Z texels"
         summary = f"{width} × {height // 2} × {depth // 3} voxels"
     if FIRST_BLOCK_FORMAT <= info["format"] <= LAST_BLOCK_FORMAT or info["format"] >= FIRST_EXTENSION_FORMAT:
-        return "WARNING", f"{summary} in a block-compressed format, so the level fails to load on GPUs without it"
+        return "WARNING", f"{summary} in a block-compressed format, so the scene fails to load on GPUs without it"
     return None, summary
 
 

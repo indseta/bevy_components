@@ -10,16 +10,16 @@ COMPONENT_TYPES = [
     ("COLLIDER", "Collider", "Avian collision shape", "MOD_PHYSICS", 1),
     ("RIGID_BODY", "Rigid Body", "Avian rigid body that is static, dynamic or kinematic", "RIGID_BODY", 2),
     ("CUSTOM", "Custom Component", "Any Rust component, filled in from JSON by your game", "FILE_SCRIPT", 4),
-    ("JOINT", "Joint", "Avian joint that connects two rigid bodies, or pins one body to a spot in the level", "CON_PIVOT", 5),
+    ("JOINT", "Joint", "Avian joint that connects two rigid bodies, or pins one body to a spot in the scene", "CON_PIVOT", 5),
     ("SCENE_REFERENCE", "Scene Reference", "Spawn a scene from another glTF file at this object, like a prefab", "OUTLINER_OB_GROUP_INSTANCE", 10),
-    ("ANIMATION", "Animation", "Play an animation clip when the level loads", "ACTION", 11),
+    ("ANIMATION", "Animation", "Play an animation clip when the scene loads", "ACTION", 11),
     ("SHADOWS", "Shadows", "Stop the object's meshes from casting or receiving shadows", "SHADING_RENDERED", 15),
     ("LIGHT", "Light", "Bevy settings that glTF leaves out of a light, such as shadows, and area lights as rectangle lights", "LIGHT", 25),
     ("AUDIO_PLAYER", "Audio Player", "Play a sound from your game's assets folder, optionally in 3D at the object's position", "SPEAKER", 16),
     ("FOG_VOLUME", "Fog Volume", "Box of volumetric fog, seen by cameras with VolumetricFog once a light has VolumetricLight", "OUTLINER_OB_VOLUME", 20),
-    ("REFLECTION_PROBE", "Reflection Probe", "Box whose meshes reflect a cubemap embedded in the level", "LIGHTPROBE_SPHERE", 21),
-    ("IRRADIANCE_VOLUME", "Irradiance Volume", "Box of light samples, from a 3D texture embedded in the level, that light the meshes inside it", "LIGHTPROBE_VOLUME", 22),
-    ("LIGHTMAP", "Lightmap", "Light baked into a texture embedded in the level, which lights this static mesh through its second UV map", "SHADING_TEXTURE", 23),
+    ("REFLECTION_PROBE", "Reflection Probe", "Box whose meshes reflect a cubemap embedded in the exported scene", "LIGHTPROBE_SPHERE", 21),
+    ("IRRADIANCE_VOLUME", "Irradiance Volume", "Box of light samples, from a 3D texture embedded in the exported scene, that light the meshes inside it", "LIGHTPROBE_VOLUME", 22),
+    ("LIGHTMAP", "Lightmap", "Light baked into a texture embedded in the exported scene, which lights this static mesh through its second UV map", "SHADING_TEXTURE", 23),
 ]
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
@@ -113,7 +113,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     audio_path: StringProperty(name="Sound", description="Path of the sound inside your game's assets folder, such as sounds/fire.ogg. Bevy plays .ogg files by default and .wav, .mp3 and .flac with its matching cargo features", default="", update=sync_changed)
     audio_volume: FloatProperty(name="Volume", description="How loud the sound plays, where 1 is its original volume", default=1.0, min=0.0, soft_max=1.0, subtype="FACTOR", update=sync_changed)
     audio_loop: BoolProperty(name="Loop", description="Repeat the sound forever instead of playing it once", default=False, update=sync_changed)
-    audio_autoplay: BoolProperty(name="Autoplay", description="Start playing when the level loads. Off starts the sound paused, for your game to play through its AudioSink", default=True, update=sync_changed)
+    audio_autoplay: BoolProperty(name="Autoplay", description="Start playing when the scene loads. Off starts the sound paused, for your game to play through its AudioSink", default=True, update=sync_changed)
     audio_spatial: BoolProperty(name="Spatial", description="Pan and fade the sound by where it is relative to the game's SpatialListener, usually on the camera or player", default=True, update=sync_changed)
     audio_distance: FloatProperty(name="Distance", description="Distance within which the sound plays at full volume. Farther away it gets quieter: a quarter as loud at twice the distance and 1% as loud at ten times", default=5.0, min=0.01, unit="LENGTH", update=sync_changed)
 
@@ -133,8 +133,8 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     show_dynamics: BoolProperty(name="Dynamics", description="Show damping, locked axes and continuous collision", default=False)
 
     joint_kind: EnumProperty(name="Type", items=JOINT_TYPES, default="REVOLUTE", update=sync_changed)
-    joint_body1: PointerProperty(type=bpy.types.Object, name="Body 1", description="First body the joint connects, an object with a Rigid Body or Collider. Leave empty to pin Body 2 to this spot in the level", poll=_is_body, update=sync_changed)
-    joint_body2: PointerProperty(type=bpy.types.Object, name="Body 2", description="Second body the joint connects, an object with a Rigid Body or Collider. Leave empty to pin Body 1 to this spot in the level", poll=_is_body, update=sync_changed)
+    joint_body1: PointerProperty(type=bpy.types.Object, name="Body 1", description="First body the joint connects, an object with a Rigid Body or Collider. Leave empty to pin Body 2 to this spot in the scene", poll=_is_body, update=sync_changed)
+    joint_body2: PointerProperty(type=bpy.types.Object, name="Body 2", description="Second body the joint connects, an object with a Rigid Body or Collider. Leave empty to pin Body 1 to this spot in the scene", poll=_is_body, update=sync_changed)
     joint_axis: EnumProperty(name="Axis", description="Axis of this object that the bodies turn around, slide along or twist around, on Bevy's axes (Y up)", items=AXES, default="Y", update=sync_changed)
     joint_use_limits: BoolProperty(name="Limits", description="Limit how far the bodies turn, slide or twist away from where they are in Blender", default=False, update=sync_changed)
     joint_angle_min: FloatProperty(name="Min", description="Furthest Body 2 turns backwards around the axis, relative to Body 1", default=radians(-90), soft_min=radians(-180), soft_max=radians(180), subtype="ANGLE", update=sync_changed)
@@ -158,10 +158,10 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     fog_light_intensity: FloatProperty(name="Light Intensity", description="Scales the light inside the fog, an artistic control that is not physically based", default=1.0, min=0.0, soft_max=10.0, update=sync_changed)
     probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so baked lighting matches the exported lamps", default=683.0, min=0.0, soft_max=100000.0, update=sync_changed)
     probe_parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the box walls, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
-    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the level: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume, a 2D texture for a Lightmap", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
-    bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the level") for size in BAKE_SIZES], default="256")
+    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the scene: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume, a 2D texture for a Lightmap", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the exported scene") for size in BAKE_SIZES], default="256")
     bake_voxels: IntVectorProperty(name="Voxels", description="Light samples that Bake places along the box's X, Y (up) and Z axes", size=3, default=(8, 4, 8), min=1, max=64)
-    lightmap_resolution: EnumProperty(name="Bake Size", description="Size of the lightmap that Bake renders. Unwrap the lightmap UVs again after changing it, so their islands stay a few pixels apart", items=[(str(size), f"{size} px", f"{size} × {size} pixels, which adds {size * size * 4 / 2 ** 20:.2g} MB to the level") for size in LIGHTMAP_SIZES], default="512")
+    lightmap_resolution: EnumProperty(name="Bake Size", description="Size of the lightmap that Bake renders. Unwrap the lightmap UVs again after changing it, so their islands stay a few pixels apart", items=[(str(size), f"{size} px", f"{size} × {size} pixels, which adds {size * size * 4 / 2 ** 20:.2g} MB to the exported scene") for size in LIGHTMAP_SIZES], default="512")
     lightmap_bicubic: BoolProperty(name="Bicubic Sampling", description="Smooth the lightmap's pixels with bicubic filtering, which costs a little more on the GPU and can leak light across nearby UV islands", default=False, update=sync_changed)
 
     light_use_intensity: BoolProperty(name="Set Intensity", description="Use this brightness in Bevy instead of the one converted from the light's power at 683 lumens per watt", default=False, update=light_intensity_toggled)
@@ -184,7 +184,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
     use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")
     fields: CollectionProperty(type=BEVY_PG_field)
-    scene_file: StringProperty(name="File", description="glTF file whose scene spawns at this object. It is stored relative to the exported level, so keep both in your game's assets folder", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    scene_file: StringProperty(name="File", description="glTF file whose scene spawns at this object. It is stored relative to the exported scene, so keep both in your game's assets folder", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
     scene_index: IntProperty(name="Scene", description="Which scene of the file to spawn, counting from 0 like Bevy's Scene0 label", default=0, min=0, update=sync_changed)
     animation_clip: StringProperty(name="Clip", description="Action to play, exported as the glTF animation of the same name", update=sync_changed)
     animation_loop: BoolProperty(name="Loop", description="Start over at the end instead of stopping on the last frame", default=True, update=sync_changed)
@@ -208,7 +208,7 @@ class BEVY_PG_definitions(bpy.types.PropertyGroup):
 
 
 class BEVY_PG_ambient_light(bpy.types.PropertyGroup):
-    enabled: BoolProperty(name="Bevy Ambient Light", description="Export the level's ambient light, which the importer sets as Bevy's GlobalAmbientLight", default=False)
+    enabled: BoolProperty(name="Bevy Ambient Light", description="Export the scene's ambient light, which the importer sets as Bevy's GlobalAmbientLight", default=False)
     use_world_color: BoolProperty(name="From World", description="Use the World's background color and strength, converted at 683 lumens per watt like lights", default=True)
     color: FloatVectorProperty(name="Color", description="Color of the ambient light", size=3, subtype="COLOR", default=(1.0, 1.0, 1.0), min=0.0, max=1.0)
     brightness: FloatProperty(name="Brightness", description="Ambient brightness in candela per square meter, Bevy's default is 80", default=80.0, min=0.0, soft_max=2000.0, precision=1)
@@ -218,7 +218,7 @@ class BEVY_PG_ambient_light(bpy.types.PropertyGroup):
 class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
     samples: IntProperty(name="Samples", description="Cycles samples per pixel. More samples give smoother light and take longer", default=128, min=1, soft_max=4096)
     folder: StringProperty(name="Folder", description="Folder for the baked .ktx2 files, where // is the folder of the .blend file", subtype="DIR_PATH", default="//baked_lighting/", options=PATH_OPTIONS)
-    lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the level exports its lamps, since Bevy already lights meshes with them", default=False)
+    lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the scene exports its lamps, since Bevy already lights meshes with them", default=False)
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):

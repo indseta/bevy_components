@@ -6,8 +6,8 @@ use bevy_components_importer::BlenderBevyComponentsPlugin;
 use std::{thread, time::Duration};
 
 pub const ASSETS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/assets");
-pub const LEVEL: &str = "sample_level.glb";
-pub const COMPRESSED_LEVELS: [&str; 3] = ["sample_level_etc1s.glb", "sample_level_uastc.glb", "sample_level_automatic.glb"];
+pub const SCENE: &str = "sample_scene.glb";
+pub const COMPRESSED_SCENES: [&str; 3] = ["sample_scene_etc1s.glb", "sample_scene_uastc.glb", "sample_scene_automatic.glb"];
 
 #[derive(Resource, Clone, Copy)]
 pub struct DeviceFormats(pub CompressedImageFormats);
@@ -15,7 +15,7 @@ pub struct DeviceFormats(pub CompressedImageFormats);
 #[derive(Resource, Default)]
 pub struct ReadyInstances(pub usize);
 
-pub struct LevelApp {
+pub struct SceneApp {
     pub assets: String,
     pub gpu: bool,
     pub plugin: bool,
@@ -23,9 +23,9 @@ pub struct LevelApp {
     pub formats: Option<CompressedImageFormats>,
 }
 
-impl Default for LevelApp {
+impl Default for SceneApp {
     fn default() -> Self {
-        return LevelApp {
+        return SceneApp {
             assets: ASSETS.to_string(),
             gpu: false,
             plugin: true,
@@ -35,7 +35,7 @@ impl Default for LevelApp {
     }
 }
 
-impl LevelApp {
+impl SceneApp {
     pub fn build(&self) -> App {
         let mut app = App::new();
         let render = if self.gpu { RenderPlugin { synchronous_pipeline_compilation: true, ..default() } } else { RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() } };
@@ -62,7 +62,7 @@ impl LevelApp {
     }
 }
 
-pub fn spawn_level(app: &mut App, file: &str) -> Result<(), String> {
+pub fn spawn_scene(app: &mut App, file: &str) -> Result<(), String> {
     let scene: Handle<WorldAsset> = app.world().resource::<AssetServer>().load(format!("{file}#Scene0"));
     app.world_mut().spawn(WorldAssetRoot(scene.clone()));
     return wait_for(app, scene.id().untyped(), file, true);
@@ -109,9 +109,9 @@ fn wait_for_references(app: &mut App) -> Result<(), String> {
     return Err("Scene references did not load".to_string());
 }
 
-pub fn load_level(file: &str) -> App {
-    let mut app = LevelApp::default().build();
-    if let Err(error) = spawn_level(&mut app, file) {
+pub fn load_scene(file: &str) -> App {
+    let mut app = SceneApp::default().build();
+    if let Err(error) = spawn_scene(&mut app, file) {
         panic!("{file} did not load: {error}");
     }
     return app;

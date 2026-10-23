@@ -59,7 +59,7 @@ def _job(**values):
     return compression.TextureJob(**{**defaults, **values})
 
 
-def _level(images, materials, samplers=None, textures=None):
+def _scene(images, materials, samplers=None, textures=None):
     binary = bytearray(b"mesh" * 3)
     gltf = {
         "asset": {"version": "2.0"},
@@ -146,7 +146,7 @@ class TestImages(unittest.TestCase):
             compression.image_info(b"RIFF0000WEBP")
 
     def test_payloads(self):
-        gltf, binary = _level([(_png(4, 4), "image/png")], [])
+        gltf, binary = _scene([(_png(4, 4), "image/png")], [])
         self.assertEqual(compression.image_payload(gltf, binary, 0), (_png(4, 4), "image/png"))
         gltf["images"].append({"uri": "data:image/png;base64,iVBORw=="})
         self.assertEqual(compression.image_payload(gltf, binary, 1)[1], "image/png")
@@ -165,21 +165,21 @@ class TestPlan(unittest.TestCase):
             "AUTOMATIC": ["etc1s", "uastc", "uastc", "etc1s"],
         }
         for mode, codecs in expected.items():
-            gltf, binary = _level(images, copy.deepcopy(materials))
+            gltf, binary = _scene(images, copy.deepcopy(materials))
             jobs = compression.plan_textures(gltf, binary, mode)
             self.assertEqual([job.codec for job in jobs], codecs, mode)
             self.assertEqual([job.usage for job in jobs], ["color", "data", "normal", "color"], mode)
 
     def test_automatic_uses_uastc_for_pixel_art(self):
-        gltf, binary = _level([(_png(8, 8), "image/png")], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], samplers=[{"magFilter": 9728, "minFilter": 9984}])
+        gltf, binary = _scene([(_png(8, 8), "image/png")], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], samplers=[{"magFilter": 9728, "minFilter": 9984}])
         self.assertEqual([job.codec for job in compression.plan_textures(gltf, binary, "AUTOMATIC")], ["uastc"])
-        gltf, binary = _level([(_png(8, 8), "image/png")], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], samplers=[{"magFilter": 9728, "minFilter": 9984}])
+        gltf, binary = _scene([(_png(8, 8), "image/png")], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], samplers=[{"magFilter": 9728, "minFilter": 9984}])
         self.assertEqual([job.codec for job in compression.plan_textures(gltf, binary, "ETC1S")], ["etc1s"])
 
     def test_shared_images_become_one_job(self):
         textures = [{"sampler": 0, "source": 0}, {"sampler": 0, "source": 0}]
         materials = [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}, {"pbrMetallicRoughness": {"baseColorTexture": {"index": 1, "extensions": {"KHR_texture_transform": {"scale": [4, 4]}}}}}]
-        gltf, binary = _level([(_png(16, 16, color_type=6), "image/png")], materials, textures=textures)
+        gltf, binary = _scene([(_png(16, 16, color_type=6), "image/png")], materials, textures=textures)
         jobs = compression.plan_textures(gltf, binary, "ETC1S")
         self.assertEqual(len(jobs), 1)
         self.assertEqual(jobs[0].textures, [0, 1])
@@ -189,14 +189,14 @@ class TestPlan(unittest.TestCase):
         materials = [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}, "normalTexture": {"index": 1}}]
         samplers = [{"magFilter": 9729, "minFilter": 9729, "wrapS": 33071}, {"wrapS": 33648}]
         textures = [{"sampler": 0, "source": 0}, {"sampler": 1, "source": 1}]
-        gltf, binary = _level([(_png(30, 18), "image/png"), (_png(64, 64, color_type=6), "image/png")], materials, samplers=samplers, textures=textures)
+        gltf, binary = _scene([(_png(30, 18), "image/png"), (_png(64, 64, color_type=6), "image/png")], materials, samplers=samplers, textures=textures)
         color, normal = compression.plan_textures(gltf, binary, "UASTC")
         self.assertEqual((color.width, color.height, color.resized, color.mipmaps, color.wrap, color.srgb), (32, 20, True, False, "clamp", True))
         self.assertEqual((normal.width, normal.height, normal.resized, normal.mipmaps, normal.wrap, normal.srgb, normal.normal, normal.alpha), (64, 64, False, True, "reflect", False, True, False))
 
     def test_converts_other_image_types(self):
         textures = [{"sampler": 0, "extensions": {"EXT_texture_webp": {"source": 0}}}]
-        gltf, binary = _level([(b"RIFF0000WEBPVP8 ", "image/webp")], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], textures=textures)
+        gltf, binary = _scene([(b"RIFF0000WEBPVP8 ", "image/webp")], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], textures=textures)
         with self.assertRaises(ValueError):
             compression.plan_textures(copy.deepcopy(gltf), binary, "ETC1S")
         converted = []
@@ -205,7 +205,7 @@ class TestPlan(unittest.TestCase):
         self.assertEqual((jobs[0].mime_type, jobs[0].width), ("image/png", 12))
 
     def test_external_images_are_rejected(self):
-        gltf, binary = _level([], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], textures=[{"source": 0}])
+        gltf, binary = _scene([], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], textures=[{"source": 0}])
         gltf["images"].append({"uri": "wood.png"})
         with self.assertRaises(ValueError):
             compression.plan_textures(gltf, binary, "ETC1S")
@@ -216,7 +216,7 @@ class TestEmbed(unittest.TestCase):
         materials = [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}, "normalTexture": {"index": 1}}]
         textures = [{"sampler": 0, "source": 0}, {"sampler": 0, "extensions": {"EXT_texture_webp": {"source": 1}}}]
         images = [(_png(16, 16), "image/png"), (_png(16, 16, color_type=6), "image/png")]
-        gltf, binary = _level(images, materials, textures=textures)
+        gltf, binary = _scene(images, materials, textures=textures)
         gltf["extensionsUsed"].append("EXT_texture_webp")
         jobs = compression.plan_textures(gltf, binary, "AUTOMATIC")
         encoded = [_ktx2(16, 16, 5), _ktx2(16, 16, 5, model=compression.UASTC_MODEL, supercompression=2, transfer=1, primaries=0)]
@@ -236,7 +236,7 @@ class TestEmbed(unittest.TestCase):
 
     def test_split_images_get_their_own_ktx2(self):
         materials = [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}, "metallicRoughnessTexture": {"index": 0}}}]
-        gltf, binary = _level([(_png(16, 16), "image/png")], materials)
+        gltf, binary = _scene([(_png(16, 16), "image/png")], materials)
         jobs = compression.plan_textures(gltf, binary, "AUTOMATIC")
         self.assertEqual([(job.image, job.usage) for job in jobs], [(0, "color"), (0, "data")])
         gltf, binary = compression.embed_textures(gltf, binary, jobs, [_ktx2(16, 16, 5), _ktx2(16, 16, 5, transfer=1, primaries=0)])
@@ -244,8 +244,8 @@ class TestEmbed(unittest.TestCase):
         self.assertEqual([texture["extensions"]["KHR_texture_basisu"]["source"] for texture in gltf["textures"]], [0, 1])
         self.assertEqual(gltf["materials"][0]["pbrMetallicRoughness"]["metallicRoughnessTexture"]["index"], 1)
 
-    def test_levels_without_textures_are_unchanged(self):
-        gltf, binary = _level([], [])
+    def test_scenes_without_textures_are_unchanged(self):
+        gltf, binary = _scene([], [])
         before = copy.deepcopy(gltf)
         self.assertEqual(compression.embed_textures(gltf, binary, [], []), (before, binary))
 

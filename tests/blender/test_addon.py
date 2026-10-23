@@ -18,7 +18,7 @@ import gpu
 import numpy
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_scene import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_scene, clear_scene, define_component, export_props, export_sample_scene, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -745,15 +745,15 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.add(component_type="SCENE_REFERENCE"), {"CANCELLED"})
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "levels").mkdir()
-            bpy.ops.wm.save_as_mainfile(filepath=str(root / "levels" / "level.blend"))
+            (root / "scenes").mkdir()
+            bpy.ops.wm.save_as_mainfile(filepath=str(root / "scenes" / "scene.blend"))
             item.scene_file = "//props/tree.glb"
             item.scene_index = 2
             self.assertEqual(_stored(holder)["components"], [{"type": "scene_reference", "path": "props/tree.glb", "scene": 2}])
             item.scene_file = str(root / "shared" / "rock.gltf")
             self.assertEqual(_stored(holder)["components"][0]["path"], "../shared/rock.gltf")
             bpy.ops.wm.save_mainfile()
-            bpy.ops.wm.open_mainfile(filepath=str(root / "levels" / "level.blend"))
+            bpy.ops.wm.open_mainfile(filepath=str(root / "scenes" / "scene.blend"))
             self.assertEqual(_stored(bpy.data.objects["holder"])["components"], [{"type": "scene_reference", "path": "../shared/rock.gltf", "scene": 2}])
 
     def test_animation_starts_with_the_objects_action(self):
@@ -929,7 +929,7 @@ class TestOperators(unittest.TestCase):
         add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=7.5)
         self.obj["bevy_components"] = "stale"
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "level.blend"
+            path = Path(directory) / "scene.blend"
             bpy.ops.wm.save_as_mainfile(filepath=str(path))
             bpy.ops.wm.open_mainfile(filepath=str(path))
         obj = bpy.data.objects["subject"]
@@ -947,7 +947,7 @@ class TestOperators(unittest.TestCase):
         frame.name = "door_frame"
         self.assertEqual(_stored(self.obj)["components"][1]["body1"], "frame")
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "level.blend"
+            path = Path(directory) / "scene.blend"
             bpy.ops.wm.save_as_mainfile(filepath=str(path))
             bpy.ops.wm.open_mainfile(filepath=str(path))
         obj = bpy.data.objects["subject"]
@@ -1149,7 +1149,7 @@ class TestPanels(unittest.TestCase):
             addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
             self.assertEqual([prop for prop in panel.layout.props() if prop.startswith("joint_")], props, kind)
             self.assertEqual([bound.get("placeholder") for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] in {"joint_body1", "joint_body2"}], ["World", "World"])
-            self.assertIn("Pins frame to this spot in the level", panel.layout.texts())
+            self.assertIn("Pins frame to this spot in the scene", panel.layout.texts())
         self.assertEqual([bound["text"] for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "joint_use_limits"], ["Twist Limits"])
         self.assertIn(("row", "Swing Limit"), [(name, bound.get("heading")) for name, bound, layout in panel.layout.calls])
         self.assertFalse(_prop_layout(panel.layout, "joint_swing").active)
@@ -1171,7 +1171,7 @@ class TestPanels(unittest.TestCase):
         self.assertTrue(_prop_layout(panel.layout, "joint_angle_min").is_alert())
         self.assertIn("Min must not be above Max", panel.layout.texts())
         self.assertIn(("", "CANCEL"), [(bound.get("text"), bound.get("icon")) for name, bound, layout in panel.layout.calls if name == "label"])
-        self.assertNotIn("Pins frame to this spot in the level", panel.layout.texts())
+        self.assertNotIn("Pins frame to this spot in the scene", panel.layout.texts())
 
     def test_joints_only_pick_bodies(self):
         joint = add_component(self.obj, "JOINT")
@@ -1662,7 +1662,7 @@ class TestCustomFields(unittest.TestCase):
         define_component("game::Glow", ("tint", "COLOR", (1.0, 0.5, 0.0, 1.0)))
         add_component(self.obj, "CUSTOM", type_path="game::Glow")
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "level.blend"
+            path = Path(directory) / "scene.blend"
             bpy.ops.wm.save_as_mainfile(filepath=str(path))
             bpy.ops.wm.open_mainfile(filepath=str(path))
         self.assertEqual([definition.name for definition in bpy.context.scene.bevy_component_definitions.definitions], ["game::Glow"])
@@ -2192,8 +2192,8 @@ class TestValidation(unittest.TestCase):
         issues = addon.validation.check_objects(bpy.data.objects) if obj is None else addon.validation.check_object(obj, bpy.data.objects)
         return [addon.validation.describe(issue) for issue in issues]
 
-    def test_sample_level_is_clean(self):
-        build_sample_level()
+    def test_sample_scene_is_clean(self):
+        build_sample_scene()
         self.assertEqual(self._messages(), [])
 
     def test_mesh_colliders_need_a_mesh(self):
@@ -2369,7 +2369,7 @@ class TestValidation(unittest.TestCase):
         joint.joint_body2 = handle
         self.assertEqual(self._messages(), ["hinge: handle is part of door's body, so pick door"])
         joint.joint_body2 = wall
-        self.assertEqual([addon.validation.describe(issue) for issue in addon.validation.check_objects([hinge, door])], ["hinge: wall is not exported with this level, so the joint holds nothing"])
+        self.assertEqual([addon.validation.describe(issue) for issue in addon.validation.check_objects([hinge, door])], ["hinge: wall is not exported with this scene, so the joint holds nothing"])
         joint.joint_use_limits = True
         joint.joint_angle_min = 1
         joint.joint_angle_max = 0
@@ -2404,17 +2404,17 @@ class TestValidation(unittest.TestCase):
                 reference.scene_file = path
                 reference.scene_index = index
                 self.assertEqual(self._messages(), [f"holder: {message}" for message in messages], (path, index))
-            reference.scene_file = str(root / "level.glb")
-            (root / "level.glb").write_bytes((FIXTURE.parent / PROP).read_bytes())
-            issues = addon.validation.check_objects(bpy.data.objects, level=root / "level.glb")
-            self.assertEqual([addon.validation.describe(issue) for issue in issues], ["holder: Spawns the exported level inside itself, so the game skips it"])
+            reference.scene_file = str(root / "scene.glb")
+            (root / "scene.glb").write_bytes((FIXTURE.parent / PROP).read_bytes())
+            issues = addon.validation.check_objects(bpy.data.objects, destination=root / "scene.glb")
+            self.assertEqual([addon.validation.describe(issue) for issue in issues], ["holder: Spawns the exported scene inside itself, so the game skips it"])
 
     def test_scene_references_on_another_drive_block_export(self):
         holder = add_empty("holder", (0, 0, 0))
         add_component(holder, "SCENE_REFERENCE", scene_file=str(FIXTURE.parent / PROP))
-        with tempfile.TemporaryDirectory() as directory, mock.patch.object(addon.validation, "level_path", side_effect=ValueError("path is on mount 'D:', start on mount 'C:'")):
-            path = Path(directory) / "level.glb"
-            with self.assertRaisesRegex(RuntimeError, "Cannot export: holder: windmill.glb is on another drive than the level, so the game cannot load it"):
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(addon.validation, "scene_path", side_effect=ValueError("path is on mount 'D:', start on mount 'C:'")):
+            path = Path(directory) / "scene.glb"
+            with self.assertRaisesRegex(RuntimeError, "Cannot export: holder: windmill.glb is on another drive than the exported scene, so the game cannot load it"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
             self.assertFalse(path.exists())
 
@@ -2531,7 +2531,7 @@ class TestValidation(unittest.TestCase):
         add_component(holder, "COLLIDER", collider_shape="CONVEX")
         self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "level.glb"
+            path = Path(directory) / "scene.glb"
             self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(path)), {"FINISHED"})
             self.assertEqual(json.loads(read_gltf(path)["nodes"][0]["extras"]["bevy_components"])["components"][0]["shape"], "convex")
             item = add_component(holder, "CUSTOM", custom_json="{broken")
@@ -2585,8 +2585,8 @@ class TestExport(unittest.TestCase):
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory()
         cls.props = export_props(cls.directory.name)
-        build_sample_level(cls.directory.name)
-        cls.gltf = export_sample_level(Path(cls.directory.name) / "sample_level.glb")
+        build_sample_scene(cls.directory.name)
+        cls.gltf = export_sample_scene(Path(cls.directory.name) / "sample_scene.glb")
         cls.nodes = {node["name"]: node for node in cls.gltf["nodes"]}
 
     @classmethod
@@ -2618,7 +2618,7 @@ class TestExport(unittest.TestCase):
         path = Path(self.directory.name) / "no_ambient.glb"
         ambient.enabled = False
         try:
-            self.assertTrue(all("extras" not in scene for scene in export_sample_level(path)["scenes"]))
+            self.assertTrue(all("extras" not in scene for scene in export_sample_scene(path)["scenes"]))
         finally:
             ambient.enabled = True
 
@@ -2628,7 +2628,7 @@ class TestExport(unittest.TestCase):
         window.data.energy = 10
         window.data.size = 3
         try:
-            node = next(node for node in export_sample_level(path)["nodes"] if node["name"] == "window_light")
+            node = next(node for node in export_sample_scene(path)["nodes"] if node["name"] == "window_light")
         finally:
             window.data.energy = 50
             window.data.size = 2
@@ -2649,13 +2649,13 @@ class TestExport(unittest.TestCase):
         self.assertEqual(_rounded(self.nodes["cart_handle"]["translation"]), [-0.75, 0.25, 0.0])
 
     def test_fixture_is_current(self):
-        self.assertTrue(FIXTURE.is_file(), f"Missing {FIXTURE}, run tests/blender/sample_level.py to create it")
-        self.assertEqual(_node_summary(read_gltf(FIXTURE)), _node_summary(self.gltf), "importer/tests/assets/sample_level.glb is out of date, run tests/blender/sample_level.py to regenerate it")
+        self.assertTrue(FIXTURE.is_file(), f"Missing {FIXTURE}, run tests/blender/sample_scene.py to create it")
+        self.assertEqual(_node_summary(read_gltf(FIXTURE)), _node_summary(self.gltf), "importer/tests/assets/sample_scene.glb is out of date, run tests/blender/sample_scene.py to regenerate it")
 
     def test_prop_fixture_is_current(self):
         path = FIXTURE.parent / PROP
-        self.assertTrue(path.is_file(), f"Missing {path}, run tests/blender/sample_level.py to create it")
-        self.assertEqual(_node_summary(read_gltf(path)), _node_summary(self.props), f"importer/tests/assets/{PROP.as_posix()} is out of date, run tests/blender/sample_level.py to regenerate it")
+        self.assertTrue(path.is_file(), f"Missing {path}, run tests/blender/sample_scene.py to create it")
+        self.assertEqual(_node_summary(read_gltf(path)), _node_summary(self.props), f"importer/tests/assets/{PROP.as_posix()} is out of date, run tests/blender/sample_scene.py to regenerate it")
 
     def test_animations_start_at_zero(self):
         for gltf, name in ((self.gltf, "gate_open"), (self.props, "windmill_spin")):
@@ -2665,9 +2665,9 @@ class TestExport(unittest.TestCase):
         blades = json.loads(next(node for node in self.props["nodes"] if node["name"] == "windmill_blades")["extras"]["bevy_components"])
         self.assertEqual(blades["components"], [{"type": "animation", "clip": "windmill_spin", "repeat": True, "speed": 0.5}])
 
-    def test_scene_reference_paths_follow_the_level(self):
-        path = Path(self.directory.name) / "levels" / "level.glb"
-        gltf = export_sample_level(path, include_animations=False)
+    def test_scene_reference_paths_follow_the_exported_scene(self):
+        path = Path(self.directory.name) / "scenes" / "scene.glb"
+        gltf = export_sample_scene(path, include_animations=False)
         nodes = {node["name"]: node for node in gltf["nodes"]}
         self.assertEqual(json.loads(nodes["windmill_a"]["extras"]["bevy_components"])["components"], [{**WINDMILL, "path": "../props/windmill.glb"}])
         self.assertNotIn("animations", gltf)
@@ -2681,7 +2681,7 @@ class TestExport(unittest.TestCase):
         self.assertTrue(all(set(scene.get("extras", {})) <= {"bevy_components"} for scene in gltf["scenes"]))
 
     def test_light_probe_files_are_embedded(self):
-        gltf, binary = addon.compression.read_glb((Path(self.directory.name) / "sample_level.glb").read_bytes())
+        gltf, binary = addon.compression.read_glb((Path(self.directory.name) / "sample_scene.glb").read_bytes())
         for name, source in (("room_probe", CUBEMAP), ("gi_volume", IRRADIANCE_VOLUME)):
             component = json.loads(self.nodes[name]["extras"]["bevy_components"])["components"][0]
             self.assertNotIn("file", component)
@@ -2702,7 +2702,7 @@ class TestExport(unittest.TestCase):
             probe.probe_file = str(CUBEMAP)
         self.assertFalse(path.exists())
         with mock.patch.object(addon.operator, "_read_file", side_effect=FileNotFoundError(2, "No such file or directory", str(CUBEMAP))):
-            with self.assertRaisesRegex(RuntimeError, "Could not embed probe_cubemap.ktx2 in the level: No such file or directory"):
+            with self.assertRaisesRegex(RuntimeError, "Could not embed probe_cubemap.ktx2 in the scene: No such file or directory"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
         self.assertFalse(path.exists())
 
@@ -2822,7 +2822,7 @@ class TestBakeLighting(unittest.TestCase):
         self.folder = Path(self.directory.name) / "baked_lighting"
         self.addCleanup(self._restore, self.scene.world.name)
         self.scene.world = _dark_world()
-        bpy.ops.wm.save_as_mainfile(filepath=str(Path(self.directory.name) / "level.blend"))
+        bpy.ops.wm.save_as_mainfile(filepath=str(Path(self.directory.name) / "scene.blend"))
 
     def _restore(self, world):
         scene = bpy.context.scene
@@ -3186,8 +3186,8 @@ class TestBackgroundBake(unittest.TestCase):
         self.assertEqual(task.error, directory)
 
     def test_blender_runs_the_bake_module_from_the_add_on(self):
-        command = addon.bake.bake_command("blender", "level.blend", "bake.json")
-        self.assertEqual(command[:6], ["blender", "--background", "level.blend", "--python-exit-code", "1", "--python-expr"])
+        command = addon.bake.bake_command("blender", "scene.blend", "bake.json")
+        self.assertEqual(command[:6], ["blender", "--background", "scene.blend", "--python-exit-code", "1", "--python-expr"])
         self.assertIn(repr(str(Path(addon.bake.__file__).parent)), command[6])
         self.assertIn(".run('bake.json')", command[6])
 
@@ -3245,7 +3245,7 @@ class TestTextureCompression(unittest.TestCase):
     def setUpClass(cls):
         cls.directory = tempfile.TemporaryDirectory()
         export_props(cls.directory.name)
-        build_sample_level(cls.directory.name)
+        build_sample_scene(cls.directory.name)
         cls.images = _image_state()
         cls.cache = Path(cls.directory.name) / "texture_cache"
         cls.cache.mkdir()
@@ -3253,8 +3253,8 @@ class TestTextureCompression(unittest.TestCase):
         cls.cache_patch.start()
         cls.exports = {}
         for mode in ("DISABLED", "ETC1S", "UASTC", "AUTOMATIC"):
-            path = Path(cls.directory.name) / f"level_{mode.lower()}.glb"
-            export_sample_level(path, texture_compression=mode)
+            path = Path(cls.directory.name) / f"scene_{mode.lower()}.glb"
+            export_sample_scene(path, texture_compression=mode)
             cls.exports[mode] = addon.compression.read_glb(path.read_bytes())
         cls.compressed = {mode: cls.exports[mode] for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
 
@@ -3337,18 +3337,18 @@ class TestTextureCompression(unittest.TestCase):
 
     def test_fixtures_are_current(self):
         for mode, path in COMPRESSED_FIXTURES.items():
-            self.assertTrue(path.is_file(), f"Missing {path}, run tests/blender/sample_level.py to create it")
+            self.assertTrue(path.is_file(), f"Missing {path}, run tests/blender/sample_scene.py to create it")
             gltf, binary = addon.compression.read_glb(path.read_bytes())
             fresh, fresh_binary = self.compressed[mode]
-            self.assertEqual(_node_summary(gltf), _node_summary(fresh), f"{path.name} is out of date, run tests/blender/sample_level.py to regenerate it")
-            self.assertEqual(_sorted_texture_summary(gltf, binary), _sorted_texture_summary(fresh, fresh_binary), f"{path.name} is out of date, run tests/blender/sample_level.py to regenerate it")
+            self.assertEqual(_node_summary(gltf), _node_summary(fresh), f"{path.name} is out of date, run tests/blender/sample_scene.py to regenerate it")
+            self.assertEqual(_sorted_texture_summary(gltf, binary), _sorted_texture_summary(fresh, fresh_binary), f"{path.name} is out of date, run tests/blender/sample_scene.py to regenerate it")
 
 
     def test_reexports_reuse_cached_textures(self):
         self.assertTrue(any(self.cache.glob("*.ktx2")))
-        path = Path(self.directory.name) / "level_again.glb"
+        path = Path(self.directory.name) / "scene_again.glb"
         with mock.patch.object(addon.encoder, "_run", side_effect=AssertionError("textures were encoded again")):
-            export_sample_level(path, texture_compression="AUTOMATIC")
+            export_sample_scene(path, texture_compression="AUTOMATIC")
         self.assertEqual(addon.compression.read_glb(path.read_bytes()), self.exports["AUTOMATIC"])
 
     def test_texture_cache_is_in_the_extension_user_folder(self):
@@ -3365,9 +3365,9 @@ class TestTextureCompression(unittest.TestCase):
 class TestTextureCompressionErrors(unittest.TestCase):
     def setUp(self):
         clear_scene()
-        build_sample_level()
+        build_sample_scene()
         self.directory = tempfile.TemporaryDirectory()
-        self.path = Path(self.directory.name) / "level.glb"
+        self.path = Path(self.directory.name) / "scene.glb"
         self.preferences = bpy.context.preferences.addons[addon.__name__].preferences
 
     def tearDown(self):
@@ -3381,12 +3381,12 @@ class TestTextureCompressionErrors(unittest.TestCase):
         self.assertFalse(self.path.exists())
 
     def test_encoder_failures_keep_the_previous_file(self):
-        self.path.write_bytes(b"previous level")
+        self.path.write_bytes(b"previous scene")
         with mock.patch.object(addon.operator, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.operator, "encode", side_effect=addon.encoder.EncoderError("KTX-Software could not encode wood_color: broken input")):
             with self.assertRaisesRegex(RuntimeError, "Texture compression failed: KTX-Software could not encode wood_color: broken input"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="ETC1S")
-        self.assertEqual(self.path.read_bytes(), b"previous level")
-        self.assertEqual(sorted(path.name for path in Path(self.directory.name).iterdir()), ["level.glb"])
+        self.assertEqual(self.path.read_bytes(), b"previous scene")
+        self.assertEqual(sorted(path.name for path in Path(self.directory.name).iterdir()), ["scene.glb"])
 
     def test_invalid_encoder_output_is_rejected(self):
         with mock.patch.object(addon.operator, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.operator, "encode", side_effect=lambda path, jobs, *args, **options: [b"not ktx2"] * len(jobs)):
