@@ -3196,8 +3196,7 @@ class TestValidation(unittest.TestCase):
             self.assertFalse(path.exists())
             world.bevy_sky.sky_file = str(Path(directory) / "missing.ktx2")
             self.assertEqual(check(), [("ERROR", "Bevy Sky: Cubemap file missing.ktx2 was not found")])
-            properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
-            operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, filepath="", texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
+            operator = _dialog(self, addon.operator.BEVY_OT_export_glb)
             addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
             self.assertIn("Bevy Sky: Cubemap file missing.ktx2 was not found", " ".join(operator.layout.texts()))
 
@@ -3976,7 +3975,7 @@ def _bake_operator(**values):
     operator = type("FakeBakeOperator", (), members)()
     operator.reports = []
     operator.report = lambda levels, message: operator.reports.append((next(iter(levels)), message))
-    for name, value in {"object_name": "", "index": -1, "sky": False, "_directory": None, "_task": None, "_jobs": (), "_folder": "", "_shown": None, **values}.items():
+    for name, value in {"object_name": "", "index": -1, "sky": False, "_interactive": False, "_directory": None, "_task": None, "_jobs": (), "_folder": "", "_shown": None, **values}.items():
         setattr(operator, name, value)
     return operator
 
@@ -4007,7 +4006,7 @@ class TestBakeLighting(unittest.TestCase):
 
     def _restore(self, world):
         scene = bpy.context.scene
-        for name in ("samples", "lamp_direct", "folder"):
+        for name in ("samples", "lamp_direct", "folder", "export_again"):
             scene.bevy_bake_settings.property_unset(name)
         dark = scene.world
         scene.world = bpy.data.worlds.get(world)
@@ -4152,6 +4151,97 @@ class TestBakeLighting(unittest.TestCase):
             face, row, column = _cube_texel((local.x, local.y, -local.z), 64)
             expected = tuple(max(value, 0.0) for value in direction)
             self.assertTrue(numpy.allclose(pixels[face, row, column, :3], expected, atol=0.05), f"{direction} looks up {pixels[face, row, column]}")
+
+    def test_export_checks_warn_when_a_bake_is_out_of_date(self):
+        room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64", volume_size=(4.0, 4.0, 4.0))
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
+        _emissive(crate, (1.0, 0.0, 0.0))
+        far = add_mesh(bpy.ops.mesh.primitive_cube_add, "far", size=1, location=(20, 0, 0))
+        sun = add_light("sun", "SUN", (0, 0, 10), energy=3.0)
+        sky = self.scene.world.bevy_sky
+        sky.enabled = True
+        sky.bake_resolution = "64"
+        check = lambda: [addon.validation.describe(issue) for issue in addon.validation.stale_bakes(bpy.data.objects)]
+        self.assertEqual(check(), [])
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        self.assertEqual(json.loads(reflection.bake_fingerprint)["file"], "//baked_lighting/room_reflection.ktx2")
+        self.assertEqual(check(), [])
+        far.location.x = 30
+        far.data.vertices[0].co.z = 3
+        self.assertEqual(check(), [])
+        stale = "room: Baked before the meshes in its box changed, so the cubemap is out of date. Bake again"
+        for change, undo in ((lambda: setattr(crate.location, "x", 0.5), lambda: setattr(crate.location, "x", 0.0)), (lambda: crate.modifiers.new("bevel", "BEVEL"), lambda: crate.modifiers.clear()), (lambda: setattr(crate.data.materials[0].node_tree.nodes["Emission"].inputs["Color"], "default_value", (0.0, 1.0, 0.0, 1.0)), lambda: setattr(crate.data.materials[0].node_tree.nodes["Emission"].inputs["Color"], "default_value", (1.0, 0.0, 0.0, 1.0))), (lambda: setattr(crate, "hide_render", True), lambda: setattr(crate, "hide_render", False))):
+            change()
+            self.assertEqual(check(), [stale])
+            undo()
+            self.assertEqual(check(), [])
+        room.location.x = 1
+        self.assertEqual(check(), ["room: Baked before its box changed, so the cubemap is out of date. Bake again"])
+        room.location.x = 0
+        sun.data.energy = 5
+        self.assertEqual(check(), ["room: Baked before the lamps changed, so the cubemap is out of date. Bake again"])
+        addon.system.world_background(self.scene.world).inputs["Strength"].default_value = 0.5
+        self.assertEqual(check(), ["Bevy Sky: Baked before the World changed, so the cubemap is out of date. Bake again", "room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again"])
+        self.assertIn("room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again", [addon.validation.describe(issue) for issue in addon.operator._glb_issues(_dialog(self, addon.operator.BEVY_OT_export_glb), bpy.data.objects)])
+        reflection.probe_file = str(CUBEMAP)
+        sky.sky_file = str(CUBEMAP)
+        self.assertEqual(check(), [])
+        reflection.probe_file = "//baked_lighting/room_reflection.ktx2"
+        sky.sky_file = "//baked_lighting/bake_test_sky.ktx2"
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        self.assertEqual(check(), [])
+        bpy.ops.wm.save_mainfile()
+        bpy.ops.wm.open_mainfile(filepath=bpy.data.filepath)
+        self.assertEqual(check(), [])
+        bpy.data.objects["sun"].data.color = (1.0, 0.5, 0.5)
+        self.assertEqual(check(), ["room: Baked before the lamps changed, so the cubemap is out of date. Bake again"])
+
+    def test_export_checks_warn_when_a_lightmap_is_out_of_date(self):
+        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", size=1, location=(0, 0, 0.5))
+        floor, item = self._lightmapped()
+        check = lambda: [addon.validation.describe(issue) for issue in addon.validation.stale_bakes([floor])]
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="floor", index=0), {"FINISHED"})
+        self.assertEqual(check(), [])
+        wall.location.z = 1
+        self.assertEqual(check(), ["floor: Baked before the meshes around it changed, so the lightmap is out of date. Bake again"])
+        wall.location.z = 10
+        self.assertEqual(check(), ["floor: Baked before the meshes around it changed, so the lightmap is out of date. Bake again"])
+        wall.location.z = 0.5
+        self.assertEqual(check(), [])
+        floor.data.uv_layers["lightmap"].data[0].uv = (0.9, 0.9)
+        self.assertEqual(check(), ["floor: Baked before the mesh changed, so the lightmap is out of date. Bake again"])
+        floor.rotation_euler.z = 0.5
+        add_light("lamp", "POINT", (0, 0, 2))
+        self.assertEqual(check(), ["floor: Baked before the mesh and the lamps changed, so the lightmap is out of date. Bake again"])
+        self.assertEqual(addon.validation.stale_bakes([wall]), [])
+
+    def test_bake_lighting_can_export_again_when_it_finishes(self):
+        self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
+        path = Path(self.directory.name) / "level.glb"
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertIn("export_again", operator.layout.props())
+        self.assertNotIn("Nothing to export again yet", " ".join(operator.layout.texts()))
+        self.settings.export_again = "BSN"
+        with _remembered_exports(glb=str(path)):
+            operator = _bake_operator(layout=FakeLayout(self))
+            addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+            self.assertIn("Nothing to export again yet, export the scene once with File > Export > Bevy Scene (BSN)", " ".join(operator.layout.texts()))
+            self.settings.export_again = "GLB"
+            operator = _bake_operator(layout=FakeLayout(self))
+            addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+            self.assertNotIn("Nothing to export again yet", " ".join(operator.layout.texts()))
+            self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        node = next(node for node in read_gltf(path)["nodes"] if node["name"] == "room")
+        self.assertEqual(json.loads(node["extras"]["bevy_components"])["components"][0]["type"], "reflection_probe")
+        self.assertIn("texture", json.loads(node["extras"]["bevy_components"])["components"][0])
+        path.unlink()
+        with _remembered_exports():
+            operator = _bake_operator(_folder=self.settings.folder)
+            operator._jobs = operator._find_jobs(bpy.context)
+            self.assertEqual(operator._finish(bpy.context, operator._jobs), {"FINISHED"})
+        self.assertEqual(operator.reports, [("INFO", f"Baked 1 reflection probe into {self.settings.folder}"), ("WARNING", "Baked 1 reflection probe, but could not export again: Nothing to export again yet, export the scene once with File > Export > Bevy Scene (.glb)")])
+        self.assertFalse(path.exists())
 
     def test_bake_lighting_bakes_the_sky_first(self):
         self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
@@ -4299,7 +4389,7 @@ class TestBakeLighting(unittest.TestCase):
     def test_dialog_shows_the_settings_and_what_it_bakes(self):
         operator = _bake_operator(layout=FakeLayout(self))
         addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
-        self.assertEqual(operator.layout.props(), ["samples", "folder", "lamp_direct"])
+        self.assertEqual(operator.layout.props(), ["samples", "folder", "lamp_direct", "export_again"])
         self.assertIn("No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", " ".join(operator.layout.texts()))
         self._probe("room", "REFLECTION_PROBE")
         self._probe("hall", "REFLECTION_PROBE")

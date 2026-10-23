@@ -12,13 +12,14 @@ from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, baked_s
 from .bsn import BsnError, asset_root, default_assets_folder, digest, drop_scenes, inside, load_path, module_crate, node_components, remove_stale, scene_source, snake_case, strip_components, write_if_changed
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
+from .fingerprint import bake_record
 from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, ExportOptions, LAYER_COUNT
 from .system import accepts, apply_definitions, apply_game_types, asset_path, children_map, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, mesh_points, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, write_field
-from .validation import body_kind, check_bsn, check_objects, check_rust_file, check_world, count, describe, draw_issues, draw_message, issue_row, issue_summary
+from .validation import body_kind, check_bsn, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
 ACCEPTED_OBJECTS = {
@@ -665,7 +666,8 @@ class BEVY_OT_validate(bpy.types.Operator):
 
     def execute(self, context):
         settings = export_settings(context.scene)
-        issues = check_objects(exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers) + check_world(context.scene.world)
+        objects = list(exported_objects(context, settings, selected=False))
+        issues = check_objects(objects, modifiers=settings.apply_modifiers) + check_scene(objects)
         for issue in issues:
             print("Bevy Components:", describe(issue))
         if not issues:
@@ -763,9 +765,15 @@ def _bsn_paths(operator):
     return rust_file, folder, folder / f"{rust_file.stem}.glb"
 
 
+def _glb_issues(operator, objects):
+    objects = list(objects)
+    return check_objects(objects, destination=_export_path(operator.filepath), animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_scene(objects)
+
+
 def _bsn_issues(operator, objects):
     rust_file, folder, glb = _bsn_paths(operator)
-    issues = check_objects(objects, destination=glb, animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_world(bpy.context.scene.world)
+    objects = list(objects)
+    issues = check_objects(objects, destination=glb, animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_scene(objects)
     if glb is not None:
         issues = check_rust_file(rust_file, getattr(operator, "again", False)) + issues + check_bsn(objects, asset_root(folder))
     return issues
@@ -1016,13 +1024,13 @@ class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
         layout.prop(self, "export_on_save")
         _draw_include(self, layout)
         _draw_compression(self, layout, context)
-        _draw_checks(self, layout, context, _export_key(self), lambda: check_objects(_exported_objects(self, context), destination=_export_path(self.filepath), animations=self.include_animations, modifiers=self.apply_modifiers) + check_world(context.scene.world))
+        _draw_checks(self, layout, context, _export_key(self), lambda: _glb_issues(self, _exported_objects(self, context)))
 
     def _destination(self):
         return _export_path(self.filepath)
 
     def _check(self, objects):
-        return check_objects(objects, destination=self._destination(), animations=self.include_animations, modifiers=self.apply_modifiers) + check_world(bpy.context.scene.world)
+        return _glb_issues(self, objects)
 
     def _direct(self, objects):
         return not _has_probes(objects) and not _embeds_sky(bpy.context.scene)
@@ -1287,6 +1295,9 @@ class BEVY_OT_cancel_bake(bpy.types.Operator):
         return {"FINISHED"}
 
 
+BAKE_EXPORTS = {"GLB": BEVY_OT_export_glb, "BSN": BEVY_OT_export_bsn}
+
+
 class BEVY_OT_bake_lighting(bpy.types.Operator):
     bl_idname = "bevy_components.bake_lighting"
     bl_label = "Bake Lighting"
@@ -1317,9 +1328,9 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
     @classmethod
     def description(cls, context, properties):
         if properties.sky:
-            return "Render the World into a cubemap with Cycles and save it as a KTX2 file, in the background while you keep working. Folder is set in Bake Lighting"
+            return "Render the World into a cubemap with Cycles and save it as a KTX2 file, in the background while you keep working. Folder and Export Again are set in Bake Lighting"
         if properties.object_name:
-            return "Render this component's lighting with Cycles and save it as a KTX2 file, in the background while you keep working. Samples and folder are set in Bake Lighting"
+            return "Render this component's lighting with Cycles and save it as a KTX2 file, in the background while you keep working. Samples, folder and Export Again are set in Bake Lighting"
         return cls.bl_description
 
     def draw(self, context):
@@ -1330,7 +1341,11 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         layout.prop(settings, "samples")
         layout.prop(settings, "folder")
         layout.prop(settings, "lamp_direct")
+        layout.prop(settings, "export_again")
         width = context.region.width if context.region else 300
+        export = BAKE_EXPORTS.get(settings.export_again)
+        if export is not None and not export.remembered(context.scene):
+            draw_message(layout, f"Nothing to export again yet, export the scene once with File > Export > {export.bl_label}", width=width)
         jobs = self._find_jobs(context)
         if not jobs:
             draw_message(layout, "No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", icon="ERROR", width=width)
@@ -1378,6 +1393,10 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         if missing:
             self.report({"ERROR"}, f"{missing[0]} has no second UV map for its lightmap. Click Unwrap Lightmap UVs on its Lightmap")
             return {"CANCELLED"}
+        depsgraph = context.evaluated_depsgraph_get()
+        cache = {}
+        for job in self._jobs:
+            job["fingerprint"] = bake_record(context.scene, context.view_layer, depsgraph, job, cache)
         if self._interactive and context.window is not None and bpy.app.binary_path:
             return self._start(context, settings, bpy.app.binary_path)
         window_manager = context.window_manager
@@ -1390,7 +1409,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
             return self._failed(error, self._store_files(done))
         finally:
             window_manager.progress_end()
-        return self._finish(self._store_files(done))
+        return self._finish(context, self._store_files(done))
 
     def modal(self, context, event):
         if self._task.running:
@@ -1406,7 +1425,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         elif self._task.error is not None:
             result = self._failed(self._task.error, stored)
         else:
-            result = self._finish(stored)
+            result = self._finish(context, stored)
         self._release()
         return result
 
@@ -1462,12 +1481,14 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
                 world = bpy.data.worlds.get(job["world"])
                 if world is not None and world.library is None:
                     world.bevy_sky.sky_file = job["file"]
+                    world.bevy_sky.bake_fingerprint = job.get("fingerprint", "")
                     stored.append(job)
                 continue
             obj = bpy.data.objects.get(job["object"])
             items = obj.bevy_component_data.components if obj is not None and obj.library is None else ()
             if job["index"] < len(items) and FILE_KINDS.get(items[job["index"]].component_type) == job["kind"]:
                 items[job["index"]].probe_file = job["file"]
+                items[job["index"]].bake_fingerprint = job.get("fingerprint", "")
                 stored.append(job)
         return stored
 
@@ -1475,6 +1496,12 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         self.report({"ERROR"}, f"Baking lighting failed after {bake_summary(stored)}: {error}" if stored else f"Baking lighting failed: {error}")
         return {"FINISHED"} if stored else {"CANCELLED"}
 
-    def _finish(self, stored):
+    def _finish(self, context, stored):
         self.report({"INFO"}, f"Baked {bake_summary(stored)} into {self._folder}")
+        export = BAKE_EXPORTS.get(context.scene.bevy_bake_settings.export_again)
+        if export is not None:
+            try:
+                getattr(bpy.ops.export_scene, export.bl_idname.split(".")[1])("INVOKE_DEFAULT" if self._interactive else "EXEC_DEFAULT", again=True)
+            except RuntimeError as error:
+                self.report({"WARNING"}, f"Baked {bake_summary(stored)}, but could not export again: {str(error).removeprefix('Error: ').strip()}")
         return {"FINISHED"}

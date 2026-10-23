@@ -8,6 +8,7 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from .bsn import BsnError, crate_root, custom_literal, file_state, inside
+from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
 from .property import AUDIO_FORMATS
@@ -253,6 +254,36 @@ def check_world(world):
         issues.append(Issue(check.level, None, None, f"Bevy Sky: {check.message}"))
     if ambient_doubles_sky(world):
         issues.append(Issue("WARNING", None, None, AMBIENT_WITH_SKY))
+    return issues
+
+
+def check_scene(objects):
+    return check_world(bpy.context.scene.world) + stale_bakes(objects)
+
+
+def stale_bakes(objects):
+    scene = bpy.context.scene
+    world = scene.world
+    baked = []
+    if world is not None and hasattr(world, "bevy_sky") and world.bevy_sky.enabled:
+        record = read_record(world.bevy_sky.bake_fingerprint, world.bevy_sky.sky_file)
+        if record is not None:
+            baked.append((None, None, "SKY", record))
+    for obj in objects:
+        if scene.objects.get(obj.name) != obj:
+            continue
+        for item in components_for(obj):
+            if item.component_type in FILE_KINDS and (record := read_record(item.bake_fingerprint, item.probe_file)) is not None:
+                baked.append((obj, item, FILE_KINDS[item.component_type], record))
+    if not baked:
+        return []
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    cache = {}
+    issues = []
+    for obj, item, kind, record in baked:
+        message = stale_message(record, kind, bake_parts(scene, bpy.context.view_layer, depsgraph, cache, obj, item, world))
+        if message is not None:
+            issues.append(Issue("WARNING", obj, item, message if obj is not None else f"Bevy Sky: {message}"))
     return issues
 
 

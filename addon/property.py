@@ -183,6 +183,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so baked lighting matches the exported lamps", default=683.0, min=0.0, soft_max=100000.0, update=sync_changed)
     probe_parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the box walls, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
     probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the scene: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume, a 2D texture for a Lightmap", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    bake_fingerprint: StringProperty(name="Bake Fingerprint", description="What the meshes, lamps and World looked like when Bake rendered the file, so the export checks can tell when it is out of date", options={"HIDDEN"})
     bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the exported scene") for size in BAKE_SIZES], default="256")
     bake_voxels: IntVectorProperty(name="Voxels", description="Light samples that Bake places along the box's X, Y (up) and Z axes", size=3, default=(8, 4, 8), min=1, max=64)
     lightmap_resolution: EnumProperty(name="Bake Size", description="Size of the lightmap that Bake renders. Unwrap the lightmap UVs again after changing it, so their islands stay a few pixels apart", items=[(str(size), f"{size} px", f"{size} × {size} pixels, which adds {size * size * 4 / 2 ** 20:.2g} MB to the exported scene") for size in LIGHTMAP_SIZES], default="512")
@@ -252,6 +253,7 @@ class BEVY_PG_ambient_light(bpy.types.PropertyGroup):
 class BEVY_PG_sky(bpy.types.PropertyGroup):
     enabled: BoolProperty(name="Bevy Sky", description="Export the World as the sky of every Bevy camera, from a cubemap that Bake renders", default=False)
     sky_file: StringProperty(name="Cubemap", description="KTX2 cubemap of the World that the export embeds in the scene, which Bake renders", subtype="FILE_PATH", options=PATH_OPTIONS)
+    bake_fingerprint: StringProperty(name="Bake Fingerprint", description="What the World looked like when Bake rendered the cubemap, so the export checks can tell when it is out of date", options={"HIDDEN"})
     bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the exported scene") for size in BAKE_SIZES], default="512")
     brightness: FloatProperty(name="Brightness", description="Brightness of the sky in candela per square meter that a cubemap value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so the sky looks like the World in Blender", default=683.0, min=0.0, soft_max=100000.0)
     environment_light: BoolProperty(name="Environment Light", description="Also light the scene with the sky through an environment map light on each camera, which Bevy filters from the cubemap. Lightmaps and irradiance volumes still give the soft light where they are, and the sky adds reflections", default=True)
@@ -262,6 +264,7 @@ class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
     samples: IntProperty(name="Samples", description="Cycles samples per pixel. More samples give smoother light and take longer", default=128, min=1, soft_max=4096)
     folder: StringProperty(name="Folder", description="Folder for the baked .ktx2 files, where // is the folder of the .blend file", subtype="DIR_PATH", default="//baked_lighting/", options=PATH_OPTIONS)
     lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the scene exports its lamps, since Bevy already lights meshes with them", default=False)
+    export_again: EnumProperty(name="Export Again", description="Export the scene again when the bake finishes, to the file and with the settings of its last export", items=(("NONE", "Off", "Only bake"), ("GLB", "Bevy Scene (.glb)", "Export the scene again to the .glb file that the last GLB export wrote"), ("BSN", "Bevy Scene (BSN)", "Export the scene again to the .rs file that the last BSN export wrote")), default="NONE")
 
 
 class ExportOptions:

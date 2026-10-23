@@ -86,7 +86,9 @@ A BSN export rewrites its `.rs` file on save as well, but the game only picks th
 - an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
 - a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported scene itself (a file on another drive than the exported scene is an error)
 - an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
-- a Fog Volume with a density of 0, and a Reflection Probe or Irradiance Volume with no file
+- a Fog Volume with a density of 0, and a Reflection Probe, Irradiance Volume or Bevy Sky with no file
+- Bevy Ambient Light from the World color next to the Bevy Sky's Environment Light, which light the scene twice
+- a lightmap, light probe or sky baked before the meshes, lamps or World it lights changed, so it needs another bake
 - an area light without a Light component, which glTF leaves out, a disk or ellipse area light or a square spot light, which Bevy cannot draw, and a Volumetric light without shadows
 - a light probe file in a block-compressed format, which only loads on GPUs that support it
 - a material that glTF flattens: one that mixes shaders, has no Principled BSDF, or drives Principled BSDF inputs with procedural nodes instead of images
@@ -163,6 +165,8 @@ Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` featur
 
 **Properties > World > Bevy Ambient Light** sets the scene's ambient light, from the World color or a color and brightness of its own.
 
+**Properties > World > Bevy Sky** shows the World behind every `Camera3d` as a `Skybox`, from a cubemap that its **Bake** button renders of the World alone. With **Environment Light** on, the sky also lights the scene through a `GeneratedEnvironmentMapLight`, which adds reflections everywhere and soft light where no lightmap or irradiance volume reaches. The export then sets Bevy's ambient light to 0 unless Bevy Ambient Light is on, so the sky does not light the scene twice. Add `NoBlenderSky` to a camera to leave it out, or read the `BlenderSky` resource to set up cameras yourself.
+
 ## Fog and light probes
 
 **Fog Volume**, **Reflection Probe** and **Irradiance Volume** (under Rendering) are boxes. Set their size on Bevy's axes or drag the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
@@ -175,12 +179,14 @@ The export embeds each probe's `.ktx2` file in the GLB, so the scene stays one f
 
 ## Baked lighting
 
-The addon bakes lightmaps, Reflection Probes and Irradiance Volumes with Cycles, a static alternative to Godot's VoxelGI.
+The addon bakes lightmaps, Reflection Probes, Irradiance Volumes and the Bevy Sky with Cycles, a static alternative to Godot's VoxelGI.
 
 1. Add a **Lightmap** (under Rendering) to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
-2. Click **Bake** on a component to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default.
+2. Click **Bake** on a component to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default, and **Export Again** exports the scene to the GLB or BSN file of its last export once the bake finishes.
 
 A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; bakes that already finished keep their new files. Each component's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.
+
+Each bake remembers the scene it rendered: for a probe the meshes in its box, for a lightmap its mesh and the meshes touching it, with their materials, plus the lamps and the World. When one of those changes, the export checks warn that the bake is out of date.
 
 - A lightmap holds the light from the sky and emissive materials and the light that bounces between surfaces. Bevy lights the mesh with the exported lamps as usual, except lamps whose Light component is **Baked**: their direct light and shadows go into the lightmap, and Bevy only adds their reflections.
 - Turn on **Bevy Ambient Light** and its **Baked** option in the World properties, so Bevy keeps its ambient light off lightmapped meshes.
@@ -234,6 +240,7 @@ With **Prefab Functions** on, objects that share a combination of components, su
 
 - Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors, colors and enum variants.
 - Navigation writes the importer's `NavigationWalkable` and `NavigationObstacle`, so a scene that uses it needs the importer crate, though not its plugin.
+- The Bevy Sky sets the importer's `BlenderSky` resource, so a scene with a sky needs the importer crate and its plugin, which puts the sky on the cameras.
 - Physics needs Avian with its `collider-from-mesh` feature. Add `BlenderBevyComponentsPlugin` when you compress textures or use a Scene Reference, since the referenced GLBs carry their components the usual way.
 - Skins and shape keys are left out.
 
