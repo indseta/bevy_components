@@ -7,7 +7,7 @@ from .metadata import FIELD_VALUES, invalid_names, joint_limits_inverted, valida
 from .operator import BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .system import panel_body_drawn, panel_header_drawn
-from .validation import check_object, draw_message
+from .validation import check_object, draw_message, texture_check
 
 
 def _labeled_row(layout, text):
@@ -47,13 +47,17 @@ def _draw_visibility_range(layout, obj, index, item):
         layout.label(text="Fade distances must increase from top to bottom", icon="ERROR")
 
 
+def _draw_size(layout, item, prop):
+    column = layout.column(align=True)
+    column.prop(item, prop, index=0, text="Size X")
+    column.prop(item, prop, index=1, text="Y (Up)")
+    column.prop(item, prop, index=2, text="Z")
+
+
 def _draw_collider(layout, obj, index, item):
     layout.prop(item, "collider_shape")
     if item.collider_shape == "CUBOID":
-        column = layout.column(align=True)
-        column.prop(item, "collider_size", index=0, text="Size X")
-        column.prop(item, "collider_size", index=1, text="Y (Up)")
-        column.prop(item, "collider_size", index=2, text="Z")
+        _draw_size(layout, item, "collider_size")
     elif item.collider_shape == "SPHERE":
         layout.prop(item, "collider_radius")
     elif item.collider_shape == "CAPSULE":
@@ -186,6 +190,45 @@ def _draw_audio_player(layout, obj, index, item):
     row.prop(item, "audio_distance")
 
 
+def _draw_fog_volume(layout, obj, index, item):
+    _draw_size(layout, item, "volume_size")
+    layout.prop(item, "fog_color")
+    column = layout.column(align=True)
+    column.prop(item, "fog_density")
+    column.prop(item, "fog_absorption")
+    column.prop(item, "fog_scattering")
+    column.prop(item, "fog_anisotropy")
+    column = layout.column(align=True)
+    column.prop(item, "fog_light_tint")
+    column.prop(item, "fog_light_intensity")
+
+
+def _draw_probe(layout, obj, item, text):
+    _draw_size(layout, item, "volume_size")
+    layout.prop(item, "volume_falloff")
+    layout.prop(item, "probe_intensity")
+    if item.component_type == "REFLECTION_PROBE":
+        layout.prop(item, "probe_parallax")
+    check = texture_check(obj, item)
+    row = layout.row()
+    row.alert = check.level == "ERROR"
+    row.prop(item, "probe_file", text=text)
+    if check.level is None:
+        row = layout.row()
+        row.active = False
+        row.label(text=check.message, icon="INFO")
+    elif check.level == "ERROR":
+        draw_message(layout, check.message, icon="CANCEL", width=bpy.context.region.width if bpy.context.region else 300)
+
+
+def _draw_reflection_probe(layout, obj, index, item):
+    _draw_probe(layout, obj, item, "Cubemap")
+
+
+def _draw_irradiance_volume(layout, obj, index, item):
+    _draw_probe(layout, obj, item, "Voxels")
+
+
 def _draw_fields(layout, item):
     problems = invalid_names(field.name for field in item.fields)
     for field in item.fields:
@@ -233,6 +276,9 @@ DRAWERS = {
     "JOINT": _draw_joint,
     "SCENE_REFERENCE": _draw_scene_reference,
     "ANIMATION": _draw_animation,
+    "FOG_VOLUME": _draw_fog_volume,
+    "REFLECTION_PROBE": _draw_reflection_probe,
+    "IRRADIANCE_VOLUME": _draw_irradiance_volume,
 }
 
 
@@ -397,6 +443,7 @@ class BEVY_PT_overlay(bpy.types.Panel):
         column.prop(settings, "visibility_ranges")
         column.prop(settings, "audio_ranges")
         column.prop(settings, "scene_references")
+        column.prop(settings, "volumes")
         column = split.column()
         column.prop(settings, "labels")
         column.prop(settings, "xray")

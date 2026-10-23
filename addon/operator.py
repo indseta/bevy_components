@@ -11,8 +11,9 @@ from .compression import check_encoded, embed_textures, plan_textures, read_glb,
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
+from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
-from .system import apply_definitions, asset_path, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .system import apply_definitions, asset_path, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import body_kind, check_objects, count, describe, draw_issues, issue_summary
 
 TEXTURE_COMPRESSION = [
@@ -81,6 +82,14 @@ def _unique(base, taken, separator):
 
 def _export_path(filepath):
     return Path(os.path.abspath(bpy.path.abspath(filepath))) if filepath else None
+
+
+def _read_file(path):
+    return Path(bpy.path.abspath(path)).read_bytes()
+
+
+def _has_probes(objects):
+    return any(item.component_type in FILE_KINDS for obj in objects for item in components_for(obj))
 
 
 def _show_scene_properties(context):
@@ -703,14 +712,14 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
                 return {"CANCELLED"}
         for obj in objects:
             sync_object(obj, level.parent if level else None)
-        if encoder is None:
+        if encoder is None and not _has_probes(objects):
             result = self._export_gltf(Path(self.filepath))
             if "FINISHED" in result:
                 self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
                 self._report_warnings()
             return result
         self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
-        result = self._compress(context, encoder)
+        result = self._export_level(context, encoder)
         if "RUNNING_MODAL" not in result:
             self._release()
         return result
@@ -745,13 +754,20 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
             self.report({"ERROR"}, f"GLB export failed: {error}")
             return {"CANCELLED"}
 
-    def _compress(self, context, encoder):
+    def _export_level(self, context, encoder):
         path = Path(self._directory.name) / "level.glb"
         result = self._export_gltf(path)
         if "FINISHED" not in result:
             return result
         try:
-            gltf, binary = read_glb(path.read_bytes())
+            gltf, binary = embed_files(*read_glb(path.read_bytes()), read=_read_file)
+        except OSError as error:
+            self.report({"ERROR"}, f"Could not embed {Path(error.filename or '').name or 'a probe file'} in the level: {error.strerror}")
+            return {"CANCELLED"}
+        if encoder is None:
+            self._level = (gltf, binary, [])
+            return self._finish([])
+        try:
             jobs = plan_textures(gltf, binary, self.texture_compression, convert=image_to_png)
         except ValueError as error:
             return self._failed(error)
@@ -820,6 +836,9 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         resized = sorted({job.name for job in jobs if job.resized})
         if resized:
             self.report({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need")
-        self.report({"INFO"}, f"Exported Bevy level with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {self.filepath}")
+        if jobs:
+            self.report({"INFO"}, f"Exported Bevy level with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {self.filepath}")
+        else:
+            self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
         self._report_warnings()
         return {"FINISHED"}

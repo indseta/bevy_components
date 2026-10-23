@@ -1,11 +1,14 @@
 use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionLayers, Friction, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
-use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, math::Affine3A, platform::collections::HashMap, prelude::*};
+use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 use std::iter;
-use crate::{component::*, data::*, joint::*};
+use crate::{component::*, data::*, joint::*, texture::GltfTextures};
 
-pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>) {
-    for (entity, extras, name) in &nodes {
+const MAX_CUBEMAP_SIZE: u32 = 8192;
+const CUBE_FACES: u32 = 6;
+
+pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>, Option<&GltfTextures>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>) {
+    for (entity, extras, name, textures) in &nodes {
         commands.entity(entity).insert(DecodedGltfExtras);
         let Ok(outer) = serde_json::from_str::<Value>(&extras.value) else {
             warn!("Invalid glTF extras on {:?}", name);
@@ -104,6 +107,26 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                 ExportedComponent::Custom { type_path, data } => custom.0.push(BlenderCustomComponent { type_path, data }),
                 ExportedComponent::SceneReference { path, scene } => reference = Some(PendingSceneReference { path, scene }),
                 ExportedComponent::Animation { clip, repeat, speed } => animation = Some(PendingAnimation(AnimationSpec { clip, repeat, speed })),
+                ExportedComponent::FogVolume { size, color, density, absorption, scattering, anisotropy, light_tint, light_intensity } => {
+                    commands.spawn((Name::new("Fog Volume"), FogVolume { fog_color: Color::srgb_from_array(color), density_factor: density, absorption, scattering, scattering_asymmetry: anisotropy, light_tint: Color::srgb_from_array(light_tint), light_intensity, ..default() }, Transform::from_scale(Vec3::from_array(size)), ChildOf(entity)));
+                }
+                ExportedComponent::ReflectionProbe { size, falloff, intensity, parallax_correction, texture } => {
+                    let Some(cubemap) = texture_handle(textures, texture) else {
+                        warn!("No cubemap embedded for the reflection probe on {:?}", name);
+                        continue;
+                    };
+                    let mut probe = commands.spawn((Name::new("Reflection Probe"), LightProbe { falloff: Vec3::from_array(falloff) }, PendingReflectionProbe { cubemap, intensity }, Transform::from_scale(Vec3::from_array(size)), ChildOf(entity)));
+                    if !parallax_correction {
+                        probe.insert(ParallaxCorrection::None);
+                    }
+                }
+                ExportedComponent::IrradianceVolume { size, falloff, intensity, texture } => {
+                    let Some(voxels) = texture_handle(textures, texture) else {
+                        warn!("No voxel texture embedded for the irradiance volume on {:?}", name);
+                        continue;
+                    };
+                    commands.spawn((Name::new("Irradiance Volume"), LightProbe { falloff: Vec3::from_array(falloff) }, IrradianceVolume { voxels, intensity, affects_lightmapped_meshes: true }, Transform::from_scale(Vec3::from_array(size)), ChildOf(entity)));
+                }
                 ExportedComponent::Unsupported => warn!("Unsupported Bevy component on {:?}", name),
             }
         }
@@ -133,6 +156,20 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         if let Some(animation) = animation {
             commands.entity(entity).insert(animation);
         }
+    }
+}
+
+pub fn apply_reflection_probes(mut commands: Commands, probes: Query<(Entity, &PendingReflectionProbe)>, images: Res<Assets<Image>>) {
+    for (entity, pending) in &probes {
+        let Some(image) = images.get(&pending.cubemap) else { continue; };
+        let size = image.texture_descriptor.size;
+        let mut target = commands.entity(entity);
+        target.remove::<PendingReflectionProbe>();
+        if size.depth_or_array_layers != CUBE_FACES || size.width != size.height || !size.width.is_power_of_two() || size.width > MAX_CUBEMAP_SIZE {
+            warn!("Reflection probe cubemap is {}x{}x{}, but Bevy only filters square cubemaps whose size is a power of two", size.width, size.height, size.depth_or_array_layers);
+            continue;
+        }
+        target.insert(GeneratedEnvironmentMapLight { environment_map: pending.cubemap.clone(), intensity: pending.intensity, ..default() });
     }
 }
 
@@ -375,6 +412,10 @@ fn locked_axes(translation: [bool; 3], rotation: [bool; 3]) -> LockedAxes {
 fn unlocked(vector: [f32; 3], locks: Option<[bool; 3]>) -> Vec3 {
     let locks = locks.unwrap_or_default();
     return Vec3::from_array(std::array::from_fn(|axis| if locks[axis] { 0.0 } else { vector[axis] }));
+}
+
+fn texture_handle(textures: Option<&GltfTextures>, index: Option<usize>) -> Option<Handle<Image>> {
+    return textures?.0.get(index?).cloned();
 }
 
 fn primitive_collider(spec: &ColliderSpec) -> Option<Collider> {

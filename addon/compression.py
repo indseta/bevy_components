@@ -212,7 +212,7 @@ def plan_textures(gltf, binary, mode, convert=None):
     payloads = {}
     for index, texture in enumerate(gltf.get("textures", [])):
         image = texture_source(texture)
-        if image is None:
+        if image is None or gltf["images"][image].get("mimeType") == KTX2_MIME_TYPE:
             continue
         if image not in payloads:
             data, mime_type = image_payload(gltf, binary, image)

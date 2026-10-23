@@ -59,7 +59,7 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 
 ## Checks
 
-**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON or a joint limit whose Min is above its Max, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
+**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a joint limit whose Min is above its Max, or a light probe file that is missing or that Bevy cannot use, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
 
 - a Triangle Mesh or Convex Hull collider, or a Visibility Range, with no mesh on or under its object
 - a Dynamic Rigid Body with no collider, a Rigid Body inside a moving one, and Triangle Mesh colliders on Dynamic bodies
@@ -72,6 +72,8 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 - an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
 - a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported level itself (a file on another drive than the level is an error)
 - an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
+- a Fog Volume with a density of 0, and a Reflection Probe or Irradiance Volume with no file
+- a light probe file in a block-compressed format, which only loads on GPUs that support it
 
 ## Custom components
 
@@ -93,6 +95,16 @@ The fields export as the JSON object that serde reads into a struct with the sam
 | String | `String` |
 | Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
 | Color | `Color`, in sRGB |
+
+## Fog and light probes
+
+**Fog Volume**, **Reflection Probe** and **Irradiance Volume** (under Rendering) are boxes. Set their size on Bevy's axes or drag the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
+
+- **Fog Volume** fills its box with volumetric fog. Bevy only draws it for cameras with `VolumetricFog` once a light has `VolumetricLight`, such as `commands.spawn((Camera3d::default(), VolumetricFog::default()))` and `commands.spawn((DirectionalLight::default(), VolumetricLight))`.
+- **Reflection Probe** gives the meshes in its box reflections and soft light from a cubemap. Bevy filters the cubemap when the level loads, so it needs six square faces whose size is a power of two, and no mipmaps. KTX-Software makes one from six renders: `ktx create --format R16G16B16A16_SFLOAT --cubemap px.exr nx.exr py.exr ny.exr pz.exr nz.exr room.ktx2`.
+- **Irradiance Volume** lights the meshes in its box from a grid of light samples, like Godot's VoxelGI. Its file is a 3D texture in Bevy's layout: X × Y × Z samples take X × 2Y × 3Z texels.
+
+The export embeds each probe's `.ktx2` file in the GLB, so the level stays one file and needs no extra loading code. Save them uncompressed, such as RGBA16F. Bevy cannot use Basis Universal here, and block-compressed formats only load on GPUs that support them.
 
 ## Texture compression
 
@@ -135,7 +147,7 @@ python tests/blender/run.py
 
 The importer tests load `importer/tests/assets/sample_level.glb` and its compressed copies `sample_level_etc1s.glb`, `sample_level_uastc.glb` and `sample_level_automatic.glb`, plus the `props/windmill.glb` prop that the sample level references, which `python tests/blender/sample_level.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
 
-The rendering test compares compressed and uncompressed levels on a real GPU and is skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
+The rendering tests compare compressed and uncompressed levels on a real GPU and check that light probes and fog show up. They are skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
 
 `addon/` holds the Blender extension and `importer/` the Rust crate. When CI passes on `main`, a GitHub release with both downloads is published whenever the version changes. The addon and importer share one version, kept in `addon/blender_manifest.toml`, `addon/__init__.py` and `importer/Cargo.toml`, and a test checks they match.
 

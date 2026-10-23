@@ -9,10 +9,12 @@ from mathutils import Matrix, Quaternion, Vector
 
 from .metadata import EXTRAS_KEY, component_errors, visibility_range_problems
 from .property import AUDIO_FORMATS
+from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .reference import SCENE_EXTENSIONS, read_scenes
 from .system import MESH_TYPES, children_map, component_of, components_for, file_path, has_faces, inherited, level_path, mesh_sources, object_actions, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
+TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
 
 TYPE_PATH = re.compile(r"[A-Za-z_]\w*(::[A-Za-z_]\w*)*(<.+>)?")
 WINDOWS_DRIVE = re.compile(r"[A-Za-z]:")
@@ -20,6 +22,13 @@ SHAPE_LABELS = {
     "TRIMESH": "Triangle Mesh",
     "CONVEX": "Convex Hull",
 }
+MISSING_FILES = {
+    "REFLECTION_PROBE": "No cubemap, so the probe adds no reflections",
+    "IRRADIANCE_VOLUME": "No voxel texture, so the volume adds no light",
+}
+TEXTURE_CACHE_LIMIT = 256
+
+_texture_checks = {}
 
 
 def describe(issue):
@@ -90,6 +99,12 @@ def _object_issues(obj, children, exported, level=None, animations=True):
             issues.extend(_scene_reference_issues(obj, item, level))
         elif item.component_type == "ANIMATION":
             issues.extend(Issue("WARNING", obj, item, message) for message in _animation_warnings(obj, item, children, animations))
+        elif item.component_type in FILE_KINDS:
+            check = texture_check(obj, item)
+            if check.level is not None:
+                issues.append(Issue(check.level, obj, item, check.message))
+        elif item.component_type == "FOG_VOLUME" and item.fog_density <= 0:
+            issues.append(Issue("WARNING", obj, item, "Density is 0, so the fog is invisible"))
         elif item.component_type == "CUSTOM" and item.custom_type.strip():
             if not TYPE_PATH.fullmatch(item.custom_type):
                 issues.append(Issue("WARNING", obj, item, f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
@@ -97,6 +112,31 @@ def _object_issues(obj, children, exported, level=None, animations=True):
                 issues.append(Issue("WARNING", obj, item, f"Added more than once, but an entity holds only one {item.custom_type}"))
             custom_types.add(item.custom_type)
     return issues
+
+
+def texture_check(obj, item):
+    if not item.probe_file.strip():
+        return TextureCheck("WARNING", MISSING_FILES[item.component_type], None)
+    kind = FILE_KINDS[item.component_type]
+    path = Path(bpy.path.abspath(item.probe_file, library=obj.library))
+    try:
+        stat = path.stat()
+    except OSError:
+        stat = None
+    if stat is None or not path.is_file():
+        return TextureCheck("ERROR", f"{FILE_LABELS[kind]} file {path.name} was not found", None)
+    key = (str(path), kind, stat.st_mtime_ns, stat.st_size)
+    if key not in _texture_checks:
+        try:
+            with path.open("rb") as file:
+                header = file.read(HEADER_LENGTH)
+        except OSError as error:
+            return TextureCheck("ERROR", f"Could not read {path.name}: {error.strerror}", None)
+        level, message = check_texture(header, kind)
+        if len(_texture_checks) >= TEXTURE_CACHE_LIMIT:
+            _texture_checks.clear()
+        _texture_checks[key] = TextureCheck(level, message if level is None else f"{path.name} {message}", voxel_counts(header) if kind == "VOXELS" else None)
+    return _texture_checks[key]
 
 
 def _collider_warnings(obj, item, children):

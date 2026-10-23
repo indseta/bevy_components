@@ -194,6 +194,35 @@ def serialize_component(item, locate=_portable):
             "spatial": bool(item.audio_spatial),
             "distance": _float32(item.audio_distance),
         }
+    if kind == "FOG_VOLUME":
+        return {
+            "type": "fog_volume",
+            "size": _floats(item.volume_size),
+            "color": _floats(item.fog_color),
+            "density": _float32(item.fog_density),
+            "absorption": _float32(item.fog_absorption),
+            "scattering": _float32(item.fog_scattering),
+            "anisotropy": _float32(item.fog_anisotropy),
+            "light_tint": _floats(item.fog_light_tint),
+            "light_intensity": _float32(item.fog_light_intensity),
+        }
+    if kind == "REFLECTION_PROBE":
+        return {
+            "type": "reflection_probe",
+            "size": _floats(item.volume_size),
+            "falloff": [_float32(item.volume_falloff)] * 3,
+            "intensity": _float32(item.probe_intensity),
+            "parallax_correction": bool(item.probe_parallax),
+            "file": item.probe_file or None,
+        }
+    if kind == "IRRADIANCE_VOLUME":
+        return {
+            "type": "irradiance_volume",
+            "size": _floats(item.volume_size),
+            "falloff": [_float32(item.volume_falloff)] * 3,
+            "intensity": _float32(item.probe_intensity),
+            "file": item.probe_file or None,
+        }
     if kind == "CUSTOM":
         if item.use_fields:
             return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields)}
@@ -223,6 +252,10 @@ def initial_velocities(item):
     linear = [0.0 if dynamic and locked else float(value) for value, locked in zip(item.rigid_body_linear_velocity, item.rigid_body_lock_translation)]
     angular = [0.0 if dynamic and locked else float(value) for value, locked in zip(item.rigid_body_angular_velocity, item.rigid_body_lock_rotation)]
     return linear, angular
+
+
+def _floats(values):
+    return [_float32(value) for value in values]
 
 
 def _layer_bits(layers):

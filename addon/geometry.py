@@ -155,3 +155,21 @@ def joint_lines(kind, axis, reference, size, limits=None, swing=None):
             lines.extend((tip, _add(tip, _scaled(rotate(reference, axis, angle), size * 0.4))) for angle in limits)
         return lines
     raise ValueError(f"Unsupported joint type: {kind}")
+
+
+def voxel_lines(size, counts, limit=4096):
+    if counts is None or counts[0] * counts[1] * counts[2] > limit:
+        return []
+    marker = min(float(length) / count for length, count in zip(size, counts)) * 0.1
+    lines = []
+    for x in range(counts[0]):
+        for y in range(counts[1]):
+            for z in range(counts[2]):
+                center_x, center_y, center_z = [((index + 0.5) / count - 0.5) * float(length) for index, count, length in zip((x, y, z), counts, size)]
+                point = (center_x, -center_z, center_y)
+                for axis in range(3):
+                    start, end = list(point), list(point)
+                    start[axis] -= marker
+                    end[axis] += marker
+                    lines.append((tuple(start), tuple(end)))
+    return lines

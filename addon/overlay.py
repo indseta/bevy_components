@@ -10,11 +10,12 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
-from .geometry import arrow_lines, box_lines, capsule_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines
+from .geometry import arrow_lines, box_lines, capsule_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
 from .metadata import EXTRAS_KEY, initial_velocities
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .system import children_map, component_of, components_for, file_path, mesh_sources, panel_expanded, redraw_viewports
+from .validation import texture_check
 
 DRAW_3D = None
 DRAW_2D = None
@@ -47,6 +48,20 @@ VELOCITY_SECONDS = 0.25
 VELOCITY_LENGTHS = (0.3, 5.0)
 JOINT_TAG = '"type":"joint"'
 SCENE_COLOR = (1.0, 0.42, 0.70, 0.85)
+VOLUME_COLORS = {
+    "FOG_VOLUME": (0.72, 0.80, 0.92, 0.80),
+    "REFLECTION_PROBE": (0.35, 0.85, 1.0, 0.85),
+    "IRRADIANCE_VOLUME": (1.0, 0.82, 0.30, 0.85),
+}
+VOLUME_NAMES = {
+    "FOG_VOLUME": "Fog Volume",
+    "REFLECTION_PROBE": "Reflection Probe",
+    "IRRADIANCE_VOLUME": "Irradiance Volume",
+}
+MISSING_TEXTURES = {
+    "REFLECTION_PROBE": "no cubemap",
+    "IRRADIANCE_VOLUME": "no voxels",
+}
 
 
 def preview_objects(context, settings):
@@ -125,6 +140,15 @@ def collider_lines(obj, item, limit, children):
     if kind == "CAPSULE":
         return [(obj.matrix_world, capsule_lines(item.collider_radius, item.collider_height))]
     return [(matrix, mesh_lines(source, kind, limit)) for source, matrix in mesh_sources(obj, children, "COLLIDER")]
+
+
+def volume_lines(obj, item):
+    found = [(cuboid_lines(item.volume_size), 2.0)]
+    if item.component_type != "FOG_VOLUME" and 0 < item.volume_falloff < 1:
+        found.append((cuboid_lines([value * (1 - item.volume_falloff) for value in item.volume_size]), 1.0))
+    if item.component_type == "IRRADIANCE_VOLUME":
+        found.append((voxel_lines(item.volume_size, texture_check(obj, item).voxels), 1.0))
+    return found
 
 
 def mesh_lines(obj, kind, limit):
@@ -286,6 +310,10 @@ def preview_batches(context, settings):
         bounds = scene_bounds(reference) if reference and settings.scene_references else None
         if bounds:
             batches.append((obj.matrix_world, box_lines(*bounds), SCENE_COLOR, 1.5))
+        if settings.volumes:
+            for item in components_for(obj):
+                if item.component_type in VOLUME_COLORS:
+                    batches.extend((obj.matrix_world, lines, VOLUME_COLORS[item.component_type], width) for lines, width in volume_lines(obj, item))
     if settings.joints:
         for obj in joint_objects(context, settings, objects):
             batches.extend(joint_batches(obj, component_of(obj, "JOINT")))
@@ -364,6 +392,8 @@ def _label_lines(obj, settings, children):
     animation = component_of(obj, "ANIMATION")
     if animation:
         descriptions.append(f"Animation · {animation.animation_clip or 'no clip'} · {'loop' if animation.animation_loop else 'once'} · {animation.animation_speed:g}×")
+    if settings.volumes:
+        descriptions.extend(_volume_label(obj, item) for item in components_for(obj) if item.component_type in VOLUME_NAMES)
     return descriptions + _joint_label(obj, settings)
 
 
@@ -373,6 +403,15 @@ def _joint_label(obj, settings):
         return []
     names = [body.name if body is not None else "World" for body in (joint.joint_body1, joint.joint_body2)]
     return [f"Joint · {JOINT_LABELS[joint.joint_kind]} · {names[0]} – {names[1]}"]
+
+
+def _volume_label(obj, item):
+    size = " × ".join(f"{value:g}" for value in item.volume_size)
+    if item.component_type == "FOG_VOLUME":
+        return f"Fog Volume · {size} · density {item.fog_density:g}"
+    check = texture_check(obj, item)
+    details = check.message if check.level is None else MISSING_TEXTURES[item.component_type] if not item.probe_file.strip() else "file problem, see its panel"
+    return f"{VOLUME_NAMES[item.component_type]} · {size} · {details}"
 
 
 def _draw_labels():

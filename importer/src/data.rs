@@ -76,6 +76,29 @@ pub enum ExportedComponent {
         repeat: bool,
         speed: f32,
     },
+    FogVolume {
+        size: [f32; 3],
+        color: [f32; 3],
+        density: f32,
+        absorption: f32,
+        scattering: f32,
+        anisotropy: f32,
+        light_tint: [f32; 3],
+        light_intensity: f32,
+    },
+    ReflectionProbe {
+        size: [f32; 3],
+        falloff: [f32; 3],
+        intensity: f32,
+        parallax_correction: bool,
+        texture: Option<usize>,
+    },
+    IrradianceVolume {
+        size: [f32; 3],
+        falloff: [f32; 3],
+        intensity: f32,
+        texture: Option<usize>,
+    },
     #[serde(other)]
     Unsupported,
 }

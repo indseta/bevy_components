@@ -15,6 +15,9 @@ COMPONENT_TYPES = [
     ("ANIMATION", "Animation", "Play an animation clip when the level loads", "ACTION", 11),
     ("SHADOWS", "Shadows", "Stop the object's meshes from casting or receiving shadows", "SHADING_RENDERED", 15),
     ("AUDIO_PLAYER", "Audio Player", "Play a sound from your game's assets folder, optionally in 3D at the object's position", "SPEAKER", 16),
+    ("FOG_VOLUME", "Fog Volume", "Box of volumetric fog, seen by cameras with VolumetricFog once a light has VolumetricLight", "OUTLINER_OB_VOLUME", 20),
+    ("REFLECTION_PROBE", "Reflection Probe", "Box whose meshes reflect a cubemap embedded in the level", "LIGHTPROBE_SPHERE", 21),
+    ("IRRADIANCE_VOLUME", "Irradiance Volume", "Box of light samples, from a 3D texture embedded in the level, that light the meshes inside it", "LIGHTPROBE_VOLUME", 22),
 ]
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
@@ -139,6 +142,19 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     joint_linear_damping: FloatProperty(name="Linear Damping", description="Slows how fast the bodies move relative to each other", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
     joint_angular_damping: FloatProperty(name="Angular Damping", description="Slows how fast the bodies turn relative to each other, so a door or pendulum settles", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
     joint_collide: BoolProperty(name="Collide Bodies", description="Let the two connected bodies collide with each other", default=False, update=sync_changed)
+
+    volume_size: FloatVectorProperty(name="Size", description="Box dimensions along Bevy's local X, Y (up) and Z axes", size=3, subtype="XYZ", default=(10.0, 5.0, 10.0), min=0.001, unit="LENGTH", update=sync_changed)
+    volume_falloff: FloatProperty(name="Falloff", description="Share of the box, from its walls inward, over which the probe's light fades out, so that neighbouring probes blend", default=0.0, min=0.0, max=1.0, subtype="FACTOR", update=sync_changed)
+    fog_color: FloatVectorProperty(name="Color", description="Color of the fog where light reaches it", size=3, subtype="COLOR_GAMMA", default=(1.0, 1.0, 1.0), min=0.0, max=1.0, update=sync_changed)
+    fog_density: FloatProperty(name="Density", description="How thick the fog is", default=0.1, min=0.0, soft_max=1.0, update=sync_changed)
+    fog_absorption: FloatProperty(name="Absorption", description="How much light the fog swallows, which darkens it", default=0.3, min=0.0, soft_max=1.0, update=sync_changed)
+    fog_scattering: FloatProperty(name="Scattering", description="How much light the fog scatters, which brightens it where light reaches it", default=0.3, min=0.0, soft_max=1.0, update=sync_changed)
+    fog_anisotropy: FloatProperty(name="Anisotropy", description="Direction light scatters in: positive values scatter it forward, so light shafts show when the camera faces the light", default=0.5, min=-0.99, max=0.99, update=sync_changed)
+    fog_light_tint: FloatVectorProperty(name="Light Tint", description="Tints the light inside the fog, an artistic control that is not physically based", size=3, subtype="COLOR_GAMMA", default=(1.0, 1.0, 1.0), min=0.0, max=1.0, update=sync_changed)
+    fog_light_intensity: FloatProperty(name="Light Intensity", description="Scales the light inside the fog, an artistic control that is not physically based", default=1.0, min=0.0, soft_max=10.0, update=sync_changed)
+    probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives", default=1000.0, min=0.0, soft_max=100000.0, update=sync_changed)
+    probe_parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the box walls, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
+    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the level: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume", subtype="FILE_PATH", update=sync_changed)
     custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health. Pick a type defined in Properties > Scene to edit its fields instead of JSON", default="my_game::MyComponent", update=custom_type_changed)
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
     use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")
@@ -178,7 +194,8 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     visibility_ranges: BoolProperty(name="Visibility Ranges", description="Draw fade distances as spheres", default=True, update=redraw_viewports)
     audio_ranges: BoolProperty(name="Audio Ranges", description="Draw where spatial sounds play at full volume and where they fade to 1%", default=True, update=redraw_viewports)
     scene_references: BoolProperty(name="Scene References", description="Draw the bounds of referenced scenes", default=True, update=redraw_viewports)
+    volumes: BoolProperty(name="Fog and Probes", description="Draw fog volume and light probe boxes", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
-    edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders and spatial audio ranges", default=True, update=redraw_viewports)
+    edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)
     max_mesh_edges: IntProperty(name="Max Mesh Edges", description="Draw triangle mesh colliders with more edges than this as bounding boxes", default=2000, min=64, max=20000, update=redraw_viewports)

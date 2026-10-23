@@ -15,7 +15,7 @@ import bpy
 import gpu
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, FIXTURE, PROP, add_component, add_empty, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, PROP, add_component, add_empty, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -196,7 +196,17 @@ EXPECTED_COMPONENTS = {
     "windmill_b": [
         WINDMILL,
     ],
+    "fog_bank": [
+        {"type": "fog_volume", "size": [6.0, 2.0, 6.0], "color": [0.8, 0.85, 1.0], "density": 0.2, "absorption": 0.3, "scattering": 0.3, "anisotropy": 0.6, "light_tint": [1.0, 1.0, 1.0], "light_intensity": 1.5},
+    ],
+    "room_probe": [
+        {"type": "reflection_probe", "size": [24.0, 5.0, 24.0], "falloff": [0.25, 0.25, 0.25], "intensity": 2000.0, "parallax_correction": True, "texture": "probe_cubemap"},
+    ],
+    "gi_volume": [
+        {"type": "irradiance_volume", "size": [24.0, 6.0, 24.0], "falloff": [0.1, 0.1, 0.1], "intensity": 500.0, "texture": "irradiance_volume"},
+    ],
 }
+PROBE_IMAGES = {"probe_cubemap", "irradiance_volume"}
 
 addon = None
 
@@ -246,12 +256,24 @@ def _rounded(value):
     return value
 
 
+def _named_textures(gltf, components):
+    return [{**component, "texture": gltf["images"][gltf["textures"][component["texture"]]["source"]]["name"]} if isinstance(component.get("texture"), int) else component for component in components]
+
+
+def _extras(gltf, node):
+    extras = node.get("extras")
+    if not isinstance(extras, dict) or "bevy_components" not in extras:
+        return extras
+    data = json.loads(extras["bevy_components"])
+    return {**data, "components": _named_textures(gltf, data["components"])}
+
+
 def _node_summary(gltf):
     nodes = gltf["nodes"]
     summary = {}
     for node in nodes:
         summary[node["name"]] = {
-            "extras": node.get("extras"),
+            "extras": _extras(gltf, node),
             "children": sorted(nodes[index]["name"] for index in node.get("children", [])),
             "translation": _rounded(node.get("translation")),
             "rotation": _rounded(node.get("rotation")),
@@ -348,6 +370,14 @@ def _prop_layout(layout, prop):
 
 def _operator_icon(layout, properties):
     return next(bound.get("icon") for name, bound, child in layout.calls if name == "operator" and bound.get("properties") is properties)
+
+
+def _prop_layouts(layout, prop):
+    return [child for name, bound, child in layout.calls if name == "prop" and bound["property"] == prop]
+
+
+def _extents(lines):
+    return tuple(round(max(abs(point[axis]) for line in lines for point in line), 5) for axis in range(3))
 
 
 class FakePanel:
@@ -699,6 +729,23 @@ class TestOperators(unittest.TestCase):
         self.assertEqual((reference.scene_file, reference.scene_index), ("//props/tree.glb", 0))
         self.assertEqual((animation.animation_clip, animation.animation_loop, animation.animation_speed), ("spin", True, 1.0))
 
+    def test_fog_volumes_and_light_probes_are_stored(self):
+        add_component(self.obj, "FOG_VOLUME", volume_size=(4, 2, 4), fog_density=0.25)
+        probe = add_component(self.obj, "REFLECTION_PROBE", volume_falloff=0.5, probe_intensity=300, probe_parallax=False, probe_file=str(CUBEMAP))
+        add_component(self.obj, "IRRADIANCE_VOLUME")
+        fog, reflection, irradiance = _stored(self.obj)["components"]
+        self.assertEqual(fog, {"type": "fog_volume", "size": [4.0, 2.0, 4.0], "color": [1.0, 1.0, 1.0], "density": 0.25, "absorption": 0.3, "scattering": 0.3, "anisotropy": 0.5, "light_tint": [1.0, 1.0, 1.0], "light_intensity": 1.0})
+        self.assertEqual(reflection, {"type": "reflection_probe", "size": [10.0, 5.0, 10.0], "falloff": [0.5, 0.5, 0.5], "intensity": 300.0, "parallax_correction": False, "file": str(CUBEMAP)})
+        self.assertEqual(irradiance, {"type": "irradiance_volume", "size": [10.0, 5.0, 10.0], "falloff": [0.0, 0.0, 0.0], "intensity": 1000.0, "file": None})
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="REFLECTION_PROBE"), {"CANCELLED"})
+        self.assertEqual(bpy.ops.bevy_components.reset(index=1), {"FINISHED"})
+        self.assertEqual((tuple(probe.volume_size), probe.volume_falloff, probe.probe_intensity, probe.probe_parallax, probe.probe_file), ((10.0, 5.0, 10.0), 0.0, 1000.0, True, ""))
+        other = add_mesh(bpy.ops.mesh.primitive_cube_add, "other")
+        probe.probe_file = str(CUBEMAP)
+        select(self.obj, other)
+        self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=1), {"FINISHED"})
+        self.assertEqual(_stored(other)["components"], [_stored(self.obj)["components"][1]])
+
     def test_invalid_custom_json_is_not_stored(self):
         add_component(self.obj, "CUSTOM", custom_json="{broken")
         self.assertNotIn("bevy_components", self.obj.keys())
@@ -794,7 +841,7 @@ class TestPanels(unittest.TestCase):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_audio.draw(menu, _menu_context(self.obj))
@@ -1002,6 +1049,34 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(searches, [("animation_clip", bpy.data, "actions")])
         self.assertEqual(panel.layout.props()[-2:], ["animation_loop", "animation_speed"])
 
+    def test_fog_volume_card(self):
+        add_component(self.obj, "FOG_VOLUME")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[1:], ["volume_size"] * 3 + ["fog_color", "fog_density", "fog_absorption", "fog_scattering", "fog_anisotropy", "fog_light_tint", "fog_light_intensity"])
+        self.assertEqual([bound["text"] for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "volume_size"], ["Size X", "Y (Up)", "Z"])
+        self.assertIn("Fog Volume", panel.layout.texts())
+
+    def test_probe_cards_show_their_files(self):
+        reflection = add_component(self.obj, "REFLECTION_PROBE")
+        add_component(self.obj, "IRRADIANCE_VOLUME", probe_file=str(IRRADIANCE_VOLUME))
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), ["enabled", "volume_size", "volume_size", "volume_size", "volume_falloff", "probe_intensity", "probe_parallax", "probe_file", "enabled", "volume_size", "volume_size", "volume_size", "volume_falloff", "probe_intensity", "probe_file"])
+        self.assertEqual([bound["text"] for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "probe_file"], ["Cubemap", "Voxels"])
+        self.assertIn("2 × 2 × 2 voxels", panel.layout.texts())
+        self.assertIn("No cubemap, so the probe adds no reflections", " ".join(panel.layout.texts()))
+        self.assertFalse(any(layout.alert for layout in _prop_layouts(panel.layout, "probe_file")))
+        reflection.probe_file = str(IRRADIANCE_VOLUME)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual([layout.alert for layout in _prop_layouts(panel.layout, "probe_file")], [True, False])
+        self.assertIn("irradiance_volume.ktx2 is not a cubemap", " ".join(panel.layout.texts()))
+        reflection.probe_file = str(CUBEMAP)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertIn("16 × 16 cubemap", panel.layout.texts())
+
     def test_sidebar_draws_components(self):
         add_component(self.obj, "RIGID_BODY")
         select(self.obj)
@@ -1016,7 +1091,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.props(), ["enabled"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
-        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "scene_references", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "scene_references", "volumes", "labels", "xray", "edit_handles", "max_mesh_edges"])
         settings.enabled = False
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
@@ -1584,12 +1659,50 @@ class TestViewport(unittest.TestCase):
         dense = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "dense")
         add_component(dense, "COLLIDER", collider_shape="TRIMESH")
         self.assertEqual(len(_collider_lines(dense, collider, 64)), 12)
-        self.assertEqual(addon.overlay._label_lines(dense, SimpleNamespace(colliders=True, visibility_ranges=False, max_mesh_edges=64), addon.system.children_map(bpy.data.objects)), ["Collider · Trimesh · AABB preview (mesh edge limit)"])
+        self.assertEqual(addon.overlay._label_lines(dense, SimpleNamespace(colliders=True, visibility_ranges=False, volumes=False, max_mesh_edges=64), addon.system.children_map(bpy.data.objects)), ["Collider · Trimesh · AABB preview (mesh edge limit)"])
 
     def test_labels(self):
         add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.25, collider_height=2)
         add_component(self.obj, "VISIBILITY_RANGE")
         self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Collider · Capsule · r=0.25, cylinder=2m", "LOD · in 0–0m · out 20–25m"])
+
+    def test_fog_volume_and_probe_previews(self):
+        add_component(self.obj, "FOG_VOLUME", volume_size=(2, 4, 6))
+        add_component(self.obj, "REFLECTION_PROBE", volume_falloff=0.5)
+        add_component(self.obj, "IRRADIANCE_VOLUME", volume_size=(4, 4, 4), probe_file=str(IRRADIANCE_VOLUME))
+        select(self.obj)
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        colors = addon.overlay.VOLUME_COLORS
+        self.assertEqual([color for matrix, lines, color, width in batches], [colors["FOG_VOLUME"], colors["REFLECTION_PROBE"], colors["REFLECTION_PROBE"], colors["IRRADIANCE_VOLUME"], colors["IRRADIANCE_VOLUME"]])
+        self.assertEqual([_extents(lines) for matrix, lines, color, width in batches[:4]], [(1.0, 3.0, 2.0), (5.0, 5.0, 2.5), (2.5, 2.5, 1.25), (2.0, 2.0, 2.0)])
+        voxels = batches[4][1]
+        self.assertEqual(len(voxels), 8 * 3)
+        self.assertEqual(sorted({tuple(round((start[axis] + end[axis]) / 2, 5) for axis in range(3)) for start, end in voxels}), sorted((x, y, z) for x in (-1.0, 1.0) for y in (-1.0, 1.0) for z in (-1.0, 1.0)))
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Fog Volume · 2 × 4 × 6 · density 0.1", "Reflection Probe · 10 × 5 × 10 · no cubemap", "Irradiance Volume · 4 × 4 × 4 · 2 × 2 × 2 voxels"])
+        self.settings.volumes = False
+        try:
+            self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+            self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [])
+        finally:
+            self.settings.volumes = True
+
+    def test_gizmo_handles_resize_volumes(self):
+        gizmo = addon.gizmo.BEVY_GGT_collider_handles
+        collider = add_component(self.obj, "COLLIDER", collider_shape="TRIMESH")
+        self.assertFalse(gizmo.poll(bpy.context))
+        volume = add_component(self.obj, "IRRADIANCE_VOLUME", volume_size=(4, 6, 8))
+        self.assertTrue(gizmo.poll(bpy.context))
+        self.assertEqual([addon.gizmo._get_handle_value(index) for index in range(3)], [2.0, 3.0, 4.0])
+        addon.gizmo._set_handle_value(2, 5)
+        self.assertEqual(tuple(volume.volume_size), (4.0, 6.0, 10.0))
+        self.assertEqual(_stored(self.obj)["components"][1]["size"], [4.0, 6.0, 10.0])
+        self.settings.volumes = False
+        try:
+            self.assertFalse(gizmo.poll(bpy.context))
+        finally:
+            self.settings.volumes = True
+        collider.collider_shape = "SPHERE"
+        self.assertEqual(addon.gizmo._get_handle_value(0), 0.5)
 
     def test_convex_hull_preview_is_the_real_hull(self):
         collider = add_component(self.obj, "COLLIDER", collider_shape="CONVEX")
@@ -1946,6 +2059,32 @@ class TestValidation(unittest.TestCase):
         issues = addon.validation.check_objects(bpy.data.objects, animations=False)
         self.assertEqual([addon.validation.describe(issue) for issue in issues], ["blade: Include Animations is off in the export, so nothing plays", "mill: Include Animations is off in the export, so nothing plays"])
 
+    def test_light_probe_files(self):
+        reflection = add_component(add_empty("probe", (0, 0, 0)), "REFLECTION_PROBE")
+        irradiance = add_component(add_empty("volume", (0, 0, 0)), "IRRADIANCE_VOLUME")
+        self.assertEqual(self._messages(), ["probe: No cubemap, so the probe adds no reflections", "volume: No voxel texture, so the volume adds no light"])
+        reflection.probe_file = str(CUBEMAP)
+        irradiance.probe_file = str(IRRADIANCE_VOLUME)
+        self.assertEqual(self._messages(), [])
+        reflection.probe_file = str(IRRADIANCE_VOLUME)
+        irradiance.probe_file = str(CUBEMAP)
+        self.assertEqual(self._messages(), ["probe: irradiance_volume.ktx2 is not a cubemap", "volume: probe_cubemap.ktx2 is not a 3D texture"])
+        self.assertEqual({issue.level for issue in addon.validation.check_objects(bpy.data.objects)}, {"ERROR"})
+        with tempfile.TemporaryDirectory() as directory:
+            reflection.probe_file = str(Path(directory) / "missing.ktx2")
+            irradiance.probe_file = str(Path(directory) / "plain.ktx2")
+            (Path(directory) / "plain.ktx2").write_bytes(b"not a texture")
+            self.assertEqual(self._messages(), ["probe: Cubemap file missing.ktx2 was not found", "volume: plain.ktx2 is not a KTX2 file"])
+            self.assertEqual(bpy.ops.bevy_components.validate.poll(), True)
+            with self.assertRaises(RuntimeError):
+                bpy.ops.bevy_components.validate()
+
+    def test_fog_needs_density(self):
+        fog = add_component(add_empty("fog", (0, 0, 0)), "FOG_VOLUME", fog_density=0)
+        self.assertEqual(self._messages(), ["fog: Density is 0, so the fog is invisible"])
+        fog.fog_density = 0.01
+        self.assertEqual(self._messages(), [])
+
     def test_custom_component_type_paths(self):
         marker = add_empty("marker", (0, 0, 0))
         add_component(marker, "CUSTOM", custom_type="my_game::Wrapper<f32>")
@@ -2031,7 +2170,7 @@ class TestExport(unittest.TestCase):
             self.assertEqual(list(extras), ["bevy_components"], name)
             exported = json.loads(extras["bevy_components"])
             self.assertEqual(exported["version"], 1)
-            self.assertEqual(_rounded(exported["components"]), expected, name)
+            self.assertEqual(_rounded(_named_textures(self.gltf, exported["components"])), expected, name)
 
     def test_editor_state_is_not_exported(self):
         self.assertNotIn("extras", self.nodes["chimney"])
@@ -2078,6 +2217,32 @@ class TestExport(unittest.TestCase):
         gltf = read_gltf(path)
         self.assertTrue(all(set(node.get("extras", {})) <= {"bevy_components"} for node in gltf["nodes"]))
         self.assertTrue(all("extras" not in scene for scene in gltf["scenes"]))
+
+    def test_light_probe_files_are_embedded(self):
+        gltf, binary = addon.compression.read_glb((Path(self.directory.name) / "sample_level.glb").read_bytes())
+        for name, source in (("room_probe", CUBEMAP), ("gi_volume", IRRADIANCE_VOLUME)):
+            component = json.loads(self.nodes[name]["extras"]["bevy_components"])["components"][0]
+            self.assertNotIn("file", component)
+            texture = gltf["textures"][component["texture"]]
+            self.assertEqual(gltf["images"][texture["source"]], {"bufferView": gltf["images"][texture["source"]]["bufferView"], "mimeType": "image/ktx2", "name": source.stem})
+            self.assertEqual(addon.compression.image_payload(gltf, binary, texture["source"])[0], source.read_bytes())
+            self.assertEqual(gltf["samplers"][texture["sampler"]], {"magFilter": 9729, "minFilter": 9729, "wrapS": 33071, "wrapT": 33071})
+            self.assertEqual(_stored(bpy.data.objects[name])["components"][0]["file"], str(source))
+
+    def test_missing_light_probe_files_block_export(self):
+        path = Path(self.directory.name) / "missing_probe.glb"
+        probe = bpy.data.objects["room_probe"].bevy_component_data.components[0]
+        probe.probe_file = str(Path(self.directory.name) / "missing.ktx2")
+        try:
+            with self.assertRaisesRegex(RuntimeError, "Cubemap file missing.ktx2 was not found"):
+                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+        finally:
+            probe.probe_file = str(CUBEMAP)
+        self.assertFalse(path.exists())
+        with mock.patch.object(addon.operator, "_read_file", side_effect=FileNotFoundError(2, "No such file or directory", str(CUBEMAP))):
+            with self.assertRaisesRegex(RuntimeError, "Could not embed probe_cubemap.ktx2 in the level: No such file or directory"):
+                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+        self.assertFalse(path.exists())
 
     def test_selected_only(self):
         path = Path(self.directory.name) / "selected.glb"
@@ -2171,16 +2336,20 @@ class TestTextureCompression(unittest.TestCase):
     def test_compression_is_off_by_default(self):
         gltf, binary = self.exports["DISABLED"]
         self.assertNotIn("KHR_texture_basisu", gltf.get("extensionsUsed", []))
-        self.assertEqual({image["mimeType"] for image in gltf["images"]}, {"image/png"})
+        self.assertEqual({image["mimeType"] for image in gltf["images"] if image["name"] not in PROBE_IMAGES}, {"image/png"})
+        self.assertEqual({image["mimeType"] for image in gltf["images"] if image["name"] in PROBE_IMAGES}, {"image/ktx2"})
         self.assertIn(addon.compression.PNG_SIGNATURE, binary)
 
     def test_textures_reference_embedded_ktx2(self):
         for mode, (gltf, binary) in self.compressed.items():
             self.assertIn("KHR_texture_basisu", gltf["extensionsUsed"], mode)
             self.assertIn("KHR_texture_basisu", gltf["extensionsRequired"], mode)
-            self.assertEqual(len(gltf["textures"]), 9, mode)
+            self.assertEqual(len(gltf["textures"]), 11, mode)
             for texture in gltf["textures"]:
-                self.assertNotIn("source", texture, mode)
+                if "source" in texture:
+                    self.assertIn(gltf["images"][texture["source"]]["name"], PROBE_IMAGES, mode)
+                    self.assertNotIn("extensions", texture, mode)
+                    continue
                 self.assertLess(texture["extensions"]["KHR_texture_basisu"]["source"], len(gltf["images"]), mode)
             for image in gltf["images"]:
                 self.assertEqual(set(image), {"bufferView", "mimeType", "name"}, mode)
@@ -2192,8 +2361,8 @@ class TestTextureCompression(unittest.TestCase):
     def test_shared_images_are_embedded_once(self):
         for mode, (gltf, binary) in self.compressed.items():
             names = sorted(image["name"] for image in gltf["images"])
-            self.assertEqual(names, ["ball_pixels", "lamp_emissive", "metal_color", "pillar_gradient", "wood_color", "wood_normal", "wood_orm", "wood_orm"], mode)
-            sources = [texture["extensions"]["KHR_texture_basisu"]["source"] for texture in gltf["textures"]]
+            self.assertEqual(names, ["ball_pixels", "irradiance_volume", "lamp_emissive", "metal_color", "pillar_gradient", "probe_cubemap", "wood_color", "wood_normal", "wood_orm", "wood_orm"], mode)
+            sources = [texture["extensions"]["KHR_texture_basisu"]["source"] for texture in gltf["textures"] if "source" not in texture]
             self.assertEqual(len(sources) - len(set(sources)), 1, mode)
 
     def test_embedded_ktx2_files_pass_khronos_validation(self):
@@ -2202,13 +2371,15 @@ class TestTextureCompression(unittest.TestCase):
             for index, image in enumerate(gltf["images"]):
                 file = Path(self.directory.name) / f"{mode}_{index}.ktx2"
                 file.write_bytes(addon.compression.image_payload(gltf, binary, index)[0])
-                result = subprocess.run([str(path), "validate", "--gltf-basisu", str(file)], capture_output=True, text=True)
+                result = subprocess.run([str(path), "validate", *(() if image["name"] in PROBE_IMAGES else ("--gltf-basisu",)), str(file)], capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, f"{mode} {image['name']}: {result.stdout}{result.stderr}")
 
     def test_codecs_color_spaces_and_mipmaps(self):
         for mode, (gltf, binary) in self.compressed.items():
             usages = _usages(gltf)
             for index, (name, _mime_type, model, width, height, levels, transfer, primaries) in enumerate(_texture_summary(gltf, binary)):
+                if name in PROBE_IMAGES:
+                    continue
                 kinds = {usage for _material, _slot, usage in usages[index]}
                 self.assertEqual(len(kinds), 1, f"{mode} {name}")
                 usage = kinds.pop()

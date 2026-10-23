@@ -1,8 +1,8 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, prelude::*};
-use bevy_components_importer::BlenderCustomComponents;
+use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
+use bevy_components_importer::{BlenderCustomComponents, GltfTextures};
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -96,6 +96,16 @@ fn colliders(world: &mut World, name: &str) -> Vec<Entity> {
     let mut entities = meshes(world, name);
     entities.push(node(world, name));
     return entities.into_iter().filter(|entity| world.get::<Collider>(*entity).is_some()).collect();
+}
+
+fn child_with<T: Component>(world: &mut World, name: &str) -> Entity {
+    let node = node(world, name);
+    let children = world.get::<Children>(node).unwrap_or_else(|| panic!("{name} has no children"));
+    return children.iter().find(|child| world.get::<T>(*child).is_some()).unwrap_or_else(|| panic!("{name} has no {} child", std::any::type_name::<T>()));
+}
+
+fn scale(world: &World, entity: Entity) -> Option<Vec3> {
+    return world.get::<Transform>(entity).map(|transform| transform.scale);
 }
 
 #[test]
@@ -238,7 +248,66 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 50);
+    assert_eq!(count, 53);
+}
+
+#[test]
+fn fog_volumes_fill_their_boxes() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let volume = child_with::<FogVolume>(world, "fog_bank");
+    let fog = world.get::<FogVolume>(volume).expect("fog_bank has a fog volume");
+    assert_eq!((fog.fog_color, fog.density_factor, fog.absorption, fog.scattering, fog.scattering_asymmetry, fog.light_tint, fog.light_intensity), (Color::srgb(0.8, 0.85, 1.0), 0.2, 0.3, 0.3, 0.6, Color::srgb(1.0, 1.0, 1.0), 1.5));
+    assert_eq!(scale(world, volume), Some(Vec3::new(6.0, 2.0, 6.0)));
+    assert_eq!(world.get::<Name>(volume).map(Name::as_str), Some("Fog Volume"));
+}
+
+#[test]
+fn reflection_probes_filter_embedded_cubemaps() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let probe = child_with::<LightProbe>(world, "room_probe");
+    assert_eq!(world.get::<LightProbe>(probe).map(|probe| probe.falloff), Some(Vec3::splat(0.25)));
+    assert_eq!(scale(world, probe), Some(Vec3::new(24.0, 5.0, 24.0)));
+    assert!(!matches!(world.get::<ParallaxCorrection>(probe), Some(ParallaxCorrection::None)));
+    let light = world.get::<GeneratedEnvironmentMapLight>(probe).expect("room_probe filters its cubemap");
+    assert_eq!(light.intensity, 2000.0);
+    let image = world.resource::<Assets<Image>>().get(&light.environment_map).expect("the cubemap is loaded");
+    assert_eq!((image.texture_descriptor.size, image.texture_descriptor.format), (Extent3d { width: 16, height: 16, depth_or_array_layers: 6 }, TextureFormat::Rgba16Float));
+    assert_eq!(image.texture_view_descriptor.as_ref().and_then(|view| view.dimension), Some(TextureViewDimension::Cube));
+}
+
+#[test]
+fn irradiance_volumes_light_from_embedded_voxels() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let volume = child_with::<IrradianceVolume>(world, "gi_volume");
+    assert_eq!(world.get::<LightProbe>(volume).map(|probe| probe.falloff), Some(Vec3::splat(0.1)));
+    assert_eq!(scale(world, volume), Some(Vec3::new(24.0, 6.0, 24.0)));
+    let irradiance = world.get::<IrradianceVolume>(volume).expect("gi_volume has an irradiance volume");
+    assert_eq!((irradiance.intensity, irradiance.affects_lightmapped_meshes), (500.0, true));
+    let image = world.resource::<Assets<Image>>().get(&irradiance.voxels).expect("the voxels are loaded");
+    assert_eq!((image.texture_descriptor.size, image.texture_descriptor.dimension, image.texture_descriptor.format), (Extent3d { width: 2, height: 4, depth_or_array_layers: 6 }, TextureDimension::D3, TextureFormat::Rgba16Float));
+}
+
+#[test]
+fn light_probes_need_usable_textures() {
+    let mut app = LevelApp::default().build();
+    let mut images = app.world_mut().resource_mut::<Assets<Image>>();
+    let cubemaps: Vec<Handle<Image>> = [8, 12].into_iter().map(|size| images.add(Image::new_fill(Extent3d { width: size, height: size, depth_or_array_layers: 6 }, TextureDimension::D2, &[0; 8], TextureFormat::Rgba16Float, RenderAssetUsages::default()))).collect();
+    let probe = |texture: Value| json!({"type": "reflection_probe", "size": [2.0, 2.0, 2.0], "falloff": [0.0, 0.0, 0.0], "intensity": 100.0, "parallax_correction": false, "texture": texture});
+    let components = json!([probe(json!(0)), probe(json!(1)), probe(Value::Null), {"type": "irradiance_volume", "size": [2.0, 2.0, 2.0], "falloff": [0.0, 0.0, 0.0], "intensity": 100.0, "texture": 5}]);
+    let extras = json!({"bevy_components": json!({"version": 1, "components": components}).to_string()});
+    let entity = app.world_mut().spawn((Name::new("probes"), Transform::default(), GltfExtras { value: extras.to_string() }, GltfTextures(cubemaps.clone()))).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    let probes: Vec<Entity> = world.get::<Children>(entity).map(|children| children.iter().filter(|child| world.get::<LightProbe>(*child).is_some()).collect()).unwrap_or_default();
+    assert_eq!(probes.len(), 2);
+    assert!(probes.iter().all(|probe| matches!(world.get::<ParallaxCorrection>(*probe), Some(ParallaxCorrection::None))));
+    assert_eq!(world.get::<GeneratedEnvironmentMapLight>(probes[0]).map(|light| (light.environment_map.id(), light.intensity)), Some((cubemaps[0].id(), 100.0)));
+    assert!(world.get::<GeneratedEnvironmentMapLight>(probes[1]).is_none());
 }
 
 #[test]

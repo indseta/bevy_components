@@ -8,6 +8,7 @@ mod texture;
 use bevy::{gltf::extensions::GltfExtensionHandlers, prelude::*};
 
 pub use component::{BlenderCustomComponent, BlenderCustomComponents};
+pub use texture::GltfTextures;
 
 pub struct BlenderBevyComponentsPlugin;
 
@@ -16,6 +17,7 @@ impl Plugin for BlenderBevyComponentsPlugin {
         app.add_plugins(texture::TexturePlugin);
         app.register_type::<component::SceneAnimations>();
         app.add_systems(Update, (system::read_gltf_components, system::apply_default_bodies, system::build_joints, system::spawn_scene_references, system::play_animations, system::apply_mesh_components, system::build_colliders).chain());
+        app.add_systems(Update, system::apply_reflection_probes.after(system::read_gltf_components));
     }
 
     fn finish(&self, app: &mut App) {

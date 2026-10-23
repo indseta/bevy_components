@@ -1,20 +1,28 @@
+mod component;
+mod extension;
 mod glb;
 mod loader;
 mod transcode;
 
 use bevy::{gltf::{DefaultGltfImageSampler, GltfLoader, GltfPlugin, extensions::GltfExtensionHandlers}, image::{CompressedImageFormatSupport, CompressedImageFormats}, prelude::*};
+use extension::TextureHandles;
 use loader::CompressedGltfLoader;
+
+pub use component::GltfTextures;
 
 pub struct TexturePlugin;
 
 impl Plugin for TexturePlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.register_type::<GltfTextures>();
+    }
 
     fn cleanup(&self, app: &mut App) {
         let Some(gltf) = gltf_loader(app) else {
-            warn!("GltfPlugin was not found, compressed KTX2 textures in GLB files will not load");
+            warn!("GltfPlugin was not found, compressed KTX2 textures and light probe textures in GLB files will not load");
             return;
         };
+        gltf.extensions.write_blocking().push(Box::new(TextureHandles::default()));
         app.register_asset_loader(CompressedGltfLoader { gltf });
     }
 }

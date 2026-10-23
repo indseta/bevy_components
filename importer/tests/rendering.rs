@@ -1,7 +1,7 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{asset::RenderAssetUsages, camera::{RenderTarget, visibility::VisibilityRange}, image::CompressedImageFormats, prelude::*, render::{render_resource::{PollType, TextureFormat}, renderer::{RenderAdapterInfo, RenderDevice}, view::screenshot::{Screenshot, ScreenshotCaptured}}};
+use bevy::{asset::RenderAssetUsages, camera::{RenderTarget, visibility::VisibilityRange}, image::CompressedImageFormats, light::{FogVolume, LightProbe, VolumetricFog, VolumetricLight}, prelude::*, render::{render_resource::{PollType, TextureFormat}, renderer::{RenderAdapterInfo, RenderDevice}, view::screenshot::{Screenshot, ScreenshotCaptured}}};
 use common::*;
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +16,10 @@ struct Render {
 }
 
 fn render(file: &str, formats: Option<CompressedImageFormats>) -> Render {
+    return render_with(file, formats, "", |_world, _camera| {});
+}
+
+fn render_with(file: &str, formats: Option<CompressedImageFormats>, variant: &str, change: impl FnOnce(&mut World, Entity)) -> Render {
     let mut app = LevelApp { gpu: true, formats, ..default() }.build();
     app.world_mut().resource_mut::<Time<Physics>>().pause();
     app.world_mut().resource_mut::<Time<Virtual>>().pause();
@@ -30,7 +34,8 @@ fn render(file: &str, formats: Option<CompressedImageFormats>) -> Render {
     let mut target = Image::new_target_texture(WIDTH, HEIGHT, TextureFormat::Rgba8UnormSrgb, None);
     target.asset_usage = RenderAssetUsages::RENDER_WORLD;
     let target = world.resource_mut::<Assets<Image>>().add(target);
-    world.spawn((Camera3d::default(), RenderTarget::Image(target.clone().into()), Transform::from_xyz(1.0, 7.0, 11.0).looking_at(Vec3::new(1.0, 0.5, -1.0), Vec3::Y)));
+    let camera = world.spawn((Camera3d::default(), RenderTarget::Image(target.clone().into()), Transform::from_xyz(1.0, 7.0, 11.0).looking_at(Vec3::new(1.0, 0.5, -1.0), Vec3::Y))).id();
+    change(world, camera);
     for _ in 0..10 {
         update(&mut app);
     }
@@ -48,7 +53,7 @@ fn render(file: &str, formats: Option<CompressedImageFormats>) -> Render {
     let image = captured.lock().expect("screenshot lock").take().unwrap_or_else(|| panic!("{file} was not captured"));
     let image = image.convert(TextureFormat::Rgba8UnormSrgb).expect("screenshot converts to RGBA");
     if let Ok(directory) = std::env::var("BEVY_COMPONENTS_RENDER_OUTPUT") {
-        let name = format!("{}_{}.png", file.trim_end_matches(".glb"), formats.map_or("default".to_string(), |formats| format!("{:?}", formats.iter_names().map(|(name, _)| name.to_lowercase()).collect::<Vec<_>>().join("_"))).replace('"', ""));
+        let name = format!("{}_{}{variant}.png", file.trim_end_matches(".glb"), formats.map_or("default".to_string(), |formats| format!("{:?}", formats.iter_names().map(|(name, _)| name.to_lowercase()).collect::<Vec<_>>().join("_"))).replace('"', ""));
         std::fs::create_dir_all(&directory).expect("render output directory");
         image.clone().try_into_dynamic().expect("screenshot image").save(std::path::Path::new(&directory).join(name)).expect("saved render");
     }
@@ -68,6 +73,21 @@ fn render(file: &str, formats: Option<CompressedImageFormats>) -> Render {
         adapter: format!("{} ({:?})", world.resource::<RenderAdapterInfo>().name, world.resource::<RenderAdapterInfo>().backend),
         formats,
     };
+}
+
+fn despawn<T: Component>(world: &mut World) {
+    let mut entities = world.query_filtered::<Entity, With<T>>();
+    for entity in entities.iter(world).collect::<Vec<_>>() {
+        world.despawn(entity);
+    }
+}
+
+fn volumetric(world: &mut World, camera: Entity) {
+    world.entity_mut(camera).insert(VolumetricFog::default());
+    let mut lights = world.query_filtered::<Entity, With<DirectionalLight>>();
+    for light in lights.iter(world).collect::<Vec<_>>() {
+        world.entity_mut(light).insert(VolumetricLight);
+    }
 }
 
 fn update(app: &mut App) {
@@ -108,4 +128,21 @@ fn compressed_levels_render_like_the_uncompressed_level() {
         }
     }
     assert!(rendered >= 6, "the GPU supports no compressed texture formats: {:?}", reference.device);
+}
+
+#[test]
+#[ignore = "needs a GPU, run with cargo test -- --ignored"]
+fn light_probes_and_fog_volumes_change_the_render() {
+    let reference = render(LEVEL, None);
+    let without_probes = render_with(LEVEL, None, "_without_probes", |world, _camera| despawn::<LightProbe>(world));
+    let without_fog = render_with(LEVEL, None, "_without_fog", |world, camera| {
+        volumetric(world, camera);
+        despawn::<FogVolume>(world);
+    });
+    let foggy = render_with(LEVEL, None, "_foggy", volumetric);
+    let (probes, _) = difference(&reference.pixels, &without_probes.pixels);
+    let (fog, _) = difference(&without_fog.pixels, &foggy.pixels);
+    println!("Light probes change the render by {probes:.2} on average, the fog volume by {fog:.2}");
+    assert!(probes > 5.0, "the light probes barely light the level: {probes:.2}");
+    assert!(fog > 1.0, "the fog volume is not visible: {fog:.2}");
 }

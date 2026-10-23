@@ -1,6 +1,8 @@
 import json
 import math
 import os
+import struct
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -16,6 +18,27 @@ PROP = Path("props") / "windmill.glb"
 REPOSITORY = "bevy_components_test"
 RAMP_CENTER = (0, 8, 2)
 RAMP_ANGLE = 30
+PROBE_ASSETS = ROOT / "tests" / "blender" / "assets"
+CUBEMAP = PROBE_ASSETS / "probe_cubemap.ktx2"
+CUBEMAP_SIZE = 16
+CUBEMAP_FACES = (
+    (1.0, 0.55, 0.35),
+    (0.35, 0.45, 1.0),
+    (0.9, 0.95, 1.0),
+    (0.25, 0.2, 0.15),
+    (0.6, 0.9, 0.5),
+    (0.9, 0.5, 0.8),
+)
+IRRADIANCE_VOLUME = PROBE_ASSETS / "irradiance_volume.ktx2"
+VOXELS = (2, 2, 2)
+AMBIENT_SIDES = (
+    (0.4, 0.3, 0.25),
+    (0.5, 0.35, 0.3),
+    (0.2, 0.15, 0.1),
+    (0.6, 0.7, 0.9),
+    (0.3, 0.3, 0.35),
+    (0.35, 0.35, 0.4),
+)
 
 sys.path.insert(0, str(ROOT))
 
@@ -262,6 +285,36 @@ def add_joint(obj, kind, body1=None, body2=None, **values):
     return item
 
 
+def _half_floats(colors):
+    return b"".join(struct.pack("<4e", *color, 1.0) for color in colors)
+
+
+def _irradiance_slice(depth):
+    width, height, slices = VOXELS
+    axis, z = divmod(depth, slices)
+    rows = []
+    for row in range(height * 2):
+        positive, y = divmod(row, height)
+        rows.extend(tuple(value * (0.75 + 0.25 * (x + y + z) / (width + height + slices - 3)) for value in AMBIENT_SIDES[axis * 2 + positive]) for x in range(width))
+    return rows
+
+
+def make_probe_textures(ktx):
+    PROBE_ASSETS.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="bevy_components_") as directory:
+        faces = []
+        for index, color in enumerate(CUBEMAP_FACES):
+            faces.append(Path(directory) / f"face_{index}.raw")
+            faces[-1].write_bytes(_half_floats([color] * CUBEMAP_SIZE * CUBEMAP_SIZE))
+        slices = []
+        for depth in range(VOXELS[2] * 3):
+            slices.append(Path(directory) / f"slice_{depth}.raw")
+            slices[-1].write_bytes(_half_floats(_irradiance_slice(depth)))
+        common = [str(ktx), "create", "--raw", "--format", "R16G16B16A16_SFLOAT", "--assign-tf", "linear"]
+        subprocess.run([*common, "--width", str(CUBEMAP_SIZE), "--height", str(CUBEMAP_SIZE), "--cubemap", *map(str, faces), str(CUBEMAP)], check=True)
+        subprocess.run([*common, "--width", str(VOXELS[0]), "--height", str(VOXELS[1] * 2), "--depth", str(VOXELS[2] * 3), *map(str, slices), str(IRRADIANCE_VOLUME)], check=True)
+
+
 def layers(*numbers):
     return [index in numbers for index in range(32)]
 
@@ -451,6 +504,13 @@ def build_sample_level(directory=FIXTURE.parent):
         windmill.scale = (scale, scale, scale)
         add_component(windmill, "SCENE_REFERENCE", scene_file=str(Path(directory) / PROP))
 
+    fog_bank = add_empty("fog_bank", (-6, 6, 1))
+    add_component(fog_bank, "FOG_VOLUME", volume_size=(6, 2, 6), fog_color=(0.8, 0.85, 1.0), fog_density=0.2, fog_anisotropy=0.6, fog_light_intensity=1.5)
+    room_probe = add_empty("room_probe", (0, 0, 2.5))
+    add_component(room_probe, "REFLECTION_PROBE", volume_size=(24, 5, 24), volume_falloff=0.25, probe_intensity=2000, probe_file=str(CUBEMAP))
+    gi_volume = add_empty("gi_volume", (0, 0, 3))
+    add_component(gi_volume, "IRRADIANCE_VOLUME", volume_size=(24, 6, 24), volume_falloff=0.1, probe_intensity=500, probe_file=str(IRRADIANCE_VOLUME))
+
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 10))
     bpy.context.object.name = "sun"
     add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp)
@@ -471,12 +531,13 @@ def export_props(directory):
 
 
 if __name__ == "__main__":
-    install_addon()
+    module = install_addon()
     if sys.argv[-1].endswith(".glb"):
         export_props(Path(sys.argv[-1]).parent)
         build_sample_level(Path(sys.argv[-1]).parent)
         export_sample_level(Path(sys.argv[-1]))
     else:
+        make_probe_textures(sys.modules[module].encoder.check_encoder()[0])
         export_props(FIXTURE.parent)
         build_sample_level()
         export_sample_level(FIXTURE)

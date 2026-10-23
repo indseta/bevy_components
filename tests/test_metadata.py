@@ -119,6 +119,19 @@ class TestMetadata(unittest.TestCase):
         component.joint_kind = "FIXED"
         self.assertEqual(metadata.validate_items([component]), [])
 
+    def test_fog_volume(self):
+        component = item(component_type="FOG_VOLUME", volume_size=(6, 2, 4), fog_color=(1.0, 0.5, 0.25), fog_density=0.20000000298023224, fog_absorption=0.5, fog_scattering=0.75, fog_anisotropy=-0.5, fog_light_tint=(0.5, 1.0, 0.8999999761581421), fog_light_intensity=2.0)
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "fog_volume", "size": [6, 2, 4], "color": [1.0, 0.5, 0.25], "density": 0.2, "absorption": 0.5, "scattering": 0.75, "anisotropy": -0.5, "light_tint": [0.5, 1.0, 0.9], "light_intensity": 2.0})
+        self.assertEqual(metadata.validate_items([component]), [])
+
+    def test_light_probes(self):
+        reflection = item(component_type="REFLECTION_PROBE", volume_size=(8, 4, 8), volume_falloff=0.25, probe_intensity=2000.0, probe_parallax=False, probe_file="//room.ktx2")
+        irradiance = item(component_type="IRRADIANCE_VOLUME", volume_size=(20, 6, 20), volume_falloff=0.0, probe_intensity=500.0, probe_parallax=True, probe_file="")
+        reflection_data, irradiance_data = json.loads(metadata.serialize_items([reflection, irradiance]))["components"]
+        self.assertEqual(reflection_data, {"type": "reflection_probe", "size": [8, 4, 8], "falloff": [0.25, 0.25, 0.25], "intensity": 2000.0, "parallax_correction": False, "file": "//room.ktx2"})
+        self.assertEqual(irradiance_data, {"type": "irradiance_volume", "size": [20, 6, 20], "falloff": [0.0, 0.0, 0.0], "intensity": 500.0, "file": None})
+        self.assertEqual(metadata.validate_items([reflection, irradiance]), [])
+
     def test_custom(self):
         component = item(component_type="CUSTOM", custom_type="game::Marker", custom_json='{"value":42}', use_fields=False, fields=[])
         self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0]["data"]["value"], 42)

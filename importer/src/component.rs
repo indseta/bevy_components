@@ -143,3 +143,9 @@ pub struct PendingSceneReference {
     pub path: String,
     pub scene: usize,
 }
+
+#[derive(Component)]
+pub struct PendingReflectionProbe {
+    pub cubemap: Handle<Image>,
+    pub intensity: f32,
+}
