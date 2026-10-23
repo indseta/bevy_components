@@ -2,6 +2,7 @@ mod common;
 
 use avian3d::prelude::*;
 use bevy::{asset::RenderAssetUsages, camera::{RenderTarget, visibility::VisibilityRange}, image::CompressedImageFormats, light::{FogVolume, LightProbe, VolumetricFog, VolumetricLight}, pbr::Lightmap, prelude::*, render::{render_resource::{PollType, TextureFormat}, renderer::{RenderAdapterInfo, RenderDevice}, view::screenshot::{Screenshot, ScreenshotCaptured}}};
+use bevy_components_importer::NoBlenderSky;
 use common::*;
 use std::sync::{Arc, Mutex};
 
@@ -160,4 +161,16 @@ fn lightmaps_change_the_render() {
     let (lightmaps, _) = difference(&reference.pixels, &without_lightmaps.pixels);
     println!("The ground lightmap changes the render by {lightmaps:.2} on average");
     assert!(lightmaps > 3.0, "the ground lightmap barely lights the scene: {lightmaps:.2}");
+}
+
+#[test]
+#[ignore = "needs a GPU, run with cargo test -- --ignored"]
+fn the_sky_shows_behind_the_scene_and_lights_it() {
+    let reference = render(SCENE, None);
+    let without_sky = render_with(SCENE, None, "_without_sky", |world, camera| {
+        world.entity_mut(camera).insert(NoBlenderSky);
+    });
+    let (sky, _) = difference(&reference.pixels, &without_sky.pixels);
+    println!("The sky changes the render by {sky:.2} on average");
+    assert!(sky > 5.0, "the sky barely shows: {sky:.2}");
 }

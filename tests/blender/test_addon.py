@@ -517,13 +517,14 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
         self.assertTrue(hasattr(bpy.types.World, "bevy_ambient_light"))
+        self.assertTrue(hasattr(bpy.types.World, "bevy_sky"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bake_settings"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_glb_export"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bsn_export"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_export", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_export", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
@@ -1565,6 +1566,56 @@ class TestPanels(unittest.TestCase):
                 panel = FakePanel(self)
                 panel_type.draw(panel, context)
                 self.assertNotIn("The World color comes from a texture", " ".join(panel.layout.texts()))
+        finally:
+            bpy.data.worlds.remove(world)
+
+    def test_world_sky_panel(self):
+        panel_type = addon.panel.BEVY_PT_world_sky
+        world = bpy.data.worlds.new("sky_test")
+        try:
+            context = SimpleNamespace(world=world, region=None)
+            self.assertTrue(panel_type.poll(context))
+            self.assertFalse(panel_type.poll(SimpleNamespace(world=None)))
+            panel = FakePanel(self)
+            panel_type.draw_header(panel, context)
+            self.assertEqual(panel.layout.props(), ["enabled"])
+            panel = FakePanel(self)
+            panel_type.draw(panel, context)
+            self.assertFalse(panel.layout.active)
+            self.assertEqual(panel.layout.props(), ["sky_file", "bake_resolution", "brightness", "environment_light", "environment_intensity"])
+            self.assertEqual([(text, properties.sky) for text, properties, enabled in panel.layout.buttons()], [("Bake", True)])
+            self.assertIn("No cubemap baked yet, so Bevy shows no sky", " ".join(panel.layout.texts()))
+            world.bevy_sky.enabled = True
+            world.bevy_sky.sky_file = str(CUBEMAP)
+            panel = FakePanel(self)
+            panel_type.draw(panel, context)
+            self.assertTrue(panel.layout.active)
+            self.assertIn("16 × 16 cubemap", panel.layout.texts())
+            self.assertNotIn("twice", " ".join(panel.layout.texts()))
+            ambient = FakePanel(self)
+            addon.panel.BEVY_PT_world_ambient_light.draw(ambient, context)
+            self.assertIn("Off, so the export sets Bevy's ambient light to 0 and the Bevy Sky's environment light lights the scene alone", " ".join(ambient.layout.texts()))
+            world.bevy_ambient_light.enabled = True
+            for drawn in (panel_type, addon.panel.BEVY_PT_world_ambient_light):
+                panel = FakePanel(self)
+                drawn.draw(panel, context)
+                self.assertIn("Bevy Ambient Light takes the World color, which the Bevy Sky's environment light already gives, so meshes get the World's light twice", " ".join(panel.layout.texts()))
+            world.bevy_ambient_light.use_world_color = False
+            for drawn in (panel_type, addon.panel.BEVY_PT_world_ambient_light):
+                panel = FakePanel(self)
+                drawn.draw(panel, context)
+                self.assertNotIn("twice", " ".join(panel.layout.texts()))
+            world.bevy_ambient_light.use_world_color = True
+            world.bevy_sky.environment_light = False
+            for drawn in (panel_type, addon.panel.BEVY_PT_world_ambient_light):
+                panel = FakePanel(self)
+                drawn.draw(panel, context)
+                self.assertNotIn("twice", " ".join(panel.layout.texts()))
+            world.bevy_sky.sky_file = str(IRRADIANCE_VOLUME)
+            panel = FakePanel(self)
+            panel_type.draw(panel, context)
+            self.assertIn("irradiance_volume.ktx2 is not a cubemap", " ".join(panel.layout.texts()))
+            self.assertTrue(_prop_layout(panel.layout, "sky_file").alert)
         finally:
             bpy.data.worlds.remove(world)
 
@@ -3116,6 +3167,40 @@ class TestValidation(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 bpy.ops.bevy_components.validate()
 
+    def test_world_sky_checks(self):
+        world = bpy.context.scene.world
+        self.addCleanup(world.property_unset, "bevy_sky")
+        check = lambda: [(issue.level, addon.validation.describe(issue)) for issue in addon.validation.check_world(world)]
+        self.assertEqual(check(), [])
+        world.bevy_sky.enabled = True
+        self.assertEqual(check(), [("WARNING", "Bevy Sky: No cubemap baked yet, so Bevy shows no sky")])
+        world.bevy_sky.sky_file = str(CUBEMAP)
+        self.assertEqual(check(), [])
+        world.bevy_ambient_light.enabled = True
+        self.assertEqual(check(), [("WARNING", "Bevy Ambient Light takes the World color, which the Bevy Sky's environment light already gives, so meshes get the World's light twice")])
+        world.bevy_ambient_light.use_world_color = False
+        self.assertEqual(check(), [])
+        world.bevy_ambient_light.use_world_color = True
+        world.bevy_sky.environment_light = False
+        self.assertEqual(check(), [])
+        world.bevy_sky.sky_file = str(LIGHTMAP)
+        self.assertEqual(check(), [("ERROR", "Bevy Sky: ground_lightmap.ktx2 is not a cubemap")])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "scene.glb"
+            with self.assertRaisesRegex(RuntimeError, "1 problem blocks export: Bevy Sky: ground_lightmap.ktx2 is not a cubemap"):
+                bpy.ops.bevy_components.validate()
+            with self.assertRaisesRegex(RuntimeError, "Cannot export: Bevy Sky: ground_lightmap.ktx2 is not a cubemap"):
+                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+            with self.assertRaisesRegex(RuntimeError, "Cannot export: Bevy Sky: ground_lightmap.ktx2 is not a cubemap"):
+                bpy.ops.export_scene.bevy_components_bsn(filepath=str(Path(directory) / "src" / "scene.rs"))
+            self.assertFalse(path.exists())
+            world.bevy_sky.sky_file = str(Path(directory) / "missing.ktx2")
+            self.assertEqual(check(), [("ERROR", "Bevy Sky: Cubemap file missing.ktx2 was not found")])
+            properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
+            operator = SimpleNamespace(layout=FakeLayout(self), bl_rna=properties, filepath="", texture_compression="DISABLED", selected_only=False, include_lights=True, include_cameras=False, include_animations=False)
+            addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+            self.assertIn("Bevy Sky: Cubemap file missing.ktx2 was not found", " ".join(operator.layout.texts()))
+
     def test_fog_needs_density(self):
         fog = add_component(add_empty("fog", (0, 0, 0)), "FOG_VOLUME", fog_density=0)
         self.assertEqual(self._messages(), ["fog: Density is 0, so the fog is invisible"])
@@ -3251,15 +3336,25 @@ class TestExport(unittest.TestCase):
         self.assertNotIn("extras", self.nodes["bush_a"])
         self.assertEqual([list(scene.get("extras", {})) for scene in self.gltf["scenes"]], [["bevy_components"]])
 
-    def test_ambient_light_is_exported_on_the_scene(self):
-        self.assertEqual(json.loads(self.gltf["scenes"][0]["extras"]["bevy_components"]), {"version": 1, "components": [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}]})
-        ambient = bpy.context.scene.world.bevy_ambient_light
-        path = Path(self.directory.name) / "no_ambient.glb"
-        ambient.enabled = False
+    def test_ambient_light_and_sky_are_exported_on_the_scene(self):
+        exported = json.loads(self.gltf["scenes"][0]["extras"]["bevy_components"])
+        self.assertEqual(exported["version"], 1)
+        self.assertEqual(_named_textures(self.gltf, exported["components"]), [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}, {"type": "sky", "brightness": 1000.0, "environment_light": 300.0, "texture": "probe_cubemap"}])
+        self.assertEqual(self.gltf["textures"][exported["components"][1]["texture"]], self.gltf["textures"][json.loads(self.nodes["room_probe"]["extras"]["bevy_components"])["components"][0]["texture"]])
+        world = bpy.context.scene.world
+        path = Path(self.directory.name) / "scene_lighting.glb"
+        scene_components = lambda: [component for scene in export_sample_scene(path)["scenes"] for component in json.loads(scene.get("extras", {}).get("bevy_components", '{"components": []}'))["components"]]
+        world.bevy_ambient_light.enabled = False
         try:
-            self.assertTrue(all("extras" not in scene for scene in export_sample_scene(path)["scenes"]))
+            self.assertEqual([(component["type"], component.get("brightness")) for component in scene_components()], [("ambient_light", 0.0), ("sky", 1000.0)])
+            world.bevy_sky.environment_light = False
+            self.assertEqual([component["type"] for component in scene_components()], ["sky"])
+            world.bevy_sky.enabled = False
+            self.assertEqual(scene_components(), [])
         finally:
-            ambient.enabled = True
+            world.bevy_ambient_light.enabled = True
+            world.bevy_sky.enabled = True
+            world.bevy_sky.environment_light = True
 
     def test_export_again_uses_the_remembered_settings(self):
         path = Path(self.directory.name) / "again" / "again.glb"
@@ -3881,7 +3976,7 @@ def _bake_operator(**values):
     operator = type("FakeBakeOperator", (), members)()
     operator.reports = []
     operator.report = lambda levels, message: operator.reports.append((next(iter(levels)), message))
-    for name, value in {"object_name": "", "index": -1, "_directory": None, "_task": None, "_jobs": (), "_folder": "", "_shown": None, **values}.items():
+    for name, value in {"object_name": "", "index": -1, "sky": False, "_directory": None, "_task": None, "_jobs": (), "_folder": "", "_shown": None, **values}.items():
         setattr(operator, name, value)
     return operator
 
@@ -4031,6 +4126,55 @@ class TestBakeLighting(unittest.TestCase):
             self.assertTrue(numpy.allclose(pixels[face, row, column, :3], color, atol=0.1), f"{direction} looks up {pixels[face, row, column]}")
         self.assertTrue(numpy.all(pixels[..., 3] == 1.0))
 
+    def test_the_sky_holds_the_world_alone(self):
+        world = self.scene.world
+        tree = world.node_tree
+        background = addon.system.world_background(world)
+        background.inputs["Strength"].default_value = 1.0
+        positive = tree.nodes.new("ShaderNodeVectorMath")
+        positive.operation = "MAXIMUM"
+        positive.inputs[1].default_value = (0.0, 0.0, 0.0)
+        tree.links.new(tree.nodes.new("ShaderNodeTexCoord").outputs["Generated"], positive.inputs[0])
+        tree.links.new(positive.outputs["Vector"], background.inputs["Color"])
+        _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "walls", size=4), (1.0, 1.0, 1.0))
+        world.bevy_sky.enabled = True
+        world.bevy_sky.bake_resolution = "64"
+        state = lambda: (len(bpy.data.scenes), len(bpy.data.objects), len(bpy.data.cameras), [image.name for image in bpy.data.images if image.type != "RENDER_RESULT"], bpy.context.scene, self.scene.render.engine)
+        before = state()
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(sky=True), {"FINISHED"})
+        self.assertEqual(state(), before)
+        self.assertEqual(world.bevy_sky.sky_file, "//baked_lighting/bake_test_sky.ktx2")
+        self.assertEqual(addon.validation.sky_check(world)[:2], (None, "64 × 64 cubemap"))
+        pixels = _ktx2_pixels(world.bevy_sky.sky_file)
+        self.assertEqual(pixels.shape, (6, 64, 64, 4))
+        for direction in SIDE_COLORS:
+            local = BEVY_FROM_BLENDER @ Vector(direction)
+            face, row, column = _cube_texel((local.x, local.y, -local.z), 64)
+            expected = tuple(max(value, 0.0) for value in direction)
+            self.assertTrue(numpy.allclose(pixels[face, row, column, :3], expected, atol=0.05), f"{direction} looks up {pixels[face, row, column]}")
+
+    def test_bake_lighting_bakes_the_sky_first(self):
+        self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
+        sky = self.scene.world.bevy_sky
+        sky.enabled = True
+        sky.bake_resolution = "64"
+        jobs = addon.bake.lighting_jobs(self.scene.objects, self.settings.folder, world=self.scene.world)
+        self.assertEqual([job["kind"] for job in jobs], ["SKY", "CUBEMAP"])
+        self.assertEqual(addon.bake.bake_summary(jobs), "the sky and 1 reflection probe")
+        self.assertEqual([job["kind"] for job in addon.bake.lighting_jobs(self.scene.objects, self.settings.folder, only=("room", 0), world=self.scene.world)], ["CUBEMAP"])
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertIn("Bakes the sky and 1 reflection probe", operator.layout.texts())
+        operator = _bake_operator(layout=FakeLayout(self), sky=True)
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertIn("Bakes the sky", operator.layout.texts())
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ["bake_test_sky.ktx2", "room_reflection.ktx2"])
+        self.assertEqual(sky.sky_file, "//baked_lighting/bake_test_sky.ktx2")
+        sky.enabled = False
+        with self.assertRaisesRegex(RuntimeError, "No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes to bake"):
+            bpy.ops.bevy_components.bake_lighting(sky=True)
+
     def test_irradiance_volumes_hold_light_from_each_side_of_each_voxel(self):
         _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "green", size=2, location=(4, 0, 0)), (0.0, 1.0, 0.0))
         _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "red", size=2, location=(0, 0, -3)), (1.0, 0.0, 0.0))
@@ -4109,7 +4253,7 @@ class TestBakeLighting(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="second", index=0), {"FINISHED"})
         self.assertEqual((first.probe_file, second.probe_file), ("", "//baked_lighting/second_irradiance.ktx2"))
         self.assertEqual([path.name for path in self.folder.iterdir()], ["second_irradiance.ktx2"])
-        with self.assertRaisesRegex(RuntimeError, "No enabled Lightmaps, Reflection Probes or Irradiance Volumes to bake"):
+        with self.assertRaisesRegex(RuntimeError, "No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes to bake"):
             bpy.ops.bevy_components.bake_lighting(object_name="second", index=1)
 
     def test_needs_a_folder_and_object_mode(self):
@@ -4156,7 +4300,7 @@ class TestBakeLighting(unittest.TestCase):
         operator = _bake_operator(layout=FakeLayout(self))
         addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
         self.assertEqual(operator.layout.props(), ["samples", "folder", "lamp_direct"])
-        self.assertIn("No enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", " ".join(operator.layout.texts()))
+        self.assertIn("No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", " ".join(operator.layout.texts()))
         self._probe("room", "REFLECTION_PROBE")
         self._probe("hall", "REFLECTION_PROBE")
         self._probe("gi", "IRRADIANCE_VOLUME")

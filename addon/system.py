@@ -10,7 +10,7 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_ambient_light, serialize_items, variant_names
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, variant_names
 from .schema import GameField, SchemaError, find_schema, parse_schema
 
 MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
@@ -322,6 +322,23 @@ def ambient_light(world):
     return color, strength * WATTS_TO_LUMENS
 
 
+def sky_lights_scene(world):
+    sky = getattr(world, "bevy_sky", None)
+    return sky is not None and sky.enabled and sky.environment_light and bool(sky.sky_file.strip())
+
+
+def scene_components(world):
+    components = []
+    if world.bevy_ambient_light.enabled:
+        color, brightness = ambient_light(world)
+        components.append(ambient_light_component(color, brightness, world.bevy_ambient_light.baked))
+    elif sky_lights_scene(world):
+        components.append(ambient_light_component((1.0, 1.0, 1.0), 0.0, False))
+    if world.bevy_sky.enabled:
+        components.append(sky_component(world.bevy_sky))
+    return components
+
+
 def new_identifier():
     return uuid.uuid4().hex
 
@@ -614,9 +631,9 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_glb_export")
         _remove_extra(gltf2_scene, "bevy_bsn_export")
         world = getattr(blender_scene, "world", None)
-        if world is not None and hasattr(world, "bevy_ambient_light") and world.bevy_ambient_light.enabled:
-            color, brightness = ambient_light(world)
-            gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_ambient_light(color, brightness, world.bevy_ambient_light.baked)}
+        components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
+        if components:
+            gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components)}
 
 
 def _remove_extra(gltf2_element, key):

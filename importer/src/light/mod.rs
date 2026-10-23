@@ -4,7 +4,7 @@ mod system;
 
 use bevy::{app::SceneSpawnerSystems, gltf::extensions::GltfExtensionHandlers, prelude::*};
 
-pub use component::PendingLight;
+pub use component::{BlenderSky, NoBlenderSky, PendingLight};
 pub use system::light_spec;
 
 pub struct LightingPlugin;
@@ -12,7 +12,7 @@ pub struct LightingPlugin;
 impl Plugin for LightingPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(SpawnScene, system::apply_lights.after(crate::system::read_gltf_components));
-        app.add_systems(SpawnScene, system::apply_ambient_light.after(SceneSpawnerSystems::WorldInstanceSpawn));
+        app.add_systems(SpawnScene, (system::apply_scene_lighting, system::apply_sky).chain().after(SceneSpawnerSystems::WorldInstanceSpawn));
     }
 
     fn finish(&self, app: &mut App) {

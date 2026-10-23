@@ -15,7 +15,7 @@ FILE_LABELS = {
     "VOXELS": "Voxels",
     "LIGHTMAP": "Lightmap",
 }
-FILE_COMPONENTS = {"reflection_probe", "irradiance_volume", "lightmap"}
+FILE_COMPONENTS = {"reflection_probe", "irradiance_volume", "lightmap", "sky"}
 HEADER_LENGTH = 65536
 BASIS_FORMAT = 0
 FIRST_BLOCK_FORMAT = 131
@@ -116,16 +116,20 @@ def _file_components(data):
     return [component for component in data["components"] if isinstance(component, dict) and component.get("type") in FILE_COMPONENTS and "file" in component]
 
 
+def _holders(gltf):
+    return [*gltf.get("nodes", []), *gltf.get("scenes", [])]
+
+
 def needs_embedding(gltf):
-    return any((data := _components(node)) is not None and _file_components(data) for node in gltf.get("nodes", []))
+    return any((data := _components(holder)) is not None and _file_components(data) for holder in _holders(gltf))
 
 
 def embed_files(gltf, binary, read):
     textures = {}
     appended = bytearray(binary)
     sampler = None
-    for node in gltf.get("nodes", []):
-        data = _components(node)
+    for holder in _holders(gltf):
+        data = _components(holder)
         if data is None or not _file_components(data):
             continue
         for component in _file_components(data):
@@ -144,7 +148,7 @@ def embed_files(gltf, binary, read):
                 gltf.setdefault("textures", []).append({"sampler": sampler, "source": len(images) - 1})
                 textures[path] = len(gltf["textures"]) - 1
             component["texture"] = textures.get(path) if path else None
-        node["extras"][EXTRAS_KEY] = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
+        holder["extras"][EXTRAS_KEY] = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
     if not textures:
         return gltf, binary
     buffers = gltf.setdefault("buffers", [])

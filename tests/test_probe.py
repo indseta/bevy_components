@@ -147,6 +147,18 @@ class TestEmbedding(unittest.TestCase):
         self.assertEqual(gltf["buffers"], [{"byteLength": len(binary)}])
         self.assertFalse(probe.needs_embedding(gltf))
 
+    def test_the_sky_on_the_scene_shares_textures_with_nodes(self):
+        gltf, binary = _scene([{"type": "reflection_probe", "file": "/scenes/sky.ktx2"}])
+        gltf["scenes"] = [{"nodes": [0], "extras": {"bevy_components": json.dumps({"version": 1, "components": [{"type": "ambient_light", "brightness": 0.0}, {"type": "sky", "brightness": 683.0, "environment_light": None, "file": "/scenes/sky.ktx2"}]}), "other": 1}}]
+        reads = []
+        self.assertTrue(probe.needs_embedding({"scenes": gltf["scenes"]}))
+        gltf, binary = probe.embed_files(gltf, binary, lambda path: reads.append(path) or _ktx2())
+        self.assertEqual(reads, ["/scenes/sky.ktx2"])
+        self.assertEqual(json.loads(gltf["scenes"][0]["extras"]["bevy_components"])["components"], [{"type": "ambient_light", "brightness": 0.0}, {"type": "sky", "brightness": 683.0, "environment_light": None, "texture": 1}])
+        self.assertEqual(gltf["scenes"][0]["extras"]["other"], 1)
+        self.assertEqual(_components(gltf, 0), [{"type": "reflection_probe", "texture": 1}])
+        self.assertFalse(probe.needs_embedding(gltf))
+
     def test_probes_without_files_only_lose_the_path(self):
         gltf, binary = _scene([{"type": "irradiance_volume", "file": None}])
         embedded, embedded_binary = probe.embed_files(gltf, binary, lambda path: self.fail(path))

@@ -212,7 +212,14 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual([metadata.light_amount(value, "lm") for value in (136600, 683.0, 99.5, 12.5, 0.25)], ["136,600 lm", "683 lm", "99.5 lm", "12.5 lm", "0.25 lm"])
 
     def test_ambient_light(self):
-        self.assertEqual(json.loads(metadata.serialize_ambient_light((0.9, 0.95, 1.0, 1.0), 120, False)), {"version": 1, "components": [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}]})
+        self.assertEqual(json.loads(metadata.serialize_scene([metadata.ambient_light_component((0.9, 0.95, 1.0, 1.0), 120, False)])), {"version": 1, "components": [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}]})
+
+    def test_sky(self):
+        sky = item(brightness=1000.0, environment_light=True, environment_intensity=0.1, sky_file="//baked_lighting/world_sky.ktx2")
+        self.assertEqual(metadata.sky_component(sky), {"type": "sky", "brightness": 1000.0, "environment_light": 0.1, "file": "//baked_lighting/world_sky.ktx2"})
+        sky.environment_light = False
+        sky.sky_file = ""
+        self.assertEqual(metadata.sky_component(sky), {"type": "sky", "brightness": 1000.0, "environment_light": None, "file": None})
 
     def test_custom(self):
         component = item(component_type="CUSTOM", custom_type="game::Marker", custom_json='{"value":42}', use_fields=False, fields=[])

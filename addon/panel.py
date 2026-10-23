@@ -7,8 +7,8 @@ from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_
 from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .schema import short_name
-from .system import ambient_light, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, world_background, world_color
-from .validation import check_object, draw_message, texture_check
+from .system import ambient_light, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
+from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, draw_message, sky_check, texture_check
 
 
 def _labeled_row(layout, text):
@@ -241,10 +241,13 @@ def _draw_probe(layout, obj, index, item, text):
 
 
 def _draw_texture(layout, obj, item, text):
-    check = texture_check(obj, item)
+    _draw_file(layout, texture_check(obj, item), item, "probe_file", text)
+
+
+def _draw_file(layout, check, owner, name, text):
     row = layout.row()
     row.alert = check.level == "ERROR"
-    row.prop(item, "probe_file", text=text)
+    row.prop(owner, name, text=text)
     if check.level is None:
         row = layout.row()
         row.active = False
@@ -607,6 +610,43 @@ class BEVY_PT_scene_collision_layers(bpy.types.Panel):
             grid.prop(layers, f"layer_{layer}", text=str(layer))
 
 
+class BEVY_PT_world_sky(bpy.types.Panel):
+    bl_label = "Bevy Sky"
+    bl_idname = "BEVY_PT_world_sky"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "world"
+
+    @classmethod
+    def poll(cls, context):
+        return context.world is not None
+
+    def draw_header(self, context):
+        self.layout.prop(context.world.bevy_sky, "enabled", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        world = context.world
+        settings = world.bevy_sky
+        layout.active = settings.enabled
+        width = context.region.width if context.region else 300
+        check = sky_check(world)
+        _draw_file(layout, check, settings, "sky_file", "Cubemap")
+        if check.level == "WARNING":
+            draw_message(layout, check.message, width=width)
+        layout.prop(settings, "bake_resolution")
+        layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake", icon="RENDER_STILL").sky = True
+        layout.prop(settings, "brightness")
+        layout.prop(settings, "environment_light")
+        row = layout.row()
+        row.active = settings.environment_light
+        row.prop(settings, "environment_intensity")
+        if ambient_doubles_sky(world):
+            draw_message(layout, f"{AMBIENT_WITH_SKY}. Turn Bevy Ambient Light off to light the scene with the sky alone", width=width)
+
+
 class BEVY_PT_world_ambient_light(bpy.types.Panel):
     bl_label = "Bevy Ambient Light"
     bl_idname = "BEVY_PT_world_ambient_light"
@@ -627,6 +667,11 @@ class BEVY_PT_world_ambient_light(bpy.types.Panel):
         layout.use_property_decorate = False
         world = context.world
         settings = world.bevy_ambient_light
+        width = context.region.width if context.region else 300
+        if ambient_doubles_sky(world):
+            draw_message(layout, AMBIENT_WITH_SKY, width=width)
+        elif not settings.enabled and sky_lights_scene(world):
+            draw_message(layout, "Off, so the export sets Bevy's ambient light to 0 and the Bevy Sky's environment light lights the scene alone", icon="INFO", width=width)
         layout.active = settings.enabled
         layout.prop(settings, "use_world_color")
         if settings.use_world_color:
@@ -634,7 +679,7 @@ class BEVY_PT_world_ambient_light(bpy.types.Panel):
             if background is None:
                 layout.prop(world, "color", text="Color")
                 if world_color(world) is None:
-                    draw_message(layout, "The World color comes from a texture or other nodes, so this uses its viewport color. Turn off From World to pick one", icon="INFO", width=context.region.width if context.region else 300)
+                    draw_message(layout, "The World color comes from a texture or other nodes, so this uses its viewport color. Turn off From World to pick one", icon="INFO", width=width)
             else:
                 layout.prop(background.inputs["Color"], "default_value", text="Color")
                 layout.prop(background.inputs["Strength"], "default_value", text="Strength")

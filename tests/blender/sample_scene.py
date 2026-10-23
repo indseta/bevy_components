@@ -98,6 +98,7 @@ def clear_scene():
         bpy.context.scene.world = bpy.data.worlds.new("World")
     if hasattr(bpy.context.scene.world, "bevy_ambient_light"):
         bpy.context.scene.world.property_unset("bevy_ambient_light")
+        bpy.context.scene.world.property_unset("bevy_sky")
 
 
 def select(*objects):
@@ -609,6 +610,11 @@ def build_sample_scene(directory=FIXTURE.parent):
     ambient.use_world_color = False
     ambient.color = (0.9, 0.95, 1.0)
     ambient.brightness = 120
+    sky = bpy.context.scene.world.bevy_sky
+    sky.enabled = True
+    sky.sky_file = str(CUBEMAP)
+    sky.brightness = 1000
+    sky.environment_intensity = 300
     add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp)
     select()
 

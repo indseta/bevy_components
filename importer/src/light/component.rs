@@ -43,3 +43,16 @@ pub struct PendingLight(pub LightSpec);
 
 #[derive(Component)]
 pub struct DecodedGltfSceneExtras;
+
+#[derive(Resource, Clone, Debug, PartialEq)]
+pub struct BlenderSky {
+    pub image: Handle<Image>,
+    pub brightness: f32,
+    pub environment_light: Option<f32>,
+}
+
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct NoBlenderSky;
+
+#[derive(Component)]
+pub struct SkyCamera(pub BlenderSky);

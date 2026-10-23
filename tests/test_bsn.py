@@ -270,6 +270,25 @@ class TestScene(unittest.TestCase):
         self.assertIn("@ambient_light(GlobalAmbientLight { color: Color::linear_rgb(1.0, 0.5, 0.5), brightness: 50.0, affects_lightmapped_meshes: false })", text)
         self.assertIn("fn ambient_light(light: GlobalAmbientLight) -> impl Scene", text)
 
+    def test_the_sky_sets_the_importer_resource(self):
+        gltf = scene(node("marker"), meshes=0)
+        sky = {"type": "sky", "brightness": 1000, "environment_light": 500, "file": "//baked_lighting/world_sky.ktx2"}
+        gltf["scenes"][0]["extras"] = {"bevy_components": json.dumps({"version": 1, "components": [{"type": "ambient_light", "color": [1, 1, 1], "brightness": 0, "baked": False}, sky]})}
+        text, warnings = source(gltf, files={"//baked_lighting/world_sky.ktx2": "scenes/world_sky.ktx2"})
+        self.assertEqual(warnings, [])
+        self.assertIn('@sky("scenes/world_sky.ktx2", 1000.0, Some(500.0))', text)
+        self.assertIn("@ambient_light(GlobalAmbientLight { color: Color::linear_rgb(1.0, 1.0, 1.0), brightness: 0.0, affects_lightmapped_meshes: true })", text)
+        self.assertIn("fn sky(path: &'static str, brightness: f32, environment_light: Option<f32>) -> impl Scene", text)
+        self.assertIn("\nuse bevy_components_importer::BlenderSky;\n", text)
+        sky["environment_light"] = None
+        gltf["scenes"][0]["extras"] = {"bevy_components": json.dumps({"version": 1, "components": [sky]})}
+        text, _warnings = source(gltf, files={"//baked_lighting/world_sky.ktx2": "scenes/world_sky.ktx2"})
+        self.assertIn('@sky("scenes/world_sky.ktx2", 1000.0, None)', text)
+        text, warnings = source(gltf)
+        self.assertEqual(warnings, ["Bevy Sky: no cubemap file, so it is left out"])
+        self.assertNotIn("sky", text.split("\n", 1)[1])
+        self.assertNotIn("bevy_components_importer", text)
+
     def test_joints_name_their_bodies(self):
         joint = {"type": "joint", "kind": "revolute", "body1": "frame", "body2": "door", "axis": [0, 2, 0]}
         text, _warnings = source(scene(node("frame", BODY), node("door", BODY, translation=[1, 0, 0]), node("hinge", [joint], translation=[0.5, 0, 0]), meshes=0))

@@ -4,8 +4,8 @@ use serde_json::Value;
 use std::iter;
 use crate::{component::*, custom, data::*, joint::*, light, lightmap, texture::GltfTextures};
 
-const MAX_CUBEMAP_SIZE: u32 = 8192;
-const CUBE_FACES: u32 = 6;
+pub const MAX_CUBEMAP_SIZE: u32 = 8192;
+pub const CUBE_FACES: u32 = 6;
 
 pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>, Option<&GltfTextures>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>, registry: Res<AppTypeRegistry>) {
     let registry = registry.read();
@@ -119,6 +119,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     }
                 }
                 ExportedComponent::AmbientLight(_) => warn!("Ambient light belongs on the scene, not on {:?}", name),
+                ExportedComponent::Sky { .. } => warn!("Sky belongs on the scene, not on {:?}", name),
                 ExportedComponent::Custom { type_path, data } => match custom::reflected_component(&registry, &type_path, &data, name) {
                     Some(component) => reflected.push(component),
                     None => custom.0.push(BlenderCustomComponent { type_path, data }),
@@ -482,7 +483,7 @@ fn unlocked(vector: [f32; 3], locks: Option<[bool; 3]>) -> Vec3 {
     return Vec3::from_array(std::array::from_fn(|axis| if locks[axis] { 0.0 } else { vector[axis] }));
 }
 
-fn texture_handle(textures: Option<&GltfTextures>, index: Option<usize>) -> Option<Handle<Image>> {
+pub fn texture_handle(textures: Option<&GltfTextures>, index: Option<usize>) -> Option<Handle<Image>> {
     return textures?.0.get(index?).cloned();
 }
 

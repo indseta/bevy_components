@@ -28,8 +28,9 @@ SUPERSAMPLING = 2
 FACE_SCALE = 0.02
 PANORAMA_SCALE = 4
 NICENESS = 10
+SKY_SAMPLES = 32
 FILE_SUFFIXES = {"CUBEMAP": "reflection", "VOXELS": "irradiance", "LIGHTMAP": "lightmap"}
-JOB_WORDS = {"LIGHTMAP": "lightmap", "CUBEMAP": "reflection probe", "VOXELS": "irradiance volume"}
+JOB_WORDS = {"SKY": "the sky", "LIGHTMAP": "lightmap", "CUBEMAP": "reflection probe", "VOXELS": "irradiance volume"}
 LIGHTMAP_MARGIN = 2
 LIGHTMAP_GAP = 4
 LIGHTMAP_ANGLE = math.radians(66)
@@ -38,6 +39,7 @@ SHARED_EXPONENT_MAX = 65408.0
 DIRECTIONS = numpy.array(((1, 0, 0), (-1, 0, 0), (0, 0, 1), (0, 0, -1), (0, -1, 0), (0, 1, 0)), dtype=numpy.float64)
 TANGENTS = numpy.array(((0, 1, 0), (0, 1, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0), (1, 0, 0)), dtype=numpy.float64)
 CORNERS = numpy.array(((-1, -1), (1, -1), (1, 1), (-1, 1)), dtype=numpy.float64)
+SKY_MATRIX = Matrix(((1, 0, 0, 0), (0, 0, -1, 0), (0, 1, 0, 0), (0, 0, 0, 1)))
 HIDDEN_RAYS = ("visible_diffuse", "visible_glossy", "visible_transmission", "visible_volume_scatter", "visible_shadow")
 RUNNER = "import importlib, sys, types; package = types.ModuleType({package!r}); package.__path__ = [{path!r}]; sys.modules[{package!r}] = package; importlib.import_module({package!r} + '.bake').run({job!r})"
 
@@ -68,9 +70,18 @@ def _baked_lamps(objects):
     return sorted(obj.name for obj in objects if obj.type == "LIGHT" and obj.data.type != "AREA" and (item := component_of(obj, "LIGHT")) is not None and item.light_baked)
 
 
-def lighting_jobs(objects, folder, only=None):
+def sky_job(world, folder):
+    name = f"{bpy.path.clean_name(world.name).lower()}_sky.ktx2"
+    return {"world": world.name, "kind": "SKY", "path": str(Path(bpy.path.abspath(folder)) / name), "file": _probe_file(folder, name), "resolution": int(world.bevy_sky.bake_resolution)}
+
+
+def baked_sky(world):
+    return world is not None and world.library is None and hasattr(world, "bevy_sky") and world.bevy_sky.enabled
+
+
+def lighting_jobs(objects, folder, only=None, world=None):
     objects = list(objects)
-    jobs = []
+    jobs = [sky_job(world, folder)] if only is None and baked_sky(world) else []
     taken = set()
     for obj in sorted(objects, key=lambda obj: obj.name):
         if obj.library or not hasattr(obj, "bevy_component_data"):
@@ -95,8 +106,8 @@ def lighting_jobs(objects, folder, only=None):
 
 
 def bake_summary(jobs):
-    numbers = [(sum(1 for job in jobs if job["kind"] == kind), word) for kind, word in JOB_WORDS.items()]
-    parts = [f"{number} {word}" if number == 1 else f"{number} {word}s" for number, word in numbers if number]
+    numbers = [(kind, sum(1 for job in jobs if job["kind"] == kind), word) for kind, word in JOB_WORDS.items()]
+    parts = [word if kind == "SKY" else f"{number} {word}" if number == 1 else f"{number} {word}s" for kind, number, word in numbers if number]
     return " and ".join(parts) if len(parts) < 3 else f"{', '.join(parts[:-1])} and {parts[-1]}"
 
 
@@ -336,16 +347,14 @@ def bake_lightmap(scene, view_layer, job):
     return ktx2_rgb9e5(size, size, shared_exponents(pixels[::-1] * WATTS_TO_LUMENS))
 
 
-def bake_cubemap(scene, view_layer, job):
-    size = job["resolution"]
-    matrix = Matrix(job["matrix"])
+def _render_panorama(scene, view_layer, location, size):
     camera_data = bpy.data.cameras.new("bevy_bake_camera")
     camera_data.type = "PANO"
     camera_data.panorama_type = "EQUIRECTANGULAR"
     camera_data.clip_start = 0.001
     camera_data.clip_end = 100000.0
     camera = bpy.data.objects.new("bevy_bake_camera", camera_data)
-    camera.matrix_world = Matrix.Translation(matrix.translation)
+    camera.matrix_world = Matrix.Translation(location)
     scene.collection.objects.link(camera)
     try:
         with tempfile.TemporaryDirectory(prefix="bevy_components_bake_") as directory:
@@ -360,9 +369,34 @@ def bake_cubemap(scene, view_layer, job):
     finally:
         bpy.data.objects.remove(camera)
         bpy.data.cameras.remove(camera_data)
+    return panorama
+
+
+def _cubemap(panorama, size, matrix):
     faces = sample_panorama(panorama, probe_directions(size, matrix))
     values = numpy.concatenate((faces, numpy.ones(faces.shape[:-1] + (1,))), axis=-1)
     return ktx2_rgba16f(size, size, half_floats(values), faces=6)
+
+
+def bake_cubemap(scene, view_layer, job):
+    size = job["resolution"]
+    matrix = Matrix(job["matrix"])
+    return _cubemap(_render_panorama(scene, view_layer, matrix.translation, size), size, matrix)
+
+
+def bake_sky(scene, job):
+    size = job["resolution"]
+    sky = bpy.data.scenes.new("bevy_bake_sky")
+    try:
+        sky.world = bpy.data.worlds[job["world"]]
+        sky.render.engine = "CYCLES"
+        sky.cycles.samples = min(scene.cycles.samples, SKY_SAMPLES)
+        sky.cycles.device = scene.cycles.device
+        sky.cycles.use_denoising = False
+        panorama = _render_panorama(sky, sky.view_layers[0], (0.0, 0.0, 0.0), size)
+    finally:
+        bpy.data.scenes.remove(sky)
+    return _cubemap(panorama, size, SKY_MATRIX)
 
 
 def _render_changes(scene, camera, size, path):
@@ -377,7 +411,9 @@ def _render_changes(scene, camera, size, path):
 def bake_jobs(scene, view_layer, jobs, samples, lamp_direct):
     with _changed((scene.render, "engine", "CYCLES"), (scene.cycles, "samples", samples)):
         for job in jobs:
-            if job["kind"] == "LIGHTMAP":
+            if job["kind"] == "SKY":
+                data = bake_sky(scene, job)
+            elif job["kind"] == "LIGHTMAP":
                 data = bake_lightmap(scene, view_layer, job)
             elif job["kind"] == "CUBEMAP":
                 data = bake_cubemap(scene, view_layer, job)

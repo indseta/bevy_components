@@ -7,8 +7,8 @@ mod sample_scene;
 mod static_scene;
 
 use avian3d::prelude::*;
-use bevy::{animation::{AnimatedBy, AnimationTargetId, graph::AnimationNodeType}, asset::UntypedAssetId, audio::PlaybackSettings, camera::visibility::VisibilityRange, gltf::Gltf, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::Face, world_serialization::WorldAssetRoot};
-use bevy_components_importer::{BlenderCustomComponents, NavigationObstacle, NavigationWalkable};
+use bevy::{animation::{AnimatedBy, AnimationTargetId, graph::AnimationNodeType}, asset::UntypedAssetId, audio::PlaybackSettings, camera::visibility::VisibilityRange, gltf::Gltf, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, Skybox, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::{Extent3d, Face}, world_serialization::WorldAssetRoot};
+use bevy_components_importer::{BlenderCustomComponents, BlenderSky, NavigationObstacle, NavigationWalkable};
 use common::*;
 use serde_json::{Value, json};
 use std::{collections::{BTreeMap, HashSet}, fmt::Debug, fs, thread, time::Duration};
@@ -79,8 +79,8 @@ fn gltf_tree(file: &str) -> Tree {
     return Tree { names, children, roots };
 }
 
-fn bsn_app(paused: bool) -> App {
-    let mut app = SceneApp { plugin: false, audio: true, ..default() }.build();
+fn bsn_app(paused: bool, plugin: bool) -> App {
+    let mut app = SceneApp { plugin, audio: true, ..default() }.build();
     if paused {
         app.world_mut().resource_mut::<Time<Physics>>().pause();
     }
@@ -377,7 +377,7 @@ fn glb_scene_root(world: &mut World) -> Entity {
 #[test]
 fn bsn_scene_matches_the_glb_scene_with_the_importer() {
     let mut glb = glb_app();
-    let mut bsn = bsn_app(true);
+    let mut bsn = bsn_app(true, false);
     let glb_root = glb_scene_root(glb.world_mut());
     let bsn_root = named(bsn.world_mut(), ROOT);
     let expected = scene_nodes(glb.world_mut(), glb_root);
@@ -387,6 +387,32 @@ fn bsn_scene_matches_the_glb_scene_with_the_importer() {
     assert!(differences.is_empty(), "{}", differences.join("\n"));
     assert_eq!(anchors(bsn.world_mut()), anchors(glb.world_mut()));
     assert_eq!(debug(bsn.world().resource::<GlobalAmbientLight>()), debug(glb.world().resource::<GlobalAmbientLight>()));
+    let sky = |app: &App| app.world().get_resource::<BlenderSky>().map(|sky| (sky.brightness, sky.environment_light));
+    assert_eq!(sky(&bsn), sky(&glb));
+}
+
+fn camera_sky(app: &mut App) -> (Extent3d, f32, Option<f32>) {
+    let camera = app.world_mut().spawn(Camera3d::default()).id();
+    for _ in 0..1000 {
+        app.update();
+        if app.world().get::<Skybox>(camera).is_some() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let world = app.world();
+    let skybox = world.get::<Skybox>(camera).expect("the camera shows the sky");
+    let size = world.resource::<Assets<Image>>().get(skybox.image.as_ref().expect("the skybox has an image")).expect("the sky cubemap is loaded").texture_descriptor.size;
+    return (size, skybox.brightness, world.get::<GeneratedEnvironmentMapLight>(camera).map(|light| light.intensity));
+}
+
+#[test]
+fn bsn_scene_sky_reaches_cameras_with_the_plugin() {
+    let mut bsn = bsn_app(true, true);
+    let mut glb = glb_app();
+    let expected = (Extent3d { width: 16, height: 16, depth_or_array_layers: 6 }, 1000.0, Some(300.0));
+    assert_eq!(camera_sky(&mut glb), expected);
+    assert_eq!(camera_sky(&mut bsn), expected);
 }
 
 #[test]
@@ -399,7 +425,7 @@ fn bsn_scene_shares_prefabs() {
 
 #[test]
 fn bsn_scene_simulates() {
-    let mut app = bsn_app(false);
+    let mut app = bsn_app(false, false);
     let ball = named(app.world_mut(), "bouncy_ball");
     let bullet = named(app.world_mut(), "bullet");
     let start = (app.world().get::<Transform>(ball).unwrap().translation, app.world().get::<Transform>(bullet).unwrap().translation);

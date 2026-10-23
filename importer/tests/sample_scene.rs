@@ -1,8 +1,8 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
-use bevy_components_importer::{BlenderCustomComponents, GltfTextures, NavigationObstacle, NavigationWalkable};
+use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, Skybox, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
+use bevy_components_importer::{BlenderCustomComponents, BlenderSky, GltfTextures, NavigationObstacle, NavigationWalkable, NoBlenderSky};
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -1283,6 +1283,57 @@ fn ambient_light_comes_from_the_scene() {
     let app = load_scene(SCENE);
     let ambient = app.world().resource::<GlobalAmbientLight>();
     assert_eq!((ambient.color, ambient.brightness, ambient.affects_lightmapped_meshes), (Color::linear_rgb(0.9, 0.95, 1.0), 120.0, true));
+}
+
+#[test]
+fn cameras_show_the_scene_sky() {
+    let mut app = SceneApp::default().build();
+    let early = app.world_mut().spawn(Camera3d::default()).id();
+    let opted_out = app.world_mut().spawn((Camera3d::default(), NoBlenderSky)).id();
+    if let Err(error) = spawn_scene(&mut app, SCENE) {
+        panic!("{SCENE} did not load: {error}");
+    }
+    let late = app.world_mut().spawn(Camera3d::default()).id();
+    app.update();
+    let world = app.world_mut();
+    let sky = world.resource::<BlenderSky>().clone();
+    assert_eq!((sky.brightness, sky.environment_light), (1000.0, Some(300.0)));
+    let image = world.resource::<Assets<Image>>().get(&sky.image).expect("the sky cubemap is loaded");
+    assert_eq!(image.texture_descriptor.size, Extent3d { width: 16, height: 16, depth_or_array_layers: 6 });
+    assert_eq!(image.texture_view_descriptor.as_ref().and_then(|view| view.dimension), Some(TextureViewDimension::Cube));
+    for camera in [early, late] {
+        let skybox = world.get::<Skybox>(camera).expect("the camera shows the sky");
+        assert_eq!((skybox.image.as_ref().map(Handle::id), skybox.brightness, skybox.rotation), (Some(sky.image.id()), 1000.0, Quat::IDENTITY));
+        let light = world.get::<GeneratedEnvironmentMapLight>(camera).expect("the sky lights the scene");
+        assert_eq!((light.environment_map.id(), light.intensity, light.affects_lightmapped_mesh_diffuse), (sky.image.id(), 300.0, true));
+    }
+    assert!(world.get::<Skybox>(opted_out).is_none());
+    assert!(world.get::<GeneratedEnvironmentMapLight>(opted_out).is_none());
+}
+
+#[test]
+fn the_sky_follows_changes_and_needs_a_usable_cubemap() {
+    let mut app = SceneApp::default().build();
+    let world = app.world_mut();
+    let mut images = world.resource_mut::<Assets<Image>>();
+    let mut image = |width: u32, height: u32, layers: u32| images.add(Image::new_fill(Extent3d { width, height, depth_or_array_layers: layers }, TextureDimension::D2, &[0; 8], TextureFormat::Rgba16Float, RenderAssetUsages::default()));
+    let (cubemap, uneven, flat) = (image(8, 8, 6), image(12, 12, 6), image(8, 8, 1));
+    let camera = world.spawn(Camera3d::default()).id();
+    let show = |app: &mut App, image: &Handle<Image>, environment_light: Option<f32>| -> (Option<(AssetId<Image>, f32)>, Option<f32>) {
+        app.world_mut().insert_resource(BlenderSky { image: image.clone(), brightness: 500.0, environment_light });
+        for _ in 0..2 {
+            app.update();
+        }
+        let world = app.world();
+        return (world.get::<Skybox>(camera).map(|skybox| (skybox.image.as_ref().expect("the skybox has an image").id(), skybox.brightness)), world.get::<GeneratedEnvironmentMapLight>(camera).map(|light| light.intensity));
+    };
+    assert_eq!(show(&mut app, &cubemap, Some(200.0)), (Some((cubemap.id(), 500.0)), Some(200.0)));
+    app.world_mut().entity_mut(camera).insert(EnvironmentMapLight::default());
+    assert_eq!(show(&mut app, &uneven, Some(200.0)), (Some((uneven.id(), 500.0)), None));
+    assert!(app.world().get::<EnvironmentMapLight>(camera).is_none());
+    assert_eq!(show(&mut app, &cubemap, None), (Some((cubemap.id(), 500.0)), None));
+    assert_eq!(show(&mut app, &cubemap, Some(100.0)), (Some((cubemap.id(), 500.0)), Some(100.0)));
+    assert_eq!(show(&mut app, &flat, Some(100.0)), (None, None));
 }
 
 #[test]

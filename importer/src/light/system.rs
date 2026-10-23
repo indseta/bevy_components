@@ -1,5 +1,5 @@
-use bevy::{gltf::GltfSceneExtras, light::{CascadeShadowConfig, CascadeShadowConfigBuilder, VolumetricLight}, pbr::MAX_CASCADES_PER_LIGHT, prelude::*};
-use crate::{data::*, system::decode_extras};
+use bevy::{gltf::GltfSceneExtras, light::{CascadeShadowConfig, CascadeShadowConfigBuilder, Skybox, VolumetricLight}, pbr::MAX_CASCADES_PER_LIGHT, prelude::*};
+use crate::{data::*, system::{CUBE_FACES, MAX_CUBEMAP_SIZE, decode_extras, texture_handle}, texture::GltfTextures};
 use super::component::*;
 
 pub fn light_spec(light: ExportedLight, name: Option<&Name>) -> Option<LightSpec> {
@@ -80,15 +80,57 @@ fn rect_light(spec: &LightSpec) -> RectLight {
     return RectLight { color: spec.color, intensity: spec.intensity.unwrap_or(defaults.intensity), range: spec.range.unwrap_or(defaults.range), width: spec.size.x, height: spec.size.y };
 }
 
-pub fn apply_ambient_light(mut commands: Commands, scenes: Query<(Entity, &GltfSceneExtras, Option<&Name>), Without<DecodedGltfSceneExtras>>) {
-    for (entity, extras, name) in &scenes {
+pub fn apply_scene_lighting(mut commands: Commands, scenes: Query<(Entity, &GltfSceneExtras, Option<&Name>, Option<&GltfTextures>), Without<DecodedGltfSceneExtras>>) {
+    for (entity, extras, name, textures) in &scenes {
         commands.entity(entity).insert(DecodedGltfSceneExtras);
         let Some(exported) = decode_extras(&extras.value, name) else { continue; };
         for component in exported.components {
-            if let ExportedComponent::AmbientLight(ambient) = component {
-                let [red, green, blue] = ambient.color;
-                commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(red, green, blue), brightness: ambient.brightness, affects_lightmapped_meshes: !ambient.baked });
+            match component {
+                ExportedComponent::AmbientLight(ambient) => {
+                    let [red, green, blue] = ambient.color;
+                    commands.insert_resource(GlobalAmbientLight { color: Color::linear_rgb(red, green, blue), brightness: ambient.brightness, affects_lightmapped_meshes: !ambient.baked });
+                }
+                ExportedComponent::Sky { brightness, environment_light, texture } => {
+                    let Some(image) = texture_handle(textures, texture) else {
+                        warn!("No cubemap embedded for the sky of {:?}", name);
+                        continue;
+                    };
+                    commands.insert_resource(BlenderSky { image, brightness, environment_light });
+                }
+                _ => {}
             }
         }
+    }
+}
+
+pub fn apply_sky(mut commands: Commands, sky: Option<Res<BlenderSky>>, images: Res<Assets<Image>>, cameras: Query<(Entity, Option<&SkyCamera>, Option<&Name>), (With<Camera3d>, Without<NoBlenderSky>)>) {
+    let Some(sky) = sky else { return; };
+    let Some(image) = images.get(&sky.image) else { return; };
+    let size = image.texture_descriptor.size;
+    let cubemap = size.depth_or_array_layers == CUBE_FACES && size.width == size.height;
+    let filterable = cubemap && size.width.is_power_of_two() && size.width <= MAX_CUBEMAP_SIZE;
+    for (entity, applied, name) in &cameras {
+        if applied.is_some_and(|applied| applied.0 == *sky) {
+            continue;
+        }
+        if !cubemap {
+            warn!("Sky is {}x{}x{}, which is not a cubemap, so {:?} gets no sky", size.width, size.height, size.depth_or_array_layers, name);
+        } else if sky.environment_light.is_some() && !filterable {
+            warn!("Sky cubemap is {}x{}, but Bevy only lights scenes with cubemaps whose size is a power of two, so {:?} gets no environment light", size.width, size.height, name);
+        }
+        let mut camera = commands.entity(entity);
+        camera.insert(SkyCamera(sky.clone()));
+        if cubemap {
+            camera.insert(Skybox { image: Some(sky.image.clone()), brightness: sky.brightness, rotation: Quat::IDENTITY });
+        } else {
+            camera.remove::<Skybox>();
+        }
+        if applied.is_some() || sky.environment_light.is_some() {
+            camera.remove::<EnvironmentMapLight>();
+        }
+        match sky.environment_light {
+            Some(intensity) if filterable => camera.insert(GeneratedEnvironmentMapLight { environment_map: sky.image.clone(), intensity, ..default() }),
+            _ => camera.remove::<GeneratedEnvironmentMapLight>(),
+        };
     }
 }

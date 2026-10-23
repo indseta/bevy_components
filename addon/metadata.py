@@ -426,9 +426,16 @@ def serialize_items(items, locate=_portable):
     return json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)
 
 
-def serialize_ambient_light(color, brightness, baked):
-    component = {"type": "ambient_light", "color": [_float32(value) for value in color[:3]], "brightness": _float32(brightness), "baked": bool(baked)}
-    return json.dumps({"version": SCHEMA_VERSION, "components": [component]}, separators=(",", ":"), ensure_ascii=False)
+def ambient_light_component(color, brightness, baked):
+    return {"type": "ambient_light", "color": [_float32(value) for value in color[:3]], "brightness": _float32(brightness), "baked": bool(baked)}
+
+
+def sky_component(sky):
+    return {"type": "sky", "brightness": _float32(sky.brightness), "environment_light": _float32(sky.environment_intensity) if sky.environment_light else None, "file": sky.sky_file or None}
+
+
+def serialize_scene(components):
+    return json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)
 
 
 def component_errors(item):

@@ -112,6 +112,11 @@ pub enum ExportedComponent {
         kind: String,
         cost: Option<f32>,
     },
+    Sky {
+        brightness: f32,
+        environment_light: Option<f32>,
+        texture: Option<usize>,
+    },
     #[serde(other)]
     Unsupported,
 }

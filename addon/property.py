@@ -249,6 +249,15 @@ class BEVY_PG_ambient_light(bpy.types.PropertyGroup):
     baked: BoolProperty(name="Baked", description="The ambient light is already baked into lightmaps, so it skips meshes with a lightmap", default=False)
 
 
+class BEVY_PG_sky(bpy.types.PropertyGroup):
+    enabled: BoolProperty(name="Bevy Sky", description="Export the World as the sky of every Bevy camera, from a cubemap that Bake renders", default=False)
+    sky_file: StringProperty(name="Cubemap", description="KTX2 cubemap of the World that the export embeds in the scene, which Bake renders", subtype="FILE_PATH", options=PATH_OPTIONS)
+    bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the exported scene") for size in BAKE_SIZES], default="512")
+    brightness: FloatProperty(name="Brightness", description="Brightness of the sky in candela per square meter that a cubemap value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so the sky looks like the World in Blender", default=683.0, min=0.0, soft_max=100000.0)
+    environment_light: BoolProperty(name="Environment Light", description="Also light the scene with the sky through an environment map light on each camera, which Bevy filters from the cubemap. Lightmaps and irradiance volumes still give the soft light where they are, and the sky adds reflections", default=True)
+    environment_intensity: FloatProperty(name="Intensity", description="Brightness of the environment light in candela per square meter that a cubemap value of 1 gives. 683 matches the World in Blender", default=683.0, min=0.0, soft_max=100000.0)
+
+
 class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
     samples: IntProperty(name="Samples", description="Cycles samples per pixel. More samples give smoother light and take longer", default=128, min=1, soft_max=4096)
     folder: StringProperty(name="Folder", description="Folder for the baked .ktx2 files, where // is the folder of the .blend file", subtype="DIR_PATH", default="//baked_lighting/", options=PATH_OPTIONS)

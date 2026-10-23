@@ -8,7 +8,7 @@ from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
-from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, lighting_jobs, unwrap_lightmap
+from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, baked_sky, lighting_jobs, sky_job, unwrap_lightmap
 from .bsn import BsnError, asset_root, default_assets_folder, digest, drop_scenes, inside, load_path, module_crate, node_components, remove_stale, scene_source, snake_case, strip_components, write_if_changed
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
@@ -17,8 +17,8 @@ from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, ExportOptions, LAYER_COUNT
-from .system import accepts, apply_definitions, apply_game_types, asset_path, children_map, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, mesh_points, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sync_object, unlink_component, write_field
-from .validation import body_kind, check_bsn, check_objects, check_rust_file, count, describe, draw_issues, draw_message, issue_row, issue_summary
+from .system import accepts, apply_definitions, apply_game_types, asset_path, children_map, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, mesh_points, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, write_field
+from .validation import body_kind, check_bsn, check_objects, check_rust_file, check_world, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
 ACCEPTED_OBJECTS = {
@@ -106,6 +106,11 @@ def _read_file(path):
 
 def _has_probes(objects):
     return any(item.component_type in FILE_KINDS for obj in objects for item in components_for(obj))
+
+
+def _embeds_sky(scene):
+    world = scene.world if scene is not None else None
+    return world is not None and hasattr(world, "bevy_sky") and world.bevy_sky.enabled and bool(world.bevy_sky.sky_file.strip())
 
 
 def _missing_uv_maps(jobs):
@@ -660,7 +665,7 @@ class BEVY_OT_validate(bpy.types.Operator):
 
     def execute(self, context):
         settings = export_settings(context.scene)
-        issues = check_objects(exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers)
+        issues = check_objects(exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers) + check_world(context.scene.world)
         for issue in issues:
             print("Bevy Components:", describe(issue))
         if not issues:
@@ -760,7 +765,7 @@ def _bsn_paths(operator):
 
 def _bsn_issues(operator, objects):
     rust_file, folder, glb = _bsn_paths(operator)
-    issues = check_objects(objects, destination=glb, animations=operator.include_animations, modifiers=operator.apply_modifiers)
+    issues = check_objects(objects, destination=glb, animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_world(bpy.context.scene.world)
     if glb is not None:
         issues = check_rust_file(rust_file, getattr(operator, "again", False)) + issues + check_bsn(objects, asset_root(folder))
     return issues
@@ -1011,16 +1016,16 @@ class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
         layout.prop(self, "export_on_save")
         _draw_include(self, layout)
         _draw_compression(self, layout, context)
-        _draw_checks(self, layout, context, _export_key(self), lambda: check_objects(_exported_objects(self, context), destination=_export_path(self.filepath), animations=self.include_animations, modifiers=self.apply_modifiers))
+        _draw_checks(self, layout, context, _export_key(self), lambda: check_objects(_exported_objects(self, context), destination=_export_path(self.filepath), animations=self.include_animations, modifiers=self.apply_modifiers) + check_world(context.scene.world))
 
     def _destination(self):
         return _export_path(self.filepath)
 
     def _check(self, objects):
-        return check_objects(objects, destination=self._destination(), animations=self.include_animations, modifiers=self.apply_modifiers)
+        return check_objects(objects, destination=self._destination(), animations=self.include_animations, modifiers=self.apply_modifiers) + check_world(bpy.context.scene.world)
 
     def _direct(self, objects):
-        return not _has_probes(objects)
+        return not _has_probes(objects) and not _embeds_sky(bpy.context.scene)
 
     def _prepare(self, gltf, binary):
         return embed_files(gltf, binary, read=_read_file)
@@ -1104,8 +1109,8 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
         self._files = {}
         self._copies = []
         taken = {glb.name}
-        for node in gltf.get("nodes", []):
-            for component in node_components(node):
+        for holder in (*gltf.get("nodes", []), *gltf.get("scenes", [])):
+            for component in node_components(holder):
                 if component.get("type") == "scene_reference":
                     raw = component.get("path") or ""
                     source = Path(os.path.normpath(glb.parent / raw))
@@ -1285,11 +1290,12 @@ class BEVY_OT_cancel_bake(bpy.types.Operator):
 class BEVY_OT_bake_lighting(bpy.types.Operator):
     bl_idname = "bevy_components.bake_lighting"
     bl_label = "Bake Lighting"
-    bl_description = "Render every enabled Lightmap, Reflection Probe and Irradiance Volume in the scene with Cycles and save them as KTX2 files, in the background while you keep working"
+    bl_description = "Render the Bevy Sky and every enabled Lightmap, Reflection Probe and Irradiance Volume in the scene with Cycles and save them as KTX2 files, in the background while you keep working"
     bl_options = {"REGISTER", "UNDO"}
 
     object_name: StringProperty(name="Object", options={"HIDDEN", "SKIP_SAVE"})
     index: IntProperty(name="Index", default=-1, options={"HIDDEN", "SKIP_SAVE"})
+    sky: BoolProperty(name="Sky", description="Bake only the World's Bevy Sky", default=False, options={"HIDDEN", "SKIP_SAVE"})
 
     _interactive = False
     _directory = None
@@ -1310,6 +1316,8 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, properties):
+        if properties.sky:
+            return "Render the World into a cubemap with Cycles and save it as a KTX2 file, in the background while you keep working. Folder is set in Bake Lighting"
         if properties.object_name:
             return "Render this component's lighting with Cycles and save it as a KTX2 file, in the background while you keep working. Samples and folder are set in Bake Lighting"
         return cls.bl_description
@@ -1325,7 +1333,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         width = context.region.width if context.region else 300
         jobs = self._find_jobs(context)
         if not jobs:
-            draw_message(layout, "No enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", icon="ERROR", width=width)
+            draw_message(layout, "No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", icon="ERROR", width=width)
             return
         if settings.folder.startswith("//") and not bpy.data.filepath:
             draw_message(layout, "Save the .blend file first, or pick a folder that does not start with //", icon="ERROR", width=width)
@@ -1341,7 +1349,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         if lightmaps:
             lamps = len(lightmaps[0]["baked_lamps"])
             draw_message(layout, f"Lightmaps hold sky light, bounced light and the direct light of lamps marked Baked in their Light component, {count(lamps, 'lamp') if lamps else 'none'} here. Bevy lights the meshes with the other lamps", icon="INFO", width=width)
-            if ambient is None or not ambient.enabled or not ambient.baked:
+            if (ambient is None or not ambient.enabled or not ambient.baked) and not sky_lights_scene(world):
                 draw_message(layout, "Bevy's ambient light adds to the sky light baked into lightmaps. Turn on Bevy Ambient Light and its Baked option in World properties", icon="INFO", width=width)
         elif any(job["kind"] == "VOXELS" for job in jobs) and ambient is not None and ambient.enabled:
             draw_message(layout, "Bevy Ambient Light adds to the sky light baked into irradiance volumes. Turn it off in World properties unless the scene needs it outside the volumes", icon="INFO", width=width)
@@ -1364,7 +1372,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         self._jobs = self._find_jobs(context)
         self._folder = settings.folder
         if not self._jobs:
-            self.report({"ERROR"}, "No enabled Lightmaps, Reflection Probes or Irradiance Volumes to bake")
+            self.report({"ERROR"}, "No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes to bake")
             return {"CANCELLED"}
         missing = _missing_uv_maps(self._jobs)
         if missing:
@@ -1412,7 +1420,10 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
 
     def _find_jobs(self, context):
         settings = context.scene.bevy_bake_settings
-        return lighting_jobs(context.scene.objects, settings.folder, only=(self.object_name, self.index) if self.object_name else None)
+        world = context.scene.world
+        if self.sky:
+            return [sky_job(world, settings.folder)] if baked_sky(world) else []
+        return lighting_jobs(context.scene.objects, settings.folder, only=(self.object_name, self.index) if self.object_name else None, world=world)
 
     def _start(self, context, settings, binary):
         self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_bake_")
@@ -1447,6 +1458,12 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
     def _store_files(self, done):
         stored = []
         for job in self._jobs[:done]:
+            if job["kind"] == "SKY":
+                world = bpy.data.worlds.get(job["world"])
+                if world is not None and world.library is None:
+                    world.bevy_sky.sky_file = job["file"]
+                    stored.append(job)
+                continue
             obj = bpy.data.objects.get(job["object"])
             items = obj.bevy_component_data.components if obj is not None and obj.library is None else ()
             if job["index"] < len(items) and FILE_KINDS.get(items[job["index"]].component_type) == job["kind"]:

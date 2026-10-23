@@ -93,6 +93,7 @@ HELPERS = {
     "animation": (),
     "animated_by": ("AnimatedBy", "EntityTemplate", "Template"),
     "ambient_light": ("EmptySceneEffect",),
+    "sky": ("EmptySceneEffect",),
 }
 HELPER_SOURCES = {
     "preload": """fn preload(path: &'static str) -> impl Scene {
@@ -144,6 +145,15 @@ impl Scene for Preload {
     return bsn! {
         template(move |context| {
             *context.resource_mut::<GlobalAmbientLight>() = light.clone();
+            return Ok(EmptySceneEffect);
+        })
+    };
+}""",
+    "sky": """fn sky(path: &'static str, brightness: f32, environment_light: Option<f32>) -> impl Scene {
+    return bsn! {
+        template(move |context| {
+            let image = context.resource::<AssetServer>().load(path);
+            context.entity.world_scope(|world| world.insert_resource(BlenderSky { image, brightness, environment_light }));
             return Ok(EmptySceneEffect);
         })
     };
@@ -769,11 +779,15 @@ class _Generator:
 
     def build(self):
         root_body = ["Transform", "Visibility"]
-        ambient = _first(_decode(self.scene.get("extras")), "ambient_light")
+        scene_components = _decode(self.scene.get("extras"))
+        ambient = _first(scene_components, "ambient_light")
         if ambient is not None:
             self._helper("ambient_light")
             color = ambient.get("color", [1.0, 1.0, 1.0])
             root_body.append(f"@ambient_light(GlobalAmbientLight {{ color: Color::linear_rgb({_floats(color)}), brightness: {_float(ambient.get('brightness', 80.0))}, affects_lightmapped_meshes: {'false' if ambient.get('baked') else 'true'} }})")
+        sky = _first(scene_components, "sky")
+        if sky is not None:
+            root_body.extend(self._sky(sky))
         children = [self._entity(index) for index in self.roots if index in self.worlds]
         for (joint, pose), ident in zip(self.anchors, self.anchor_idents):
             self.physics = True
@@ -790,7 +804,7 @@ class _Generator:
             functions.append(_function(f"pub fn {name}() -> impl Scene", lines + self._children_lines((entity.mesh_parts if shared else []) + entity.parts)))
         for name, lines in self.chunks:
             functions.append(_list_function(f"fn {name}() -> impl SceneList", lines))
-        for helper in ("preload", "joint", "animation", "animated_by", "ambient_light"):
+        for helper in ("preload", "joint", "animation", "animated_by", "ambient_light", "sky"):
             if helper in self.helpers:
                 functions.append(HELPER_SOURCES[helper])
         header = []
@@ -801,6 +815,16 @@ class _Generator:
             names = sorted(self.importer)
             header.append(f"use {IMPORTER_CRATE}::{names[0]};" if len(names) == 1 else f"use {IMPORTER_CRATE}::{{{', '.join(names)}}};")
         return stamp("\n".join(header) + "\n\n" + "\n\n".join(functions) + "\n"), self.warnings
+
+    def _sky(self, sky):
+        path = self.files.get(sky.get("file")) if sky.get("file") else None
+        if path is None:
+            self.warnings.append("Bevy Sky: no cubemap file, so it is left out")
+            return []
+        self._helper("sky")
+        self.importer.add("BlenderSky")
+        environment = sky.get("environment_light")
+        return [f"@sky({_string(path)}, {_float(sky.get('brightness', 683.0))}, {'None' if environment is None else f'Some({_float(environment)})'})"]
 
     def _children_lines(self, children, prefabs=None):
         if not children:

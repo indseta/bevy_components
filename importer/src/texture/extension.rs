@@ -1,4 +1,4 @@
-use bevy::{asset::LoadContext, gltf::{extensions::{ErasedGltfExtensionHandler, GltfExtensionHandler}, gltf::{Node, Texture}}, prelude::*};
+use bevy::{asset::LoadContext, gltf::{extensions::{ErasedGltfExtensionHandler, GltfExtensionHandler}, gltf::{Node, Scene, Texture}}, prelude::*};
 use super::component::GltfTextures;
 
 const TEXTURE_KEY: &str = "\\\"texture\\\":";
@@ -20,6 +20,12 @@ impl GltfExtensionHandler for TextureHandles {
     fn on_gltf_node(&mut self, _load_context: &mut LoadContext<'_>, gltf_node: &Node, entity: &mut EntityWorldMut) {
         if gltf_node.extras().as_ref().is_some_and(|extras| extras.get().contains(TEXTURE_KEY)) {
             entity.insert(GltfTextures(self.textures.clone()));
+        }
+    }
+
+    fn on_scene_completed(&mut self, _load_context: &mut LoadContext<'_>, scene: &Scene, world_root_id: Entity, scene_world: &mut World) {
+        if scene.extras().as_ref().is_some_and(|extras| extras.get().contains(TEXTURE_KEY)) {
+            scene_world.entity_mut(world_root_id).insert(GltfTextures(self.textures.clone()));
         }
     }
 }

@@ -34,6 +34,7 @@ SHADER_MIXES = {"MIX_SHADER", "ADD_SHADER"}
 GLTF_MIXES = {"BSDF_TRANSPARENT", "LIGHT_PATH"}
 UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
 PROCEDURAL_NODES = {"AMBIENT_OCCLUSION", "BEVEL", "CAMERA", "FRESNEL", "HAIR_INFO", "LAYER_WEIGHT", "LIGHT_PATH", "NEW_GEOMETRY", "OBJECT_INFO", "PARTICLE_INFO", "POINT_INFO", "SCRIPT", "TANGENT", "TEX_COORD", "WIREFRAME"}
+AMBIENT_WITH_SKY = "Bevy Ambient Light takes the World color, which the Bevy Sky's environment light already gives, so meshes get the World's light twice"
 
 _texture_checks = {}
 
@@ -243,11 +244,37 @@ def _procedural(socket):
     return not any(node.type == "TEX_IMAGE" for node in nodes) and any(node.type in PROCEDURAL_NODES or node.type.startswith("TEX_") for node in nodes)
 
 
+def check_world(world):
+    if world is None or not hasattr(world, "bevy_sky") or not world.bevy_sky.enabled:
+        return []
+    issues = []
+    check = sky_check(world)
+    if check.level is not None:
+        issues.append(Issue(check.level, None, None, f"Bevy Sky: {check.message}"))
+    if ambient_doubles_sky(world):
+        issues.append(Issue("WARNING", None, None, AMBIENT_WITH_SKY))
+    return issues
+
+
+def ambient_doubles_sky(world):
+    ambient = world.bevy_ambient_light
+    return world.bevy_sky.enabled and world.bevy_sky.environment_light and ambient.enabled and ambient.use_world_color
+
+
+def sky_check(world):
+    if not world.bevy_sky.sky_file.strip():
+        return TextureCheck("WARNING", "No cubemap baked yet, so Bevy shows no sky", None)
+    return _file_check(world.bevy_sky.sky_file, "CUBEMAP", world.library)
+
+
 def texture_check(obj, item):
     if not item.probe_file.strip():
         return TextureCheck("WARNING", MISSING_FILES[item.component_type], None)
-    kind = FILE_KINDS[item.component_type]
-    path = Path(bpy.path.abspath(item.probe_file, library=obj.library))
+    return _file_check(item.probe_file, FILE_KINDS[item.component_type], obj.library)
+
+
+def _file_check(filepath, kind, library):
+    path = Path(bpy.path.abspath(filepath, library=library))
     try:
         stat = path.stat()
     except OSError:

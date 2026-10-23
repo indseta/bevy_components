@@ -12,6 +12,7 @@ mod texture;
 use bevy::{app::SceneSpawnerSystems, gltf::extensions::GltfExtensionHandlers, prelude::*};
 
 pub use component::{BlenderCustomComponent, BlenderCustomComponents, NavigationObstacle, NavigationWalkable};
+pub use light::{BlenderSky, NoBlenderSky};
 pub use schema::{BlenderSchemaPlugin, SCHEMA_FILE, SchemaOutput, component_schema};
 pub use texture::GltfTextures;
 
