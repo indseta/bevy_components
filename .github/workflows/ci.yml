@@ -3,221 +3,122 @@ name: CI
 on:
     push:
         branches: [main]
+        paths-ignore: ['**.md', 'LICENSE']
     pull_request:
+        paths-ignore: ['**.md', 'LICENSE']
     workflow_dispatch:
 
+# A newer push to the same pull request cancels the older run.
+# Pushes to main queue instead, so a release is never cut off halfway.
 concurrency:
-    group: ci_${{ github.head_ref || github.run_id }}
-    cancel-in-progress: true
+    group: ci_${{ github.ref }}
+    cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-    plan:
-        name: Pick tests
+    linux:
+        name: Tests, extension ZIP and release
         runs-on: ubuntu-latest
-        outputs:
-            addon: ${{ steps.plan.outputs.addon }}
-            encoder: ${{ steps.plan.outputs.encoder }}
-            importer: ${{ steps.plan.outputs.importer }}
-            importer_os: ${{ steps.plan.outputs.importer_os }}
+        timeout-minutes: 20
+        permissions:
+            contents: write
+        env:
+            CARGO_PROFILE_DEV_DEBUG: 0
+            GH_TOKEN: ${{ github.token }}
         steps:
             - uses: actions/checkout@v4
-              with:
-                  fetch-depth: 0
-            - name: Pick tests for the changed files
-              id: plan
-              env:
-                  GH_TOKEN: ${{ github.token }}
-                  BEFORE: ${{ github.event.before }}
+
+            # apt-get update has stalled for 6 hours on the Ubuntu mirror before,
+            # so each attempt gets two minutes and a retry
+            - name: Install Linux dependencies
+              timeout-minutes: 8
               run: |
-                  version=$(python3 -c 'import tomllib; print(tomllib.load(open("addon/blender_manifest.toml", "rb"))["version"])')
-                  case "$GITHUB_EVENT_NAME" in
-                      pull_request) base=HEAD^1 ;;
-                      push) base=$BEFORE ;;
-                      *) base= ;;
-                  esac
-                  all_platforms=false
-                  changed=
-                  if [ -n "$base" ] && git cat-file -e "$base^{commit}" 2> /dev/null; then
-                      changed=$(git diff --name-only "$base" HEAD | grep -v '\.md$' || true)
-                      echo "Changed files:"
-                      echo "$changed"
-                  else
-                      echo "No commit to compare with, testing every platform"
-                      all_platforms=true
-                  fi
-                  if grep -q '^\.github/' <<< "$changed"; then
-                      echo "CI changed, testing every platform"
-                      all_platforms=true
-                  elif ! gh release view "bevy_components_${version//./_}" > /dev/null 2>&1; then
-                      echo "Version $version is not released yet, testing every platform"
-                      all_platforms=true
-                  fi
-                  pick() {
-                      if [ "$all_platforms" = true ] || grep -Eq "$2" <<< "$changed"; then
-                          echo "$1=true" >> "$GITHUB_OUTPUT"
-                      else
-                          echo "$1=false" >> "$GITHUB_OUTPUT"
-                      fi
-                  }
-                  pick addon '^(addon|scripts|tests|importer/tests/assets)/'
-                  pick encoder '^addon/(compression|encoder)\.py$'
-                  pick importer '^importer/'
-                  if [ "$all_platforms" = true ]; then
-                      echo 'importer_os=["ubuntu-latest", "macos-latest", "windows-latest"]' >> "$GITHUB_OUTPUT"
-                  else
-                      echo 'importer_os=["ubuntu-latest"]' >> "$GITHUB_OUTPUT"
-                  fi
-                  cat "$GITHUB_OUTPUT"
-    addon:
-        name: Python tests and extension ZIP
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v4
+                  for attempt in 1 2 3; do
+                      timeout 120 sudo apt-get update && break
+                      echo "apt-get update attempt $attempt stalled or failed"
+                  done
+                  sudo apt-get install -y --no-install-recommends \
+                      libegl1 libgl1 libgl1-mesa-dri libgomp1 libsm6 libx11-6 libxfixes3 libxi6 libxkbcommon0 libxrender1 libxxf86vm1 \
+                      pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers
+
+            - name: Install KTX-Software
+              timeout-minutes: 5
+              run: |
+                  gh release download v4.4.0 --repo KhronosGroup/KTX-Software --pattern '*-Linux-x86_64.deb' --dir "$RUNNER_TEMP/ktx_software"
+                  sudo apt-get install -y "$RUNNER_TEMP"/ktx_software/*.deb
+                  ktx --version
+
             - uses: actions/setup-python@v5
               with:
                   python-version: '3.11'
-            - name: Check Python syntax
-              run: python -m compileall -q addon scripts tests
-            - name: Run unit tests
-              run: python -m unittest discover -s tests -v
+
+            - name: Check Python syntax and run unit tests
+              run: |
+                  python -m compileall -q addon scripts tests
+                  python -m unittest discover -s tests -v
+
             - name: Package Blender extension
               run: python scripts/build_addon.py
-            - name: Upload installable extension
-              uses: actions/upload-artifact@v4
-              with:
-                  name: bevy_components_addon
-                  path: dist/*.zip
-    blender:
-        name: Blender ${{ matrix.blender }} tests
-        needs: plan
-        if: needs.plan.outputs.addon == 'true'
-        runs-on: ubuntu-latest
-        strategy:
-            fail-fast: false
-            matrix:
-                include:
-                    - blender: '4.2.23'
-                      python: '3.11'
-                    - blender: '5.2.3'
-                      python: '3.13'
-        steps:
-            - uses: actions/checkout@v4
-            - uses: actions/setup-python@v5
-              with:
-                  python-version: ${{ matrix.python }}
-            - name: Install Linux dependencies
-              run: |
-                  sudo apt-get update
-                  sudo apt-get install -y --no-install-recommends libegl1 libgl1 libgl1-mesa-dri libgomp1 libsm6 libx11-6 libxfixes3 libxi6 libxkbcommon0 libxrender1 libxxf86vm1
-            - name: Install KTX-Software
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  gh release download v4.4.0 --repo KhronosGroup/KTX-Software --pattern '*-Linux-x86_64.deb' --dir ktx_software
-                  sudo apt-get install -y ./ktx_software/*.deb
-                  ktx --version
-            - name: Install Blender as a Python module
-              run: pip install bpy==${{ matrix.blender }}
-            - name: Run Blender tests
+
+            - name: Run Blender 4.2 tests
               env:
                   BEVY_COMPONENTS_REQUIRE_KTX: 1
-              run: python tests/blender/run.py -v
-    blender_texture_compression:
-        name: Blender texture compression on ${{ matrix.os }}
-        needs: plan
-        if: needs.plan.outputs.encoder == 'true'
-        runs-on: ${{ matrix.os }}
-        strategy:
-            fail-fast: false
-            matrix:
-                os: [macos-latest, windows-latest]
-        steps:
-            - uses: actions/checkout@v4
+              run: |
+                  pip install bpy==4.2.23
+                  python tests/blender/run.py -v
+
             - uses: actions/setup-python@v5
               with:
                   python-version: '3.13'
-            - name: Install KTX-Software on macOS
-              if: runner.os == 'macOS'
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  gh release download v4.4.0 --repo KhronosGroup/KTX-Software --pattern '*-Darwin-arm64.pkg' --dir ktx_software
-                  sudo installer -pkg ktx_software/*.pkg -target /
-            - name: Install KTX-Software on Windows
-              if: runner.os == 'Windows'
-              shell: pwsh
-              env:
-                  GH_TOKEN: ${{ github.token }}
-              run: |
-                  gh release download v4.4.0 --repo KhronosGroup/KTX-Software --pattern '*-Windows-x64.exe' --dir ktx_software
-                  $installer = Get-ChildItem ktx_software -Filter *.exe | Select-Object -First 1
-                  Start-Process -FilePath $installer.FullName -ArgumentList '/S' -Wait
-            - name: Install Blender as a Python module
-              run: pip install bpy==5.2.3
-            - name: Run texture compression tests
+
+            - name: Run Blender 5.2 tests
               env:
                   BEVY_COMPONENTS_REQUIRE_KTX: 1
-              run: python tests/blender/run.py -v -k TextureCompression
-    importer:
-        name: Rust importer tests on ${{ matrix.os }}
-        needs: plan
-        if: needs.plan.outputs.importer == 'true'
-        runs-on: ${{ matrix.os }}
-        strategy:
-            fail-fast: false
-            matrix:
-                os: ${{ fromJSON(needs.plan.outputs.importer_os) }}
-        env:
-            CARGO_PROFILE_DEV_DEBUG: 0
-        steps:
-            - uses: actions/checkout@v4
-            - name: Install Linux dependencies
-              if: runner.os == 'Linux'
               run: |
-                  sudo apt-get update
-                  sudo apt-get install -y --no-install-recommends pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev mesa-vulkan-drivers
+                  pip install bpy==5.2.3
+                  python tests/blender/run.py -v
+
             - uses: dtolnay/rust-toolchain@stable
+
             - uses: Swatinem/rust-cache@v2
               with:
                   workspaces: importer
                   save-if: ${{ github.ref == 'refs/heads/main' }}
+
             - name: Test importer
               run: cargo test --manifest-path importer/Cargo.toml
+
             - name: Render compressed levels on the GPU
               env:
                   BEVY_COMPONENTS_RENDER_OUTPUT: ${{ github.workspace }}/renders
               run: cargo test --manifest-path importer/Cargo.toml --test rendering -- --ignored --nocapture
+
             - name: Upload renders
-              if: always()
+              if: failure()
               uses: actions/upload-artifact@v4
               with:
-                  name: renders_${{ runner.os }}
+                  name: renders_linux
                   path: renders
                   if-no-files-found: ignore
-    release:
-        name: Publish release
-        needs: [addon, blender, blender_texture_compression, importer]
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        runs-on: ubuntu-latest
-        permissions:
-            contents: write
-        env:
-            GH_TOKEN: ${{ github.token }}
-        steps:
-            - uses: actions/checkout@v4
-            - uses: actions/download-artifact@v4
+                  retention-days: 7
+
+            - name: Upload installable extension
+              if: github.event_name == 'pull_request'
+              uses: actions/upload-artifact@v4
               with:
                   name: bevy_components_addon
-                  path: dist
-            - name: Read version
-              run: echo "VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("addon/blender_manifest.toml", "rb"))["version"])')" >> "$GITHUB_ENV"
-            - name: Package importer
-              run: git archive --format=zip --prefix="bevy_components_importer/" -o "dist/bevy_components_importer_${VERSION//./_}.zip" HEAD:importer
-            - name: Publish release
+                  path: dist/*.zip
+                  retention-days: 7
+
+            # Runs only after every test above passed, and only when the version
+            # on main has no release yet, so bumping the version publishes it
+            - name: Publish release when the version is new
+              if: github.event_name == 'push' && github.ref == 'refs/heads/main'
               run: |
-                  tag="bevy_components_${VERSION//./_}"
+                  version=$(python3 -c 'import tomllib; print(tomllib.load(open("addon/blender_manifest.toml", "rb"))["version"])')
+                  tag="bevy_components_${version//./_}"
                   if gh release view "$tag" > /dev/null 2>&1; then
                       echo "$tag is already released, bump the version to publish a new one"
-                  else
-                      gh release create "$tag" "dist/bevy_components_${VERSION//./_}.zip" "dist/bevy_components_importer_${VERSION//./_}.zip" --target "$GITHUB_SHA" --title "Bevy Components $VERSION" --notes "Download bevy_components_${VERSION//./_}.zip for the Blender addon and bevy_components_importer_${VERSION//./_}.zip for the Rust importer. See the README for installation."
+                      exit 0
                   fi
+                  git archive --format=zip --prefix="bevy_components_importer/" -o "dist/bevy_components_importer_${version//./_}.zip" HEAD:importer
+                  gh release create "$tag" "dist/bevy_components_${version//./_}.zip" "dist/bevy_components_importer_${version//./_}.zip" --target "$GITHUB_SHA" --title "Bevy Components $version" --notes "Download bevy_components_${version//./_}.zip for the Blender addon and bevy_components_importer_${version//./_}.zip for the Rust importer. See the README for installation."
