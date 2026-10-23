@@ -8,7 +8,7 @@ type = "add-on"
 website = "https://github.com/indseta/bevy_components"
 tags = ["Import-Export", "Object"]
 blender_version_min = "4.2.0"
-license = ["SPDX:MIT"]
+license = ["SPDX:GPL-3.0-or-later"]
 copyright = ["2026 Ask Indset"]
 
 [permissions]

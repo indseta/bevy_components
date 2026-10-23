@@ -203,8 +203,8 @@ The rendering tests compare compressed and uncompressed scenes on a real GPU and
 
 `addon/` holds the Blender extension and `importer/` the Rust crate. When CI passes on `main`, a GitHub release with both downloads is published whenever the version changes. The addon and importer share one version, kept in `addon/blender_manifest.toml`, `addon/__init__.py` and `importer/Cargo.toml`, and a test checks they match.
 
-CI on pull requests and `main` runs only the Linux tests for the side that changed, plus the macOS and Windows texture compression tests when `addon/encoder.py` or `addon/compression.py` change. Every test on every platform runs when the version is not released yet, when the CI workflow changes, and when CI is started by hand from the Actions tab.
+CI runs one Linux job on pull requests and pushes to `main`: the unit tests, the Blender 4.2 and 5.2 tests with KTX-Software, and the importer and GPU rendering tests. Changes to only Markdown files or `LICENSE` skip it. macOS and Windows are not tested in CI.
 
 ## License
 
-See [LICENSE](LICENSE).
+GPL-3.0 or later, see [LICENSE](LICENSE).

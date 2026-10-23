@@ -9,7 +9,7 @@ PACKAGE = ROOT / "addon"
 def build():
     manifest = tomllib.loads((PACKAGE / "blender_manifest.toml").read_text(encoding="utf-8"))
     version = manifest["version"]
-    files = [PACKAGE / name for name in ("__init__.py", "bake.py", "bsn.py", "compression.py", "encoder.py", "geometry.py", "gizmo.py", "menu.py", "metadata.py", "operator.py", "overlay.py", "panel.py", "preferences.py", "probe.py", "property.py", "reference.py", "system.py", "validation.py", "blender_manifest.toml")]
+    files = [PACKAGE / name for name in ("__init__.py", "bake.py", "bsn.py", "compression.py", "encoder.py", "geometry.py", "gizmo.py", "menu.py", "metadata.py", "operator.py", "overlay.py", "panel.py", "preferences.py", "probe.py", "property.py", "reference.py", "system.py", "validation.py", "blender_manifest.toml")] + [ROOT / "LICENSE"]
     for path in files:
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -22,6 +22,7 @@ def build():
         assert len(archive.namelist()) == len(files)
         assert "__init__.py" in archive.namelist()
         assert "blender_manifest.toml" in archive.namelist()
+        assert "LICENSE" in archive.namelist()
         assert archive.testzip() is None
     print(output)
     return output
