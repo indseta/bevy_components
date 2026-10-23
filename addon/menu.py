@@ -1,9 +1,9 @@
 import bpy
 
-from .operator import BEVY_OT_add_component, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate, running_bake, running_export
-from .property import COMPONENT_LABELS
+from .operator import BEVY_OT_add_component, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_validate, running_bake, running_export
+from .property import COMPONENT_LABELS, COMPONENT_TYPES
 from .schema import short_name
-from .system import accepts, component_index, game_types, scene_definition
+from .system import TEXT_COMPONENT, accepts, component_index, game_types, preset_folder, presets, scene_definition
 
 
 def _draw_add_items(layout, obj, kinds):
@@ -54,10 +54,11 @@ class BEVY_MT_component_add(bpy.types.Menu):
         layout.separator()
         layout.menu(BEVY_MT_component_add_physics.bl_idname)
         layout.menu(BEVY_MT_component_add_rendering.bl_idname)
-        layout.menu(BEVY_MT_component_add_audio.bl_idname)
-        layout.menu(BEVY_MT_component_add_animation.bl_idname)
-        layout.menu(BEVY_MT_component_add_scene.bl_idname)
-        _draw_add_items(layout, context.object, ("NAVIGATION",))
+        layout.menu(BEVY_MT_component_add_lighting.bl_idname)
+        layout.separator()
+        _draw_add_items(layout, context.object, ("AUDIO_PLAYER", "ANIMATION", "SCENE_REFERENCE", "NAVIGATION"))
+        layout.separator()
+        layout.menu(BEVY_MT_component_add_presets.bl_idname, icon="PRESET")
 
 
 class BEVY_MT_component_add_game(bpy.types.Menu):
@@ -93,34 +94,46 @@ class BEVY_MT_component_add_rendering(bpy.types.Menu):
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE", "SHADOWS", "LIGHT", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "LIGHTMAP"))
+        _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE", "SHADOWS"))
 
 
-class BEVY_MT_component_add_audio(bpy.types.Menu):
-    bl_idname = "BEVY_MT_component_add_audio"
-    bl_label = "Audio"
+class BEVY_MT_component_add_lighting(bpy.types.Menu):
+    bl_idname = "BEVY_MT_component_add_lighting"
+    bl_label = "Lighting"
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("AUDIO_PLAYER",))
+        _draw_add_items(self.layout, context.object, ("LIGHT", "LIGHTMAP", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "FOG_VOLUME"))
 
 
-class BEVY_MT_component_add_animation(bpy.types.Menu):
-    bl_idname = "BEVY_MT_component_add_animation"
-    bl_label = "Animation"
+class BEVY_MT_component_add_presets(bpy.types.Menu):
+    bl_idname = "BEVY_MT_component_add_presets"
+    bl_label = "Presets"
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("ANIMATION",))
+        layout = self.layout
+        found = presets()
+        for name, path in found:
+            layout.operator(BEVY_OT_apply_preset.bl_idname, text=name, icon="PRESET").filepath = str(path)
+        if not found:
+            row = layout.row()
+            row.active = False
+            row.label(text="No presets yet", icon="INFO")
+        layout.separator()
+        layout.operator(BEVY_OT_save_preset.bl_idname, text="Save Components as Preset...", icon="ADD")
+        if found:
+            layout.menu(BEVY_MT_component_remove_presets.bl_idname, icon="REMOVE")
+            layout.operator("wm.path_open", text="Open Presets Folder", icon="FILE_FOLDER").filepath = str(preset_folder())
 
 
-class BEVY_MT_component_add_scene(bpy.types.Menu):
-    bl_idname = "BEVY_MT_component_add_scene"
-    bl_label = "Scene"
-    bl_options = {"SEARCH_ON_KEY_PRESS"}
+class BEVY_MT_component_remove_presets(bpy.types.Menu):
+    bl_idname = "BEVY_MT_component_remove_presets"
+    bl_label = "Remove Preset"
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("SCENE_REFERENCE",))
+        for name, path in presets():
+            self.layout.operator(BEVY_OT_remove_preset.bl_idname, text=name, icon="X").filepath = str(path)
 
 
 class BEVY_MT_component_context_menu(bpy.types.Menu):
@@ -138,11 +151,14 @@ class BEVY_MT_component_context_menu(bpy.types.Menu):
         column = layout.column()
         column.enabled = item.component_type == "CUSTOM"
         column.operator(BEVY_OT_duplicate_component.bl_idname, text="Duplicate", icon="DUPLICATE").index = index
+        layout.operator(BEVY_OT_copy_component.bl_idname, text="Copy", icon="COPY_ID").index = index
         layout.operator(BEVY_OT_copy_component_to_selected.bl_idname, text="Copy to Selected", icon="COPYDOWN").index = index
         if item.component_type == "CUSTOM" and item.custom_type not in game_types():
             layout.separator()
             defined = scene_definition(context.scene, item.custom_type) is not None
             layout.operator(BEVY_OT_define_fields.bl_idname, text="Edit Fields" if defined else "Define Fields", icon="PROPERTIES").index = index
+        if item.component_type == "CUSTOM":
+            layout.operator(BEVY_OT_edit_as_text.bl_idname, text="Edit as Text", icon="TEXT").index = index
         layout.separator()
         layout.operator(BEVY_OT_reset_component.bl_idname, text="Reset to Defaults", icon="LOOP_BACK").index = index
         layout.separator()
@@ -163,6 +179,8 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
     def draw(self, context):
         layout = self.layout
         layout.operator(BEVY_OT_copy_to_selected.bl_idname, text="Copy All to Selected", icon="COPYDOWN")
+        layout.operator(BEVY_OT_copy_components.bl_idname, text="Copy Components", icon="COPY_ID")
+        layout.operator(BEVY_OT_paste_components.bl_idname, text="Paste Components", icon="PASTEDOWN")
         layout.separator()
         layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
         layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake Lighting...", icon="RENDER_STILL")
@@ -172,11 +190,81 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
         draw_export_all(layout)
 
 
-def draw_export_again(layout, scene):
+class BEVY_MT_object_menu(bpy.types.Menu):
+    bl_idname = "BEVY_MT_object_menu"
+    bl_label = "Bevy Components"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.menu(BEVY_MT_component_add.bl_idname, icon="ADD")
+        layout.operator(BEVY_OT_copy_to_selected.bl_idname, text="Copy All to Selected", icon="COPYDOWN")
+        layout.operator(BEVY_OT_copy_components.bl_idname, text="Copy Components", icon="COPY_ID")
+        layout.operator(BEVY_OT_paste_components.bl_idname, text="Paste Components", icon="PASTEDOWN")
+        layout.separator()
+        layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
+        draw_export_again(layout, context.scene, placeholder=True)
+        draw_export_all(layout)
+
+
+class BEVY_MT_select_by_component(bpy.types.Menu):
+    bl_idname = "BEVY_MT_select_by_component"
+    bl_label = "Select by Bevy Component"
+
+    def draw(self, context):
+        layout = self.layout
+        kinds = set()
+        type_paths = set()
+        for obj in context.view_layer.objects if context.view_layer else ():
+            for item in obj.bevy_component_data.components:
+                kinds.add(item.component_type)
+                if item.component_type == "CUSTOM" and item.custom_type.strip():
+                    type_paths.add(item.custom_type)
+        found = [kind for kind, _name, _description, _icon, _number in COMPONENT_TYPES if kind in kinds]
+        if not found:
+            row = layout.row()
+            row.active = False
+            row.label(text="No objects with Bevy components", icon="INFO")
+            return
+        layout.operator(BEVY_OT_select_by_component.bl_idname, text="Any Component", icon="PROPERTIES").component_type = "ALL"
+        layout.separator()
+        for kind in found:
+            text, icon = COMPONENT_LABELS[kind]
+            layout.operator(BEVY_OT_select_by_component.bl_idname, text=text, icon=icon).component_type = kind
+        if type_paths:
+            layout.separator()
+        for type_path in sorted(type_paths):
+            button = layout.operator(BEVY_OT_select_by_component.bl_idname, text=type_path, icon=COMPONENT_LABELS["CUSTOM"][1])
+            button.component_type = "CUSTOM"
+            button.type_path = type_path
+
+
+def draw_export_again(layout, scene, placeholder=False):
+    shown = False
     for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn):
         path = operator.remembered(scene)
         if path:
             layout.operator(operator.bl_idname, text=f"Export Again ({bpy.path.basename(path)})", icon="FILE_REFRESH").again = True
+            shown = True
+    if placeholder and not shown:
+        column = layout.column()
+        column.enabled = False
+        column.operator(BEVY_OT_export_glb.bl_idname, text="Export Again", icon="FILE_REFRESH").again = True
+
+
+def object_menu(self, context):
+    self.layout.separator()
+    self.layout.menu(BEVY_MT_object_menu.bl_idname)
+
+
+def select_menu(self, context):
+    self.layout.separator()
+    self.layout.menu(BEVY_MT_select_by_component.bl_idname)
+
+
+def text_header(self, context):
+    text = getattr(context.space_data, "text", None)
+    if text is not None and TEXT_COMPONENT in text:
+        self.layout.operator(BEVY_OT_apply_text.bl_idname, icon="CHECKMARK")
 
 
 def draw_export_all(layout):

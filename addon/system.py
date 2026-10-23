@@ -10,13 +10,20 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, variant_names
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
 from .schema import GameField, SchemaError, find_schema, parse_schema
 
 MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 LAYER_COUNT = 32
+CLIPBOARD_TYPE = "bevy_components"
+CLIPBOARD_VERSION = 1
+SNAPSHOT_SKIPPED = {"rna_type", "text_link"}
+PRESET_FOLDER = os.path.join("presets", "bevy_components")
+TEXT_OBJECT = "bevy_object"
+TEXT_COMPONENT = "bevy_component"
 PANEL_EXPANDED = True
 PANEL_DRAWN_EXPANDED = True
+PROBLEM_CHANGES = [0, 0.0]
 SCHEMA_CHECK_INTERVAL = 1.0
 
 _game_schema = {"checked": None, "key": None, "path": None, "types": {}, "error": ""}
@@ -68,6 +75,35 @@ def _apply_panel_state():
 def stop_panel_tracking():
     if bpy.app.timers.is_registered(_apply_panel_state):
         bpy.app.timers.unregister(_apply_panel_state)
+
+
+def overview_index(self):
+    view_layer = bpy.context.view_layer
+    active = view_layer.objects.active if view_layer is not None else None
+    if active is None:
+        return -1
+    return next((index for index, obj in enumerate(self.id_data.objects) if obj == active), -1)
+
+
+def select_overview_object(self, value):
+    view_layer = bpy.context.view_layer
+    objects = self.id_data.objects
+    if view_layer is None or not 0 <= value < len(objects) or view_layer.objects.get(objects[value].name) is None:
+        return
+    for obj in bpy.context.selected_objects:
+        obj.select_set(False)
+    objects[value].select_set(True)
+    view_layer.objects.active = objects[value]
+
+
+@persistent
+def problems_changed(*_arguments):
+    PROBLEM_CHANGES[0] += 1
+    PROBLEM_CHANGES[1] = time.monotonic()
+
+
+def problem_changes():
+    return tuple(PROBLEM_CHANGES)
 
 
 def components_for(obj):
@@ -216,6 +252,7 @@ def default_clip(obj):
 def sync_object(obj, directory=None):
     if not obj or not isinstance(obj, bpy.types.Object) or obj.library:
         return
+    problems_changed()
     data = getattr(obj, "bevy_component_data", None)
     if not data:
         return
@@ -238,7 +275,7 @@ def component_index(obj, item):
 
 def copy_component(source, destination):
     for field in source.bl_rna.properties:
-        if field.identifier in {"rna_type", "id_data"}:
+        if field.identifier in {"rna_type", "id_data", "text_link"}:
             continue
         if field.type == "COLLECTION":
             items = getattr(destination, field.identifier)
@@ -253,6 +290,140 @@ def copy_component(source, destination):
             setattr(destination, field.identifier, tuple(value) if field.type == "FLOAT" and field.is_array else value)
         except (TypeError, AttributeError):
             continue
+
+
+def component_snapshot(item, owner, references=True):
+    data = {}
+    for prop in item.bl_rna.properties:
+        name = prop.identifier
+        if name in SNAPSHOT_SKIPPED:
+            continue
+        value = getattr(item, name)
+        if prop.type == "COLLECTION":
+            if len(value):
+                data[name] = [component_snapshot(child, owner, references) for child in value]
+        elif prop.is_readonly or not item.is_property_set(name):
+            continue
+        elif prop.type == "POINTER":
+            data[name] = None if value is None else {"self": True} if value == owner else {"object": value.name} if references else None
+        elif prop.type == "ENUM" and prop.is_enum_flag:
+            data[name] = sorted(value)
+        elif getattr(prop, "is_array", False):
+            data[name] = list(value)
+        else:
+            data[name] = value
+    data.update({name: item[name] for name in item.keys() if name not in item.bl_rna.properties and isinstance(item[name], (bool, int, float, str))})
+    return data
+
+
+def _pointer(value, owner):
+    if not isinstance(value, dict):
+        return None
+    if value.get("self"):
+        return owner
+    return bpy.data.objects.get(value["object"]) if isinstance(value.get("object"), str) else None
+
+
+def restore_component(item, data, owner):
+    for name, value in data.items():
+        prop = item.bl_rna.properties.get(name)
+        if name in SNAPSHOT_SKIPPED:
+            continue
+        if prop is None:
+            if isinstance(value, (bool, int, float, str)):
+                item[name] = value
+            continue
+        if prop.type == "COLLECTION":
+            children = getattr(item, name)
+            children.clear()
+            for child in value if isinstance(value, list) else ():
+                if isinstance(child, dict):
+                    restore_component(children.add(), child, owner)
+            continue
+        if prop.is_readonly:
+            continue
+        if prop.type == "POINTER":
+            value = _pointer(value, owner)
+        elif prop.type == "ENUM" and prop.is_enum_flag and isinstance(value, list):
+            value = set(value)
+        try:
+            setattr(item, name, value)
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+
+def clipboard_text(obj, items, name=None, references=True):
+    data = {"type": CLIPBOARD_TYPE, "version": CLIPBOARD_VERSION}
+    if name is not None:
+        data["name"] = name
+    data["components"] = [component_snapshot(item, obj, references) for item in items if item.component_type]
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
+def read_components(text):
+    try:
+        data = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, dict) or data.get("type") != CLIPBOARD_TYPE or not isinstance(data.get("components"), list):
+        return None
+    return [component for component in data["components"] if isinstance(component, dict)]
+
+
+def _same_component(item, data):
+    return item.component_type == data.get("component_type") and (item.component_type != "CUSTOM" or item.custom_type == data.get("custom_type", item.bl_rna.properties["custom_type"].default))
+
+
+def paste_components(obj, components, scene):
+    items = obj.bevy_component_data.components
+    pasted = 0
+    for data in components:
+        kind = data.get("component_type")
+        if not isinstance(kind, str) or not accepts(obj, kind):
+            continue
+        index = next((index for index, item in enumerate(items) if _same_component(item, data)), None)
+        if index is not None:
+            items.remove(index)
+        item = items.add()
+        try:
+            item.component_type = kind
+        except TypeError:
+            items.remove(len(items) - 1)
+            continue
+        if index is not None:
+            items.move(len(items) - 1, index)
+            item = items[index]
+        restore_component(item, data, obj)
+        if item.component_type == "CUSTOM":
+            definition = find_definition(scene, item.custom_type)
+            if definition is not None:
+                link_component(item, definition)
+        pasted += 1
+    sync_object(obj)
+    return pasted
+
+
+def preset_folder(create=False):
+    return Path(bpy.utils.user_resource("SCRIPTS", path=PRESET_FOLDER, create=create))
+
+
+def preset_file(name):
+    return preset_folder(create=True) / f"{bpy.path.clean_name(name.strip()).strip('_').lower() or 'preset'}.json"
+
+
+def presets():
+    folder = preset_folder()
+    if not folder.is_dir():
+        return []
+    found = []
+    for path in sorted(folder.glob("*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and data.get("type") == CLIPBOARD_TYPE and isinstance(data.get("components"), list):
+            found.append((str(data.get("name") or bpy.path.display_name(path.stem)), path))
+    return sorted(found, key=lambda preset: preset[0].lower())
 
 
 def copy_to_object(source, destination, obj):
@@ -549,6 +720,55 @@ def apply_definitions(scene):
     redraw_viewports()
 
 
+def component_text(item):
+    if item.use_fields:
+        return json.dumps(field_data(item.fields), indent=2, ensure_ascii=False) + "\n"
+    try:
+        return json.dumps(json.loads(item.custom_json), indent=2, ensure_ascii=False) + "\n"
+    except json.JSONDecodeError:
+        return item.custom_json
+
+
+def linked_component(text):
+    obj = text.get(TEXT_OBJECT)
+    link = text.get(TEXT_COMPONENT)
+    if not isinstance(obj, bpy.types.Object) or not isinstance(link, str) or not link:
+        return None, None
+    return obj, next((item for item in obj.bevy_component_data.components if item.component_type == "CUSTOM" and item.text_link == link), None)
+
+
+def write_component_text(item, source):
+    try:
+        data = json.loads(source)
+    except json.JSONDecodeError as error:
+        return f"Line {error.lineno}, column {error.colno}: {error.msg}"
+    if not item.use_fields:
+        item.custom_json = json.dumps(data, ensure_ascii=False)
+        return None
+    if tuple_fields(field.name for field in item.fields):
+        data = json_fields(data)
+    elif not isinstance(data, dict):
+        return f"{item.custom_type} has fields, so its data must be a JSON object"
+    names = {field.name for field in item.fields}
+    unknown = [name for name in data if name not in names]
+    if unknown:
+        place = "your game's schema" if item.custom_type in game_types() else "Properties > Scene > Bevy Custom Components"
+        return f"{', '.join(unknown)} {'is not a field' if len(unknown) == 1 else 'are not fields'} of {item.custom_type}. Its fields are set in {place}"
+    values = []
+    for field in item.fields:
+        if field.name not in data:
+            continue
+        value = convert_value(field.field_type, data[field.name])
+        if value is None:
+            return f"{field.name} needs a value of type {field.bl_rna.properties['field_type'].enum_items[field.field_type].name}"
+        if field.field_type == "ENUM" and value not in variant_names(field.variants):
+            return f"{field.name} needs one of {', '.join(variant_names(field.variants))}"
+        values.append((field, value))
+    for field, value in values:
+        write_field(field, value)
+    return None
+
+
 def reset_fields(item, definition):
     if definition is not None:
         link_component(item, definition, keep_values=False)
@@ -630,6 +850,7 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_bake_settings")
         _remove_extra(gltf2_scene, "bevy_glb_export")
         _remove_extra(gltf2_scene, "bevy_bsn_export")
+        _remove_extra(gltf2_scene, "bevy_component_overview")
         world = getattr(blender_scene, "world", None)
         components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
         if components:

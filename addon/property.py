@@ -3,7 +3,7 @@ from math import radians
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, IntVectorProperty, PointerProperty, StringProperty
 
-from .system import LAYER_COUNT, component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, redraw_viewports, set_variant, sync_changed, type_path_suggestions, variant_index, variant_items
+from .system import LAYER_COUNT, component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, overview_index, redraw_viewports, select_overview_object, set_variant, sync_changed, type_path_suggestions, variant_index, variant_items
 
 COMPONENT_TYPES = [
     ("VISIBILITY_RANGE", "Visibility Range", "Fade the object in and out by camera distance, for levels of detail", "HIDE_OFF", 0),
@@ -25,6 +25,7 @@ COMPONENT_TYPES = [
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
 EVENTS_KEY = "collider_events_value"
+COMPONENT_FILTERS = [("ALL", "All Components", "Objects with any Bevy component", "PROPERTIES", 1000)] + COMPONENT_TYPES
 AUDIO_FORMATS = (".ogg", ".oga", ".spx", ".wav", ".mp3", ".flac")
 PATH_OPTIONS = {"PATH_SUPPORTS_BLEND_RELATIVE"} if "is_path_supports_blend_relative" in bpy.types.Property.bl_rna.properties else set()
 TEXTURE_COMPRESSION = [
@@ -146,8 +147,8 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     rigid_body_angular_damping: FloatProperty(name="Angular Damping", description="Slows the body's spin over time", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
     rigid_body_lock_translation: BoolVectorProperty(name="Lock Position", description="World axes the body cannot move along, on Bevy's axes (Y up)", size=3, default=(False, False, False), update=sync_changed)
     rigid_body_lock_rotation: BoolVectorProperty(name="Lock Rotation", description="World axes the body cannot turn around, on Bevy's axes (Y up)", size=3, default=(False, False, False), update=sync_changed)
-    rigid_body_ccd: EnumProperty(name="Continuous Collision", description="Sweeps fast bodies along their path so they do not pass through thin colliders", items=[
-        ("DEFAULT", "Static and Kinematic", "Sweep fast movement against static and kinematic bodies, so the body does not pass through walls. This is Avian's default"),
+    rigid_body_ccd: EnumProperty(name="Swept CCD", description="Continuous collision detection, which sweeps fast bodies along their path so they do not pass through thin colliders", items=[
+        ("DEFAULT", "Default", "Sweep fast movement against static and kinematic bodies, so the body does not pass through walls. This is Avian's default"),
         ("ALL", "All Bodies", "Also sweep against dynamic bodies and colliders without a body, for small fast objects such as bullets"),
         ("OFF", "Off", "Never sweep, which is cheaper but lets fast bodies pass through thin colliders"),
     ], default="DEFAULT", update=sync_changed)
@@ -220,6 +221,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
         ("IGNORED", "Ignored", "Leave the meshes and colliders out of navigation, even when a parent has Navigation, such as small props on walkable ground"),
     ], default="WALKABLE", update=sync_changed)
     navigation_cost: FloatProperty(name="Cost", description="How much agents avoid this ground when they find a path: each meter here counts as Cost meters, so 1 is plain ground, 3 suits mud and 0.5 a road", default=1.0, min=0.01, soft_max=10.0, update=sync_changed)
+    text_link: StringProperty(name="Text Link", description="Links the component to the text it was opened in with Edit as Text", options={"HIDDEN"})
 
 
 class BEVY_PG_object_data(bpy.types.PropertyGroup):
@@ -295,6 +297,11 @@ class BEVY_PG_bsn_export(bpy.types.PropertyGroup, ExportOptions):
     assets_folder: StringProperty(name="Assets Folder", description="Assets folder that the last BSN export wrote, empty for the default next to Cargo.toml", subtype="DIR_PATH", options=PATH_OPTIONS)
     prefab_functions: BoolProperty(name="Prefab Functions", description="Whether the last BSN export wrote shared objects as object_ functions", default=True)
     written_files: StringProperty(name="Written Files", description="Assets folder and files that the last BSN export wrote there, so the next export can remove the ones it no longer needs", options={"HIDDEN"})
+
+
+class BEVY_PG_overview(bpy.types.PropertyGroup):
+    filter: EnumProperty(name="Show", description="Component type the overview lists objects for", items=COMPONENT_FILTERS, default="ALL")
+    active: IntProperty(name="Object", description="Click an object to select it", get=overview_index, set=select_overview_object)
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):

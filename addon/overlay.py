@@ -14,6 +14,7 @@ from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cuboid_
 from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
 from .property import JOINT_LABELS
 from .reference import read_scenes
+from .schema import short_name
 from .system import changes_mesh, children_map, component_of, components_for, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports
 from .validation import texture_check
 
@@ -21,6 +22,10 @@ DRAW_3D = None
 DRAW_2D = None
 MESH_PREVIEWS = {}
 MESH_PREVIEW_LIMIT = 1024
+PREVIEW_CACHE = {}
+PREVIEW_LIMIT = 4096
+MESH_SHAPES = {"TRIMESH", "CONVEX"}
+IDENTITY = Matrix.Identity(4)
 
 COLLIDER_COLOR = (0.22, 0.96, 0.55, 0.90)
 SENSOR_COLOR = (0.96, 0.60, 0.20, 0.90)
@@ -64,6 +69,12 @@ MISSING_TEXTURES = {
     "IRRADIANCE_VOLUME": "no voxels",
 }
 LIGHT_COLOR = (1.0, 0.86, 0.35, 0.6)
+LABEL_COLOR = (0.9, 1.0, 0.95, 0.98)
+NAME_COLOR = (0.9, 1.0, 0.95, 0.7)
+LABEL_SIZE = 12
+LABEL_SPACING = 16
+LABEL_OFFSET = (14, 16)
+LABEL_DESCENT = 4
 LIGHT_LABELS = {
     "POINT": "Point",
     "SPOT": "Spot",
@@ -342,19 +353,6 @@ def scene_bounds(item):
     return (minimum[0], -maximum[2], minimum[1]), (maximum[0], -minimum[2], maximum[1])
 
 
-def _draw_lines(shader, matrix, lines, color, width=1.5):
-    if not lines:
-        return
-    batch = batch_for_shader(shader, "LINES", {"pos": [point for line in lines for point in line]})
-    shader.bind()
-    shader.uniform_float("viewportSize", gpu.state.viewport_get()[2:])
-    shader.uniform_float("lineWidth", width)
-    shader.uniform_float("color", color)
-    with gpu.matrix.push_pop():
-        gpu.matrix.multiply_matrix(matrix)
-        batch.draw(shader)
-
-
 def _previews_shown(context):
     space = context.space_data
     return panel_expanded() and context.region_data is not None and (space is None or space.overlay.show_overlays)
@@ -362,58 +360,139 @@ def _previews_shown(context):
 
 def _hierarchy(context, objects):
     colliders = [component_of(obj, "COLLIDER") for obj in objects]
-    meshes = any(collider is not None and collider.collider_shape in {"TRIMESH", "CONVEX"} for collider in colliders) or any(component_of(obj, "NAVIGATION") is not None for obj in objects)
+    meshes = any(collider is not None and collider.collider_shape in MESH_SHAPES for collider in colliders) or any(component_of(obj, "NAVIGATION") is not None for obj in objects)
     return children_map(context.scene.objects) if meshes else {}
 
 
-def preview_batches(context, settings):
+def object_batches(obj, settings, children):
     batches = []
+    collider = component_of(obj, "COLLIDER")
+    if collider and settings.colliders:
+        batches.extend((matrix, lines, collider_color(collider), 2.0) for matrix, lines in collider_lines(obj, collider, settings.max_mesh_edges, children))
+    visibility = component_of(obj, "VISIBILITY_RANGE")
+    if visibility and settings.visibility_ranges:
+        inverse = obj.matrix_world.to_3x3().inverted_safe()
+        offset = Vector((0, 0, 0))
+        if visibility.use_aabb and obj.type == "MESH":
+            offset = sum((Vector(corner) for corner in obj.bound_box), Vector()) / 8
+        radii = ((visibility.fade_in_start, LOD_IN_COLOR, 1.1), (visibility.fade_in_end, LOD_IN_COLOR, 1.9), (visibility.fade_out_start, LOD_OUT_COLOR, 1.9), (visibility.fade_out_end, LOD_OUT_COLOR, 1.1))
+        for radius, color, width in radii:
+            if radius < 0.01:
+                continue
+            local_lines = [(tuple(offset + inverse @ Vector(start)), tuple(offset + inverse @ Vector(end))) for start, end in sphere_lines(radius, segments=48)]
+            batches.append((obj.matrix_world, local_lines, color, width))
+    audio = component_of(obj, "AUDIO_PLAYER")
+    if audio and audio.audio_spatial and settings.audio_ranges:
+        center = Matrix.Translation(obj.matrix_world.translation)
+        for radius, color, width in ((audio.audio_distance, AUDIO_COLOR, 1.9), (audio.audio_distance * AUDIO_QUIET_FACTOR, AUDIO_QUIET_COLOR, 1.1)):
+            batches.append((center, sphere_lines(radius, segments=48), color, width))
+    light = component_of(obj, "LIGHT")
+    if light and settings.lights:
+        batches.extend((matrix, lines, LIGHT_COLOR, 1.5) for matrix, lines in light_lines(obj))
+    navigation = component_of(obj, "NAVIGATION")
+    if navigation and settings.navigation and navigation.navigation_kind in NAVIGATION_COLORS:
+        batches.extend((matrix, lines, NAVIGATION_COLORS[navigation.navigation_kind], 1.5) for matrix, lines in navigation_lines(obj, navigation, settings.max_mesh_edges, children))
+    body = component_of(obj, "RIGID_BODY")
+    if body and settings.velocities:
+        batches.extend(velocity_batches(obj, body))
+    reference = component_of(obj, "SCENE_REFERENCE")
+    bounds = scene_bounds(reference) if reference and settings.scene_references else None
+    if bounds:
+        batches.append((obj.matrix_world, box_lines(*bounds), SCENE_COLOR, 1.5))
+    if settings.volumes:
+        for item in components_for(obj):
+            if item.component_type in VOLUME_COLORS:
+                batches.extend((obj.matrix_world, lines, VOLUME_COLORS[item.component_type], width) for lines, width in volume_lines(obj, item))
+    return batches
+
+
+def _matrix_key(matrix):
+    return tuple(map(tuple, matrix))
+
+
+def _settings_key(settings):
+    return (settings.colliders, settings.joints, settings.velocities, settings.visibility_ranges, settings.audio_ranges, settings.scene_references, settings.volumes, settings.lights, settings.navigation, settings.max_mesh_edges)
+
+
+def _object_key(obj, settings, shown, children):
+    stored = obj.get(EXTRAS_KEY)
+    if not isinstance(stored, str):
+        return None
+    key = [shown, _matrix_key(obj.matrix_world), stored]
+    for item in components_for(obj):
+        kind = item.component_type
+        if kind == "COLLIDER" and settings.colliders and item.collider_shape in MESH_SHAPES:
+            key.append(tuple((_matrix_key(matrix), lines) for matrix, lines in collider_lines(obj, item, settings.max_mesh_edges, children)))
+        elif kind == "NAVIGATION" and settings.navigation:
+            key.append(tuple((_matrix_key(matrix), lines) for matrix, lines in navigation_lines(obj, item, settings.max_mesh_edges, children)))
+        elif kind == "VISIBILITY_RANGE" and settings.visibility_ranges and item.use_aabb:
+            key.append(tuple(tuple(corner) for corner in obj.bound_box))
+        elif kind == "RIGID_BODY" and settings.velocities:
+            key.append(tuple(obj.dimensions))
+        elif kind == "LIGHT" and settings.lights:
+            light = light_of(obj)
+            key.append((light.type, light_range(light), getattr(light, "spot_size", None)) if light is not None else None)
+        elif kind == "SCENE_REFERENCE" and settings.scene_references:
+            key.append(scene_bounds(item))
+        elif kind == "IRRADIANCE_VOLUME" and settings.volumes:
+            key.append(texture_check(obj, item).voxels)
+    return tuple(key)
+
+
+def _joint_key(obj):
+    stored = obj.get(EXTRAS_KEY)
+    if not isinstance(stored, str):
+        return None
+    joint = component_of(obj, "JOINT")
+    bodies = tuple((body.as_pointer(), tuple(body.matrix_world.translation)) if body is not None else None for body in (joint.joint_body1, joint.joint_body2))
+    return (_matrix_key(obj.matrix_world), stored, bodies)
+
+
+def _cached_entry(key, signature, build):
+    entry = PREVIEW_CACHE.pop(key, None)
+    if entry is None or signature is None or entry["signature"] != signature:
+        entry = {"signature": signature, "batches": build(), "drawables": None}
+    if len(PREVIEW_CACHE) >= PREVIEW_LIMIT:
+        PREVIEW_CACHE.pop(next(iter(PREVIEW_CACHE)))
+    PREVIEW_CACHE[key] = entry
+    return entry
+
+
+def preview_entries(context, settings):
     objects = preview_objects(context, settings)
     children = _hierarchy(context, objects)
-    for obj in objects:
-        collider = component_of(obj, "COLLIDER")
-        if collider and settings.colliders:
-            batches.extend((matrix, lines, collider_color(collider), 2.0) for matrix, lines in collider_lines(obj, collider, settings.max_mesh_edges, children))
-
-        visibility = component_of(obj, "VISIBILITY_RANGE")
-        if visibility and settings.visibility_ranges:
-            inverse = obj.matrix_world.to_3x3().inverted_safe()
-            offset = Vector((0, 0, 0))
-            if visibility.use_aabb and obj.type == "MESH":
-                offset = sum((Vector(corner) for corner in obj.bound_box), Vector()) / 8
-            radii = ((visibility.fade_in_start, LOD_IN_COLOR, 1.1), (visibility.fade_in_end, LOD_IN_COLOR, 1.9), (visibility.fade_out_start, LOD_OUT_COLOR, 1.9), (visibility.fade_out_end, LOD_OUT_COLOR, 1.1))
-            for radius, color, width in radii:
-                if radius < 0.01:
-                    continue
-                local_lines = [(tuple(offset + inverse @ Vector(start)), tuple(offset + inverse @ Vector(end))) for start, end in sphere_lines(radius, segments=48)]
-                batches.append((obj.matrix_world, local_lines, color, width))
-
-        audio = component_of(obj, "AUDIO_PLAYER")
-        if audio and audio.audio_spatial and settings.audio_ranges:
-            center = Matrix.Translation(obj.matrix_world.translation)
-            for radius, color, width in ((audio.audio_distance, AUDIO_COLOR, 1.9), (audio.audio_distance * AUDIO_QUIET_FACTOR, AUDIO_QUIET_COLOR, 1.1)):
-                batches.append((center, sphere_lines(radius, segments=48), color, width))
-        light = component_of(obj, "LIGHT")
-        if light and settings.lights:
-            batches.extend((matrix, lines, LIGHT_COLOR, 1.5) for matrix, lines in light_lines(obj))
-        navigation = component_of(obj, "NAVIGATION")
-        if navigation and settings.navigation and navigation.navigation_kind in NAVIGATION_COLORS:
-            batches.extend((matrix, lines, NAVIGATION_COLORS[navigation.navigation_kind], 1.5) for matrix, lines in navigation_lines(obj, navigation, settings.max_mesh_edges, children))
-        body = component_of(obj, "RIGID_BODY")
-        if body and settings.velocities:
-            batches.extend(velocity_batches(obj, body))
-        reference = component_of(obj, "SCENE_REFERENCE")
-        bounds = scene_bounds(reference) if reference and settings.scene_references else None
-        if bounds:
-            batches.append((obj.matrix_world, box_lines(*bounds), SCENE_COLOR, 1.5))
-        if settings.volumes:
-            for item in components_for(obj):
-                if item.component_type in VOLUME_COLORS:
-                    batches.extend((obj.matrix_world, lines, VOLUME_COLORS[item.component_type], width) for lines, width in volume_lines(obj, item))
+    shown = _settings_key(settings)
+    entries = [_cached_entry(("OBJECT", obj.as_pointer()), _object_key(obj, settings, shown, children), lambda obj=obj: object_batches(obj, settings, children)) for obj in objects]
     if settings.joints:
-        for obj in joint_objects(context, settings, objects):
-            batches.extend(joint_batches(obj, component_of(obj, "JOINT")))
-    return batches
+        entries.extend(_cached_entry(("JOINT", obj.as_pointer()), _joint_key(obj), lambda obj=obj: joint_batches(obj, component_of(obj, "JOINT"))) for obj in joint_objects(context, settings, objects))
+    return entries
+
+
+def preview_batches(context, settings):
+    return [batch for entry in preview_entries(context, settings) for batch in entry["batches"]]
+
+
+def _drawables(shader, batches):
+    merged = {}
+    for matrix, lines, color, width in batches:
+        points = merged.setdefault((tuple(color), width), [])
+        if matrix == IDENTITY:
+            points.extend(point for line in lines for point in line)
+        else:
+            points.extend(tuple(matrix @ Vector(point)) for line in lines for point in line)
+    return [(batch_for_shader(shader, "LINES", {"pos": points}), color, width) for (color, width), points in merged.items() if points]
+
+
+def draw_entries(shader, entries):
+    shader.bind()
+    shader.uniform_float("viewportSize", gpu.state.viewport_get()[2:])
+    for entry in entries:
+        if entry["drawables"] is None:
+            entry["drawables"] = _drawables(shader, entry["batches"])
+        for batch, color, width in entry["drawables"]:
+            shader.uniform_float("lineWidth", width)
+            shader.uniform_float("color", color)
+            batch.draw(shader)
 
 
 def _draw_geometry():
@@ -423,12 +502,10 @@ def _draw_geometry():
     settings = context.scene.bevy_component_previews
     if not settings.enabled or not _previews_shown(context):
         return
-    shader = gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR")
     gpu.state.blend_set("ALPHA")
     gpu.state.depth_test_set("NONE" if settings.xray else "LESS_EQUAL")
     try:
-        for matrix, lines, color, width in preview_batches(context, settings):
-            _draw_lines(shader, matrix, lines, color, width=width)
+        draw_entries(gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR"), preview_entries(context, settings))
     finally:
         gpu.state.depth_test_set("NONE")
         gpu.state.blend_set("NONE")
@@ -506,7 +583,7 @@ def _label_lines(obj, settings, children):
     navigation = component_of(obj, "NAVIGATION")
     if navigation and settings.navigation:
         descriptions.append(_navigation_label(navigation))
-    return descriptions + _joint_label(obj, settings)
+    return _custom_names(obj) + descriptions + _joint_label(obj, settings)
 
 
 def _lightmap_label(obj, item):
@@ -540,6 +617,32 @@ def _volume_label(obj, item):
     return f"{VOLUME_NAMES[item.component_type]} · {size} · {details}"
 
 
+def _custom_names(obj):
+    return [short_name(item.custom_type) for item in components_for(obj) if item.component_type == "CUSTOM" and item.custom_type.strip()]
+
+
+def label_rows(context, settings):
+    objects = preview_objects(context, settings)
+    children = _hierarchy(context, objects)
+    selected = set(context.selected_objects)
+    listed = set(objects)
+    rows = []
+    for obj in objects:
+        if obj not in selected:
+            rows.append((obj, [" · ".join([obj.name, *_custom_names(obj)])], False))
+            continue
+        details = _label_lines(obj, settings, children)
+        if details:
+            rows.append((obj, [obj.name, *details], True))
+    if settings.joints:
+        rows.extend((obj, [obj.name, *_joint_label(obj, settings)], True) for obj in joint_objects(context, settings, objects) if obj not in listed)
+    return sorted(rows, key=lambda row: not row[2])
+
+
+def _overlaps(first, second):
+    return first[0] < second[2] and second[0] < first[2] and first[1] < second[3] and second[1] < first[3]
+
+
 def _draw_labels():
     context = bpy.context
     if not context.scene or not hasattr(context.scene, "bevy_component_previews"):
@@ -548,25 +651,25 @@ def _draw_labels():
     if not settings.enabled or not settings.labels or not _previews_shown(context):
         return
     region = context.region
+    scale = context.preferences.system.ui_scale
+    spacing = LABEL_SPACING * scale
     font_id = 0
-    blf.size(font_id, 12)
-    blf.color(font_id, 0.9, 1.0, 0.95, 0.98)
-    objects = preview_objects(context, settings)
-    children = _hierarchy(context, objects)
-    listed = set(objects)
-    linked = [obj for obj in joint_objects(context, settings, objects) if obj not in listed] if settings.joints else []
-    for obj in objects + linked:
-        descriptions = _label_lines(obj, settings, children) if obj in listed else _joint_label(obj, settings)
-        if not descriptions:
-            continue
+    blf.size(font_id, LABEL_SIZE * scale)
+    taken = []
+    for obj, lines, details in label_rows(context, settings):
         point = view3d_utils.location_3d_to_region_2d(region, context.region_data, obj.matrix_world.translation)
         if point is None:
             continue
-        blf.position(font_id, point.x + 14, point.y + 16, 0)
-        blf.draw(font_id, obj.name)
-        for index, label in enumerate(descriptions):
-            blf.position(font_id, point.x + 14, point.y - (index + 1) * 16 + 16, 0)
-            blf.draw(font_id, label)
+        left = point.x + LABEL_OFFSET[0] * scale
+        top = point.y + LABEL_OFFSET[1] * scale
+        box = (left, top - (len(lines) - 1) * spacing - LABEL_DESCENT * scale, left + max(blf.dimensions(font_id, line)[0] for line in lines), top + LABEL_SIZE * scale)
+        if not details and any(_overlaps(box, other) for other in taken):
+            continue
+        taken.append(box)
+        blf.color(font_id, *(LABEL_COLOR if details else NAME_COLOR))
+        for index, line in enumerate(lines):
+            blf.position(font_id, left, top - index * spacing, 0)
+            blf.draw(font_id, line)
 
 
 def register_draw_handlers():

@@ -17,8 +17,9 @@ from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
-from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, ExportOptions, LAYER_COUNT
-from .system import accepts, apply_definitions, apply_game_types, asset_path, children_map, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, mesh_points, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, write_field
+from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
+from .schema import short_name
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, write_component_text, write_field
 from .validation import body_kind, check_bsn, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
@@ -116,6 +117,43 @@ def _embeds_sky(scene):
 
 def _missing_uv_maps(jobs):
     return [job["object"] for job in jobs if job["kind"] == "LIGHTMAP" and not job["uv_map"]]
+
+
+def _targets(context):
+    targets = [obj for obj in context.selected_objects if obj.library is None]
+    if _editable(context) and context.object not in targets:
+        targets.append(context.object)
+    return targets
+
+
+def _paste(operator, context, components, source):
+    targets = _targets(context)
+    pasted = [paste_components(obj, components, context.scene) for obj in targets]
+    redraw_viewports()
+    if not any(pasted):
+        operator.report({"WARNING"}, f"None of the components in {source} fit the selected objects")
+        return {"CANCELLED"}
+    operator.report({"INFO"}, f"Added {count(max(pasted), 'component')} from {source} to {count(sum(1 for number in pasted if number), 'object')}")
+    return {"FINISHED"}
+
+
+def _text_area(context):
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == "TEXT_EDITOR":
+                return area
+    if bpy.app.background or context.window is None or context.screen is None:
+        return None
+    source = max(context.screen.areas, key=lambda area: area.width * area.height)
+    windows = set(context.window_manager.windows)
+    with context.temp_override(window=context.window, area=source, region=next((region for region in source.regions if region.type == "WINDOW"), None)):
+        bpy.ops.screen.area_dupli("INVOKE_DEFAULT")
+    window = next((window for window in context.window_manager.windows if window not in windows), None)
+    if window is None:
+        return None
+    area = window.screen.areas[0]
+    area.type = "TEXT_EDITOR"
+    return area
 
 
 def _show_scene_properties(context):
@@ -265,7 +303,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
             return {"CANCELLED"}
         item = items[self.index]
         typed = item.component_type == "CUSTOM" and item.use_fields
-        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers", "show_velocity", "show_dynamics", "show_shadows"} | IDENTITY_PROPERTIES.get(item.component_type, set()) | ({"use_fields"} if typed else set())
+        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers", "show_velocity", "show_dynamics", "show_shadows", "text_link"} | IDENTITY_PROPERTIES.get(item.component_type, set()) | ({"use_fields"} if typed else set())
         for field in item.bl_rna.properties:
             if field.identifier not in kept and field.type != "COLLECTION" and not field.is_readonly:
                 item.property_unset(field.identifier)
@@ -633,6 +671,249 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
         redraw_viewports()
         self.report({"INFO"}, f"Copied components to {count} objects")
         return {"FINISHED"}
+
+
+class BEVY_OT_copy_component(bpy.types.Operator):
+    bl_idname = "bevy_components.copy_component"
+    bl_label = "Copy Component"
+    bl_description = "Copy the component to the clipboard, to paste it onto objects in any .blend file"
+
+    index: IntProperty(name="Index")
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None
+
+    def execute(self, context):
+        items = context.object.bevy_component_data.components
+        if not 0 <= self.index < len(items) or not items[self.index].component_type:
+            return {"CANCELLED"}
+        context.window_manager.clipboard = clipboard_text(context.object, [items[self.index]])
+        self.report({"INFO"}, f"Copied {COMPONENT_LABELS[items[self.index].component_type][0]}")
+        return {"FINISHED"}
+
+
+class BEVY_OT_copy_components(bpy.types.Operator):
+    bl_idname = "bevy_components.copy_components"
+    bl_label = "Copy Components"
+    bl_description = "Copy the active object's components to the clipboard, to paste them onto objects in any .blend file"
+
+    @classmethod
+    def poll(cls, context):
+        return context.object is not None and any(item.component_type for item in context.object.bevy_component_data.components)
+
+    def execute(self, context):
+        items = [item for item in context.object.bevy_component_data.components if item.component_type]
+        context.window_manager.clipboard = clipboard_text(context.object, items)
+        self.report({"INFO"}, f"Copied {count(len(items), 'component')}")
+        return {"FINISHED"}
+
+
+class BEVY_OT_paste_components(bpy.types.Operator):
+    bl_idname = "bevy_components.paste_components"
+    bl_label = "Paste Components"
+    bl_description = "Add the components on the clipboard to the selected objects, replacing ones of the same type"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(_targets(context))
+
+    def execute(self, context):
+        components = read_components(context.window_manager.clipboard)
+        if not components:
+            self.report({"WARNING"}, "The clipboard holds no Bevy components. Copy some with Copy Components first")
+            return {"CANCELLED"}
+        return _paste(self, context, components, "the clipboard")
+
+
+class BEVY_OT_save_preset(bpy.types.Operator):
+    bl_idname = "bevy_components.save_preset"
+    bl_label = "Save Components as Preset"
+    bl_description = "Save the active object's components as a preset that every .blend file lists under Add Component > Presets"
+
+    name: StringProperty(name="Name", description="Name of the preset. Saving under the name of an existing preset replaces it", default="My Preset")
+
+    @classmethod
+    def poll(cls, context):
+        if context.object is None or not any(item.component_type for item in context.object.bevy_component_data.components):
+            cls.poll_message_set("The active object has no components to save")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, title="Save Components as Preset", confirm_text="Save")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        layout.prop(self, "name")
+        if self.name.strip() and preset_file(self.name).is_file():
+            draw_message(layout, "Replaces the preset of this name", icon="INFO")
+
+    def execute(self, context):
+        if not self.name.strip():
+            self.report({"ERROR"}, "Give the preset a name")
+            return {"CANCELLED"}
+        obj = context.object
+        path = preset_file(self.name)
+        try:
+            path.write_text(clipboard_text(obj, obj.bevy_component_data.components, name=self.name.strip(), references=False), encoding="utf-8")
+        except OSError as error:
+            self.report({"ERROR"}, f"Could not save the preset: {error.strerror or error}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Saved preset {self.name.strip()} to {path}")
+        return {"FINISHED"}
+
+
+class BEVY_OT_apply_preset(bpy.types.Operator):
+    bl_idname = "bevy_components.apply_preset"
+    bl_label = "Apply Preset"
+    bl_description = "Add the preset's components to the selected objects, replacing ones of the same type"
+    bl_options = {"REGISTER", "UNDO"}
+
+    filepath: StringProperty(name="Preset", subtype="FILE_PATH", options={"HIDDEN", "SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return bool(_targets(context))
+
+    def execute(self, context):
+        path = Path(self.filepath)
+        try:
+            components = read_components(path.read_text(encoding="utf-8"))
+        except OSError as error:
+            self.report({"ERROR"}, f"Could not read the preset: {error.strerror or error}")
+            return {"CANCELLED"}
+        if not components:
+            self.report({"ERROR"}, f"{path.name} is not a Bevy Components preset")
+            return {"CANCELLED"}
+        return _paste(self, context, components, f"preset {bpy.path.display_name(path.stem)}")
+
+
+class BEVY_OT_remove_preset(bpy.types.Operator):
+    bl_idname = "bevy_components.remove_preset"
+    bl_label = "Remove Preset"
+    bl_description = "Delete the preset file, for every .blend file"
+
+    filepath: StringProperty(name="Preset", subtype="FILE_PATH", options={"HIDDEN", "SKIP_SAVE"})
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(self, event, title="Remove Preset", message=f"Delete {Path(self.filepath).name}?", confirm_text="Remove", icon="WARNING")
+
+    def execute(self, context):
+        try:
+            Path(self.filepath).unlink()
+        except OSError as error:
+            self.report({"ERROR"}, f"Could not remove the preset: {error.strerror or error}")
+            return {"CANCELLED"}
+        self.report({"INFO"}, f"Removed preset {Path(self.filepath).name}")
+        return {"FINISHED"}
+
+
+class BEVY_OT_edit_as_text(bpy.types.Operator):
+    bl_idname = "bevy_components.edit_as_text"
+    bl_label = "Edit as Text"
+    bl_description = "Open the component's data as JSON in a Text Editor, then write it back with Apply to Component in its header"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(name="Index")
+
+    @classmethod
+    def poll(cls, context):
+        return _editable(context)
+
+    def execute(self, context):
+        items = _components(context, self.index)
+        if items is None or items[self.index].component_type != "CUSTOM":
+            return {"CANCELLED"}
+        obj = context.object
+        item = items[self.index]
+        if not item.text_link or any(other.text_link == item.text_link for other in items if other != item):
+            item.text_link = new_identifier()
+        text = next((text for text in bpy.data.texts if text.get(TEXT_OBJECT) == obj and text.get(TEXT_COMPONENT) == item.text_link), None)
+        if text is None:
+            text = bpy.data.texts.new(f"{obj.name} {short_name(item.custom_type) or 'Component'}.json")
+            text[TEXT_OBJECT] = obj
+            text[TEXT_COMPONENT] = item.text_link
+        text.from_string(component_text(item))
+        text.cursor_set(0)
+        area = _text_area(context)
+        if area is None:
+            self.report({"INFO"}, f"Opened {text.name}, show it in a Text Editor")
+            return {"FINISHED"}
+        area.spaces.active.text = text
+        area.spaces.active.top = 0
+        return {"FINISHED"}
+
+
+class BEVY_OT_apply_text(bpy.types.Operator):
+    bl_idname = "bevy_components.apply_text"
+    bl_label = "Apply to Component"
+    bl_description = "Write this JSON back into the custom component it was opened from"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        text = getattr(context.space_data, "text", None) if context.space_data is not None else None
+        return text is not None and TEXT_COMPONENT in text
+
+    def execute(self, context):
+        text = context.space_data.text
+        obj, item = linked_component(text)
+        if item is None:
+            self.report({"ERROR"}, f"The component {text.name} was opened from is gone")
+            return {"CANCELLED"}
+        if obj.library is not None:
+            self.report({"ERROR"}, f"{obj.name} is linked from another file")
+            return {"CANCELLED"}
+        error = write_component_text(item, text.as_string())
+        if error is not None:
+            self.report({"ERROR"}, f"Cannot apply {text.name}: {error}")
+            return {"CANCELLED"}
+        sync_object(obj)
+        redraw_viewports()
+        redraw_properties()
+        self.report({"INFO"}, f"Applied {text.name} to {obj.name}")
+        return {"FINISHED"}
+
+
+class BEVY_OT_select_by_component(bpy.types.Operator):
+    bl_idname = "bevy_components.select_by_component"
+    bl_label = "Select by Bevy Component"
+    bl_description = "Select the visible objects that have a Bevy component of this type"
+    bl_options = {"REGISTER", "UNDO"}
+
+    component_type: EnumProperty(name="Component", items=COMPONENT_FILTERS)
+    type_path: StringProperty(name="Type Path", description="Only custom components with this type path", options={"SKIP_SAVE"})
+    extend: BoolProperty(name="Extend", description="Add to the selection instead of replacing it", default=False, options={"SKIP_SAVE"})
+
+    @classmethod
+    def poll(cls, context):
+        return context.view_layer is not None and context.mode == "OBJECT"
+
+    def execute(self, context):
+        found = [obj for obj in context.view_layer.objects if obj.visible_get() and not obj.hide_select and self._matches(obj)]
+        name = self.type_path or COMPONENT_LABELS.get(self.component_type, ("Bevy components",))[0]
+        if not found:
+            self.report({"INFO"}, f"No visible objects have {name}")
+            return {"CANCELLED"}
+        if not self.extend:
+            for obj in context.selected_objects:
+                obj.select_set(False)
+        for obj in found:
+            obj.select_set(True)
+        if context.view_layer.objects.active not in found:
+            context.view_layer.objects.active = found[0]
+        self.report({"INFO"}, f"Selected {count(len(found), 'object')} with {name}")
+        return {"FINISHED"}
+
+    def _matches(self, obj):
+        items = obj.bevy_component_data.components
+        if self.component_type == "ALL":
+            return len(items) > 0
+        return any(item.component_type == self.component_type and (not self.type_path or item.custom_type == self.type_path) for item in items)
 
 
 class BEVY_OT_select_object(bpy.types.Operator):

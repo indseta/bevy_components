@@ -1,6 +1,7 @@
 import os
 import re
 import textwrap
+import time
 from collections import namedtuple
 from pathlib import Path, PurePosixPath
 
@@ -14,7 +15,7 @@ from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serial
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, children_map, component_of, components_for, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, scene_path, subtree
+from .system import MESH_TYPES, children_map, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -36,8 +37,10 @@ GLTF_MIXES = {"BSDF_TRANSPARENT", "LIGHT_PATH"}
 UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
 PROCEDURAL_NODES = {"AMBIENT_OCCLUSION", "BEVEL", "CAMERA", "FRESNEL", "HAIR_INFO", "LAYER_WEIGHT", "LIGHT_PATH", "NEW_GEOMETRY", "OBJECT_INFO", "PARTICLE_INFO", "POINT_INFO", "SCRIPT", "TANGENT", "TEX_COORD", "WIREFRAME"}
 AMBIENT_WITH_SKY = "Bevy Ambient Light takes the World color, which the Bevy Sky's environment light already gives, so meshes get the World's light twice"
+PROBLEM_DELAY = 0.5
 
 _texture_checks = {}
+_problem_counts = {}
 
 
 def describe(issue):
@@ -73,6 +76,63 @@ def draw_issues(layout, rows, limit, more, select=False, width=300):
             draw_message(layout, message if name is None else f"{name}: {message}", icon, width)
     if len(rows) > limit:
         layout.label(text=f"{len(rows) - limit} more {more}", icon="BLANK1")
+
+
+def problem_count(scene):
+    version, _changed = problem_changes()
+    counted = _problem_counts.get(scene.as_pointer())
+    if (counted is None or counted[0] != version) and not bpy.app.timers.is_registered(_recount_problems):
+        bpy.app.timers.register(_recount_problems, first_interval=0.0 if counted is None else PROBLEM_DELAY)
+    return counted[1] if counted is not None else None
+
+
+def count_problems(scenes):
+    version, _changed = problem_changes()
+    changed = False
+    for scene in scenes:
+        settings = export_settings(scene)
+        objects = [obj for obj in scene.objects if exported(obj, settings)]
+        issues = check_objects(objects, modifiers=settings.apply_modifiers) + (check_scene(objects) if scene == bpy.context.scene else check_world(scene.world))
+        errors = sum(1 for issue in issues if issue.level == "ERROR")
+        counted = (version, (errors, len(issues) - errors))
+        changed = changed or _problem_counts.get(scene.as_pointer(), (None, None))[1] != counted[1]
+        _problem_counts[scene.as_pointer()] = counted
+    return changed
+
+
+def _recount_problems():
+    _version, changed = problem_changes()
+    waited = time.monotonic() - changed
+    if waited < PROBLEM_DELAY:
+        return PROBLEM_DELAY - waited
+    windows = bpy.context.window_manager.windows if bpy.context.window_manager else ()
+    scenes = list({window.scene.as_pointer(): window.scene for window in windows}.values()) or [bpy.context.scene]
+    if count_problems([scene for scene in scenes if scene is not None]):
+        redraw_properties()
+        redraw_viewports()
+    return None
+
+
+def stop_problem_counts():
+    if bpy.app.timers.is_registered(_recount_problems):
+        bpy.app.timers.unregister(_recount_problems)
+    _problem_counts.clear()
+
+
+def draw_problem_count(layout, scene):
+    counted = problem_count(scene)
+    if counted is None:
+        return
+    errors, warnings = counted
+    row = layout.row(align=True)
+    row.emboss = "NONE"
+    if not errors and not warnings:
+        row.operator("bevy_components.validate", text="", icon="CHECKMARK")
+        return
+    if errors:
+        row.operator("bevy_components.validate", text=str(errors), icon="CANCEL")
+    if warnings:
+        row.operator("bevy_components.validate", text=str(warnings), icon="ERROR")
 
 
 def check_objects(objects, destination=None, animations=True, modifiers=True):

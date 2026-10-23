@@ -1,14 +1,17 @@
 import json
+from fnmatch import fnmatchcase
 
 import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .schema import short_name
 from .system import ambient_light, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
-from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, draw_message, sky_check, texture_check
+from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, draw_message, draw_problem_count, sky_check, texture_check
+
+OVERVIEW_ICONS = 4
 
 
 def _labeled_row(layout, text):
@@ -140,8 +143,8 @@ def _draw_rigid_body(layout, obj, index, item):
     if body is None:
         return
     column = body.column(align=True)
-    column.prop(item, "rigid_body_linear_damping", text="Damping Linear")
-    column.prop(item, "rigid_body_angular_damping", text="Angular")
+    column.prop(item, "rigid_body_linear_damping", text="Damping")
+    column.prop(item, "rigid_body_angular_damping", text="Spin Damping")
     _draw_axes(body, item, "rigid_body_lock_translation", "Lock Position")
     _draw_axes(body, item, "rigid_body_lock_rotation", "Lock Rotation")
     body.prop(item, "rigid_body_ccd")
@@ -171,8 +174,8 @@ def _draw_joint(layout, obj, index, item):
         if column.alert:
             layout.label(text="Min must not be above Max", icon="ERROR")
         column = layout.column(align=True)
-        column.prop(item, "joint_linear_damping", text="Damping Linear")
-        column.prop(item, "joint_angular_damping", text="Angular")
+        column.prop(item, "joint_linear_damping", text="Damping")
+        column.prop(item, "joint_angular_damping", text="Turn Damping")
     layout.prop(item, "joint_collide")
     if (item.joint_body1 is None) != (item.joint_body2 is None):
         pinned = item.joint_body1 or item.joint_body2
@@ -220,7 +223,7 @@ def _draw_fog_volume(layout, obj, index, item):
     column.prop(item, "fog_anisotropy")
     column = layout.column(align=True)
     column.prop(item, "fog_light_tint")
-    column.prop(item, "fog_light_intensity")
+    column.prop(item, "fog_light_intensity", text="Intensity")
 
 
 def _draw_probe(layout, obj, index, item, text):
@@ -366,12 +369,15 @@ def _draw_custom(layout, obj, index, item):
     if item.use_fields:
         _draw_fields(layout, item)
         return
-    row = layout.row()
+    column = layout.column()
+    column.use_property_split = False
+    row = column.row()
     row.alert = not item.custom_type.strip()
-    row.prop(item, "custom_type")
-    row = layout.row()
+    row.prop(item, "custom_type", text="")
+    row = column.row(align=True)
     row.alert = not _is_json(item.custom_json)
-    row.prop(item, "custom_json")
+    row.prop(item, "custom_json", text="")
+    row.operator(BEVY_OT_edit_as_text.bl_idname, text="", icon="TEXT").index = index
 
 
 def _draw_scene_reference(layout, obj, index, item):
@@ -409,11 +415,11 @@ DRAWERS = {
 def _draw_component(layout, context, obj, index, item, issues):
     text, icon = COMPONENT_LABELS.get(item.component_type, ("Removed Component", "ERROR"))
     issues = [issue for issue in issues if issue.item == item]
+    if issues:
+        icon = "CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR"
     header, body = layout.panel_prop(item, "show_expanded")
     header.prop(item, "enabled", text="")
-    header.label(text=item.custom_type if item.component_type == "CUSTOM" and item.custom_type.strip() else text, icon=icon)
-    if issues:
-        header.label(text="", icon="CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR")
+    header.label(text=short_name(item.custom_type) if item.component_type == "CUSTOM" and item.custom_type.strip() else text, icon=icon)
     tools = header.row(align=True)
     tools.emboss = "NONE"
     tools.context_pointer_set("bevy_component", item)
@@ -460,6 +466,9 @@ class BEVY_PT_object_properties(bpy.types.Panel):
     def draw_header(self, context):
         panel_header_drawn()
 
+    def draw_header_preset(self, context):
+        draw_problem_count(self.layout, context.scene)
+
     def draw(self, context):
         panel_body_drawn()
         draw_components(self.layout, context, context.object)
@@ -472,11 +481,63 @@ class BEVY_PT_view_sidebar(bpy.types.Panel):
     bl_region_type = "UI"
     bl_category = "Bevy"
 
+    def draw_header_preset(self, context):
+        draw_problem_count(self.layout, context.scene)
+
     def draw(self, context):
         if context.object is None:
             self.layout.label(text="Select an object", icon="INFO")
             return
         draw_components(self.layout, context, context.object)
+
+
+class BEVY_UL_objects(bpy.types.UIList):
+    bl_idname = "BEVY_UL_objects"
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_property, index=0, flt_flag=0):
+        split = layout.split(factor=0.5)
+        split.prop(item, "name", text="", emboss=False, icon_value=layout.icon(item))
+        icons = split.row(align=True)
+        icons.alignment = "RIGHT"
+        kinds = list(dict.fromkeys(component.component_type for component in item.bevy_component_data.components if component.component_type))
+        for kind in kinds[:OVERVIEW_ICONS]:
+            icons.label(text="", icon=COMPONENT_LABELS[kind][1])
+        if len(kinds) > OVERVIEW_ICONS:
+            icons.label(text=f"+{len(kinds) - OVERVIEW_ICONS}")
+
+    def filter_items(self, context, data, propname):
+        objects = getattr(data, propname)
+        shown = data.bevy_component_overview.filter
+        pattern = f"*{self.filter_name.lower()}*" if self.filter_name else ""
+        flags = []
+        for obj in objects:
+            items = obj.bevy_component_data.components
+            listed = len(items) > 0 and (shown == "ALL" or any(item.component_type == shown for item in items))
+            if listed and pattern:
+                names = [obj.name] + [item.custom_type for item in items if item.component_type == "CUSTOM"]
+                listed = any(fnmatchcase(name.lower(), pattern) for name in names) != self.use_filter_invert
+            flags.append(self.bitflag_filter_item if listed else 0)
+        return flags, bpy.types.UI_UL_list.sort_items_by_name(objects, "name") if self.use_filter_sort_alpha else []
+
+
+class BEVY_PT_view_overview(bpy.types.Panel):
+    bl_label = "Scene Overview"
+    bl_idname = "BEVY_PT_view_overview"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Bevy"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def draw(self, context):
+        layout = self.layout
+        overview = context.scene.bevy_component_overview
+        row = layout.row(align=True)
+        row.prop(overview, "filter", text="")
+        row.operator(BEVY_OT_select_by_component.bl_idname, text="", icon="RESTRICT_SELECT_OFF").component_type = overview.filter
+        layout.template_list(BEVY_UL_objects.bl_idname, "", context.scene, "objects", overview, "active", rows=6)
 
 
 class BEVY_PT_view_export(bpy.types.Panel):

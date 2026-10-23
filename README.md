@@ -9,7 +9,7 @@ Requires Blender 4.2+, Bevy 0.20 and Avian 0.8.
 1. Download `bevy_components_<version>.zip` from the [latest release](https://github.com/indseta/bevy_components/releases/latest).
 2. In Blender, open **Edit > Preferences > Get Extensions**, then **Install from Disk...** and pick the ZIP.
 3. Enable **Bevy Components** if it isn't enabled already.
-4. Find it under **Properties > Object > Components** or **3D Viewport > N > Bevy**.
+4. Find it under **Properties > Object > Components**, **3D Viewport > N > Bevy** or **3D Viewport > Object > Bevy Components**.
 
 ## Install the importer
 
@@ -44,18 +44,22 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 ## Usage
 
-1. Select an object, press **Add Component** and pick a component, or start typing to search.
-2. Each component works like a modifier: collapse it, untick it to leave it out of the export, or use its dropdown to duplicate, copy to selected, reset or reorder it.
+1. Select an object, press **Add Component** and pick a component, or start typing to search. Physics, Rendering and Lighting components sit in submenus.
+2. Each component works like a modifier: collapse it, untick it to leave it out of the export, or use its dropdown to duplicate, copy, copy to selected, reset or reorder it.
 3. Export with **File > Export > Bevy Scene (.glb)**, or from the dropdown next to **Add Component**. After that, **Export Again** in those menus and in **3D Viewport > N > Bevy > Export** writes the same file with the same settings, without the file dialog.
 4. Put the GLB in your game's `assets/` folder.
 
 The export holds the active scene. Under **Include**, **Limit to** can leave out objects that aren't selected, are hidden in the viewport or are turned off for renders, and the checks look at the same objects. **Apply Modifiers**, on by default, exports meshes as the viewport shows them, though glTF then leaves out the shape keys of meshes with modifiers. The file is written once the export succeeds, so a failed export keeps the previous one. With more than one scene in the file, **Export All Scenes (.glb)** exports every scene that was exported before to its own GLB, with that scene's settings.
 
-**Shadows** (under Rendering) stops the meshes on and under an object from casting or receiving shadows. **Audio Player** (under Audio) plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
+**Copy Components** puts the active object's components on the clipboard and **Paste Components** adds them to the selected objects, also in another .blend file. Pasting replaces components of the same type. **Add Component > Presets > Save Components as Preset** keeps a set of components for every .blend file, and picking the preset adds them to the selected objects. Presets are JSON files in Blender's `scripts/presets/bevy_components` folder.
+
+**3D Viewport > N > Bevy > Scene Overview** lists the objects with components, filtered by type or name, and clicking one selects it. **Select > Select by Bevy Component** selects them all at once. The Components and Bevy panel headers count the scene's errors and warnings and open the full list when clicked. The viewport labels the selected objects with what their components do, and other objects with their name and custom components. The **Object** menu and the right-click menu in the 3D Viewport have a **Bevy Components** submenu with these tools and Export Again, and F3 finds them too.
+
+**Shadows** (under Rendering) stops the meshes on and under an object from casting or receiving shadows. **Audio Player** plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
 
 **Joint** (under Physics) connects two bodies with an Avian Fixed, Hinge, Slider or Ball joint. Put it on an empty at the pivot, or on one of the bodies, and pick Body 1 and Body 2 from objects with a Rigid Body or Collider. Leave one empty to pin the other to that spot in the scene. The object's position and its Axis set the pivot, and limits count from where the bodies sit in Blender.
 
-**Scene Reference** (under Scene) spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. **Animation** (under Animation) plays an action when the scene loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
+**Scene Reference** spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. **Animation** plays an action when the scene loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
 
 Collider sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider. **Collision Events** adds Avian's `CollisionEventsEnabled`, so the collider sends `CollisionStart` and `CollisionEnd`; it is on by default for sensors. **Collision Only** hides the meshes on and under the object in the game with `Visibility::Hidden` and keeps their colliders, for invisible walls.
 
@@ -119,7 +123,7 @@ Your components then show under **Add Component**, in a menu named after your cr
 2. Add fields with a name, a type and a default. The default is used when the component is added to an object.
 3. The type now appears under **Add Component**. Objects that already have it as JSON switch to the fields and keep their values.
 
-**Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values. A type your game lists uses the game's fields instead.
+**Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. **Edit as Text**, the button next to the JSON or in the dropdown, opens the data in a Text Editor; **Apply to Component** in its header writes it back. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values. A type your game lists uses the game's fields instead.
 
 ### In the game
 
@@ -155,7 +159,7 @@ The viewport draws the faces of walkable ground that slope less than 45° and th
 
 ## Lights
 
-glTF already carries a light's color, power, spot cone and Custom Distance range. Add a **Light** component (under Rendering) to a light for the rest:
+glTF already carries a light's color, power, spot cone and Custom Distance range. Add a **Light** component (under Lighting) to a light for the rest:
 
 - shadows from the light's own **Shadow** checkbox, plus contact shadows, depth and normal bias, and for sun lights the shadow cascades
 - **Volumetric** for light shafts through Fog Volumes, and **Baked** to bake the light into lightmaps, so it only adds reflections on lightmapped meshes
@@ -169,7 +173,7 @@ Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` featur
 
 ## Fog and light probes
 
-**Fog Volume**, **Reflection Probe** and **Irradiance Volume** (under Rendering) are boxes. Set their size on Bevy's axes or drag the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
+**Fog Volume**, **Reflection Probe** and **Irradiance Volume** (under Lighting) are boxes. Set their size on Bevy's axes or drag the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
 
 - **Fog Volume** fills its box with volumetric fog. Bevy only draws it for cameras with `VolumetricFog`, such as `commands.spawn((Camera3d::default(), VolumetricFog::default()))`, and once a light in the scene has **Volumetric** on in its Light component.
 - **Reflection Probe** gives the meshes in its box reflections and soft light from a cubemap. Bevy filters the cubemap when the scene loads, so it needs six square faces whose size is a power of two, and no mipmaps. **Bake** makes one (see [Baked lighting](#baked-lighting)), or KTX-Software from six renders: `ktx create --format R16G16B16A16_SFLOAT --cubemap px.exr nx.exr py.exr ny.exr pz.exr nz.exr room.ktx2`.
@@ -181,7 +185,7 @@ The export embeds each probe's `.ktx2` file in the GLB, so the scene stays one f
 
 The addon bakes lightmaps, Reflection Probes, Irradiance Volumes and the Bevy Sky with Cycles, a static alternative to Godot's VoxelGI.
 
-1. Add a **Lightmap** (under Rendering) to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
+1. Add a **Lightmap** (under Lighting) to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
 2. Click **Bake** on a component to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default, and **Export Again** exports the scene to the GLB or BSN file of its last export once the bake finishes.
 
 A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; bakes that already finished keep their new files. Each component's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.

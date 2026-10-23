@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import re
 import struct
 
 SCHEMA_VERSION = 1
