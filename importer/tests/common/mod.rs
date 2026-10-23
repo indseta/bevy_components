@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 
 use avian3d::prelude::*;
-use bevy::{app::PluginsState, asset::{AssetPlugin, LoadState, UntypedAssetId}, audio::AudioPlugin, gilrs::GilrsPlugin, gltf::{Gltf, GltfExtras}, image::{CompressedImageFormatSupport, CompressedImageFormats}, log::LogPlugin, prelude::*, render::{RenderPlugin, pipelined_rendering::PipelinedRenderingPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin};
+use bevy::{app::PluginsState, asset::{AssetPlugin, LoadState, UntypedAssetId}, audio::{AudioPlugin, Volume}, gilrs::GilrsPlugin, gltf::{Gltf, GltfExtras}, image::{CompressedImageFormatSupport, CompressedImageFormats}, log::LogPlugin, prelude::*, render::{RenderPlugin, pipelined_rendering::PipelinedRenderingPlugin, settings::WgpuSettings}, time::TimeUpdateStrategy, window::ExitCondition, winit::WinitPlugin};
 use bevy_components_importer::BlenderBevyComponentsPlugin;
 use std::{thread, time::Duration};
 
@@ -16,6 +16,7 @@ pub struct LevelApp {
     pub assets: String,
     pub gpu: bool,
     pub plugin: bool,
+    pub audio: bool,
     pub formats: Option<CompressedImageFormats>,
 }
 
@@ -25,6 +26,7 @@ impl Default for LevelApp {
             assets: ASSETS.to_string(),
             gpu: false,
             plugin: true,
+            audio: false,
             formats: None,
         };
     }
@@ -34,7 +36,8 @@ impl LevelApp {
     pub fn build(&self) -> App {
         let mut app = App::new();
         let render = if self.gpu { RenderPlugin { synchronous_pipeline_compilation: true, ..default() } } else { RenderPlugin { render_creation: WgpuSettings { backends: None, ..default() }.into(), ..default() } };
-        app.add_plugins(DefaultPlugins.set(AssetPlugin { file_path: self.assets.clone(), ..default() }).set(render).set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, close_when_requested: false, ..default() }).disable::<WinitPlugin>().disable::<AudioPlugin>().disable::<GilrsPlugin>().disable::<LogPlugin>().disable::<PipelinedRenderingPlugin>());
+        let plugins = DefaultPlugins.set(AssetPlugin { file_path: self.assets.clone(), ..default() }).set(render).set(WindowPlugin { primary_window: None, exit_condition: ExitCondition::DontExit, close_when_requested: false, ..default() }).disable::<WinitPlugin>().disable::<GilrsPlugin>().disable::<LogPlugin>().disable::<PipelinedRenderingPlugin>();
+        app.add_plugins(if self.audio { plugins.set(AudioPlugin { global_volume: GlobalVolume::new(Volume::SILENT), ..default() }) } else { plugins.disable::<AudioPlugin>() });
         app.add_plugins(PhysicsPlugins::default());
         if self.plugin {
             app.add_plugins(BlenderBevyComponentsPlugin);

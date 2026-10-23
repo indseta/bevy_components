@@ -138,6 +138,22 @@ def serialize_component(item):
             "kind": item.rigid_body_kind.lower(),
             "mass": float(item.rigid_body_mass) if item.rigid_body_kind == "DYNAMIC" and item.rigid_body_use_mass else None,
         }
+    if kind == "SHADOWS":
+        return {
+            "type": "shadows",
+            "cast": bool(item.shadows_cast),
+            "receive": bool(item.shadows_receive),
+        }
+    if kind == "AUDIO_PLAYER":
+        return {
+            "type": "audio_player",
+            "path": item.audio_path.strip(),
+            "volume": _float32(item.audio_volume),
+            "loop": bool(item.audio_loop),
+            "autoplay": bool(item.audio_autoplay),
+            "spatial": bool(item.audio_spatial),
+            "distance": _float32(item.audio_distance),
+        }
     if kind == "CUSTOM":
         if item.use_fields:
             return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields)}

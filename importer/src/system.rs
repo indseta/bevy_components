@@ -1,9 +1,9 @@
 use avian3d::prelude::{Collider, CollisionLayers, Friction, LayerMask, Mass, NoAutoMass, Restitution, RigidBody, Sensor};
-use bevy::{camera::visibility::VisibilityRange, gltf::GltfExtras, prelude::*};
+use bevy::{audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, prelude::*};
 use serde_json::Value;
 use crate::{component::*, data::*};
 
-pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>), Without<DecodedGltfExtras>>) {
+pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>) {
     for (entity, extras, name) in &nodes {
         commands.entity(entity).insert(DecodedGltfExtras);
         let Ok(outer) = serde_json::from_str::<Value>(&extras.value) else {
@@ -24,6 +24,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         let mut custom = BlenderCustomComponents::default();
         let mut rigid_body = None;
         let mut mass = None;
+        let mut audio = None;
 
         for component in exported.components {
             match component {
@@ -60,6 +61,18 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         _ => body_mass,
                     };
                 }
+                ExportedComponent::Shadows { cast, receive } => components.shadows = Some(ShadowSettings { cast, receive }),
+                ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance } => {
+                    if path.is_empty() {
+                        warn!("Audio Player on {:?} has no sound file", name);
+                    } else if audio_sources.is_none() {
+                        warn!("Audio Player on {:?} needs Bevy's AudioPlugin", name);
+                    } else {
+                        let mode = if looping { PlaybackMode::Loop } else { PlaybackMode::Once };
+                        let spatial_scale = (spatial && distance > 0.0).then(|| SpatialScale::new(1.0 / distance));
+                        audio = Some((AudioPlayer::new(asset_server.load(path)), PlaybackSettings { mode, volume: Volume::Linear(volume.max(0.0)), paused: !autoplay, spatial, spatial_scale, ..PlaybackSettings::ONCE }));
+                    }
+                }
                 ExportedComponent::Custom { type_path, data } => custom.0.push(BlenderCustomComponent { type_path, data }),
                 ExportedComponent::Unsupported => warn!("Unsupported Bevy component on {:?}", name),
             }
@@ -72,6 +85,9 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
         commands.entity(entity).insert(components);
         if !custom.0.is_empty() {
             commands.entity(entity).insert(custom);
+        }
+        if let Some(audio) = audio {
+            commands.entity(entity).insert(audio);
         }
         if let Some(body) = rigid_body {
             commands.entity(entity).insert(body);
@@ -99,6 +115,7 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
         let mut cursor = Some(entity);
         let mut visibility = None;
         let mut collider = None;
+        let mut shadows = None;
 
         while let Some(current) = cursor {
             if let Ok(spec) = specs.get(current) {
@@ -108,7 +125,10 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
                 if collider.is_none() {
                     collider = spec.collider.clone();
                 }
-                if visibility.is_some() && collider.is_some() {
+                if shadows.is_none() {
+                    shadows = spec.shadows;
+                }
+                if visibility.is_some() && collider.is_some() && shadows.is_some() {
                     break;
                 }
             }
@@ -122,6 +142,14 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
         }
         if let Some(spec) = collider && spec.shape.is_mesh() {
             target.insert(PendingMeshCollider(spec));
+        }
+        if let Some(shadows) = shadows {
+            if !shadows.cast {
+                target.insert(NotShadowCaster);
+            }
+            if !shadows.receive {
+                target.insert(NotShadowReceiver);
+            }
         }
     }
 }

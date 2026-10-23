@@ -1,11 +1,12 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{camera::visibility::VisibilityRange, gltf::GltfExtras, prelude::*};
+use bevy::{audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{NotShadowCaster, NotShadowReceiver}, prelude::*};
 use bevy_components_importer::BlenderCustomComponents;
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::{thread, time::Duration};
 
 #[derive(Deserialize, Debug, PartialEq)]
 struct Pickup {
@@ -188,7 +189,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 22);
+    assert_eq!(count, 27);
 }
 
 #[test]
@@ -305,4 +306,63 @@ fn older_exports_keep_avian_defaults() {
     assert!(world.get::<Restitution>(entity).is_none());
     assert!(world.get::<Mass>(entity).is_none());
     assert!(world.get::<NoAutoMass>(entity).is_none());
+}
+
+#[test]
+fn shadow_flags_reach_meshes_on_and_under_the_object() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    for (name, cast, receive) in [("water", false, false), ("bush_a", false, true), ("bush_b", true, true), ("ground", true, true), ("crate", true, true)] {
+        let meshes = meshes(world, name);
+        assert!(!meshes.is_empty(), "{name}");
+        for mesh in meshes {
+            assert_eq!(world.get::<NotShadowCaster>(mesh).is_none(), cast, "{name}");
+            assert_eq!(world.get::<NotShadowReceiver>(mesh).is_none(), receive, "{name}");
+        }
+    }
+    let mut casters = world.query_filtered::<Entity, With<NotShadowCaster>>();
+    assert_eq!(casters.iter(world).count(), 2);
+    let mut receivers = world.query_filtered::<Entity, With<NotShadowReceiver>>();
+    assert_eq!(receivers.iter(world).count(), 1);
+}
+
+#[test]
+fn audio_players_load_sounds_from_the_assets_folder() {
+    let mut app = LevelApp { audio: true, ..default() }.build();
+    if let Err(error) = spawn_level(&mut app, LEVEL) {
+        panic!("{LEVEL} did not load: {error}");
+    }
+    let expected = [("campfire", "sounds/campfire.ogg", true, 0.8, false, true, Some(Vec3::splat(0.25))), ("jingle", "sounds/chime.ogg", false, 0.5, true, false, None)];
+    for (name, path, looping, volume, paused, spatial, scale) in expected {
+        let node = node(app.world_mut(), name);
+        let world = app.world();
+        let handle = world.get::<AudioPlayer>(node).map(|player| player.0.clone()).unwrap_or_else(|| panic!("{name} has no audio player"));
+        assert_eq!(handle.path().map(ToString::to_string), Some(path.to_string()), "{name}");
+        let settings = world.get::<PlaybackSettings>(node).unwrap_or_else(|| panic!("{name} has no playback settings"));
+        assert!(matches!((looping, settings.mode), (true, PlaybackMode::Loop) | (false, PlaybackMode::Once)), "{name}");
+        assert_eq!(settings.volume, Volume::Linear(volume), "{name}");
+        assert_eq!((settings.paused, settings.spatial, settings.spatial_scale.map(|spatial_scale| spatial_scale.0)), (paused, spatial, scale), "{name}");
+        let asset_server = world.resource::<AssetServer>().clone();
+        for _ in 0..500 {
+            if asset_server.is_loaded(&handle) {
+                break;
+            }
+            app.update();
+            thread::sleep(Duration::from_millis(5));
+        }
+        let source = app.world().resource::<Assets<AudioSource>>().get(&handle).unwrap_or_else(|| panic!("{path} did not load"));
+        assert!(source.decoder().count() > 1000, "{path}");
+    }
+    let world = app.world_mut();
+    let mut players = world.query::<&AudioPlayer>();
+    assert_eq!(players.iter(world).count(), 2);
+}
+
+#[test]
+fn audio_players_are_skipped_without_the_audio_plugin() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    assert!(world.get_resource::<Assets<AudioSource>>().is_none());
+    let mut players = world.query::<&AudioPlayer>();
+    assert_eq!(players.iter(world).count(), 0);
 }

@@ -1,5 +1,5 @@
 import bpy
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .system import component_of, panel_expanded, redraw_viewports
 
@@ -85,3 +85,59 @@ class BEVY_GGT_collider_handles(bpy.types.GizmoGroup):
             if shown[index]:
                 rotation = Vector((0, 0, 1)).rotation_difference(axes[index]).to_matrix().to_4x4()
                 gizmo.matrix_basis = obj.matrix_world @ rotation
+
+
+def _audio_player():
+    obj = bpy.context.object
+    return component_of(obj, "AUDIO_PLAYER") if obj else None
+
+
+def _get_audio_distance():
+    item = _audio_player()
+    return float(item.audio_distance) if item else 0.0
+
+
+def _set_audio_distance(value):
+    item = _audio_player()
+    if item is None or bpy.context.object.library:
+        return
+    item.audio_distance = max(0.01, float(value[0] if isinstance(value, (tuple, list)) else value))
+    redraw_viewports()
+
+
+class BEVY_GGT_audio_handles(bpy.types.GizmoGroup):
+    bl_idname = "BEVY_GGT_audio_handles"
+    bl_label = "Bevy Audio Range Handle"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "WINDOW"
+    bl_options = {"3D", "PERSISTENT"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        if not obj or obj.library or obj.mode != "OBJECT" or not obj.select_get() or not context.scene or not panel_expanded():
+            return False
+        if not hasattr(context.scene, "bevy_component_previews"):
+            return False
+        settings = context.scene.bevy_component_previews
+        item = component_of(obj, "AUDIO_PLAYER")
+        return settings.enabled and settings.audio_ranges and settings.edit_handles and item is not None and item.audio_spatial
+
+    def setup(self, _context):
+        gizmo = self.gizmos.new("GIZMO_GT_arrow_3d")
+        gizmo.draw_style = "BOX"
+        gizmo.scale_basis = 0.75
+        gizmo.color = (0.95, 0.80, 0.25)
+        gizmo.alpha = 0.82
+        gizmo.color_highlight = (1.0, 1.0, 1.0)
+        gizmo.alpha_highlight = 1.0
+        gizmo.target_set_handler("offset", get=_get_audio_distance, set=_set_audio_distance)
+        self.handle = gizmo
+        self.refresh(bpy.context)
+
+    def refresh(self, context):
+        obj = context.object
+        if obj is None:
+            return
+        rotation = Vector((0, 0, 1)).rotation_difference(Vector((-1, 0, 0))).to_matrix().to_4x4()
+        self.handle.matrix_basis = Matrix.Translation(obj.matrix_world.translation) @ rotation

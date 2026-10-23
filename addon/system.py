@@ -309,6 +309,15 @@ def save_sync(_scene):
         sync_object(obj)
 
 
+def asset_path(path):
+    path = Path(path)
+    folders = [parent for parent in path.parents if parent.name.lower() == "assets"]
+    if not folders:
+        return path.name, None
+    root = next((folder for folder in folders if (folder.parent / "Cargo.toml").is_file()), folders[0])
+    return path.relative_to(root).as_posix(), root
+
+
 def image_to_png(data, mime_type):
     with tempfile.TemporaryDirectory(prefix="bevy_components_") as directory:
         source = Path(directory) / f"source{mimetypes.guess_extension(mime_type) or '.image'}"

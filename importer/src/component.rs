@@ -49,10 +49,17 @@ impl ColliderShape {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub struct ShadowSettings {
+    pub cast: bool,
+    pub receive: bool,
+}
+
 #[derive(Component, Default)]
 pub struct ImportedComponents {
     pub visibility_range: Option<VisibilityRange>,
     pub collider: Option<ColliderSpec>,
+    pub shadows: Option<ShadowSettings>,
 }
 
 #[derive(Component)]

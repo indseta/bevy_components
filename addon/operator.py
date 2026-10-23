@@ -11,8 +11,8 @@ from .compression import check_encoded, embed_textures, plan_textures, read_glb,
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
-from .property import COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
-from .system import apply_definitions, copy_component, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
+from .system import apply_definitions, asset_path, copy_component, custom_components, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import check_objects, count, describe, draw_issues, issue_summary
 
 TEXTURE_COMPRESSION = [
@@ -313,6 +313,38 @@ class BEVY_OT_set_collision_layers(bpy.types.Operator):
         setattr(items[self.index], f"collider_{self.layers.lower()}", (self.enable,) * LAYER_COUNT)
         sync_object(context.object)
         redraw_viewports()
+        return {"FINISHED"}
+
+
+class BEVY_OT_pick_sound(bpy.types.Operator):
+    bl_idname = "bevy_components.pick_sound"
+    bl_label = "Pick Sound"
+    bl_description = "Pick a sound file inside your game's assets folder"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(name="Index", options={"HIDDEN", "SKIP_SAVE"})
+    filepath: StringProperty(name="File Path", subtype="FILE_PATH", options={"SKIP_SAVE"})
+    filter_glob: StringProperty(default=";".join(f"*{extension}" for extension in AUDIO_FORMATS), options={"HIDDEN"})
+
+    @classmethod
+    def poll(cls, context):
+        return _editable(context)
+
+    def invoke(self, context, event):
+        items = _components(context, self.index)
+        if items is None or items[self.index].component_type != "AUDIO_PLAYER":
+            return {"CANCELLED"}
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        items = _components(context, self.index)
+        if items is None or items[self.index].component_type != "AUDIO_PLAYER" or not self.filepath:
+            return {"CANCELLED"}
+        path, root = asset_path(bpy.path.abspath(self.filepath))
+        if root is None:
+            self.report({"WARNING"}, f"{path} is not inside an assets folder, so only its name was used")
+        items[self.index].audio_path = path
         return {"FINISHED"}
 
 

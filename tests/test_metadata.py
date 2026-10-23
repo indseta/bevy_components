@@ -51,6 +51,17 @@ class TestMetadata(unittest.TestCase):
             component.rigid_body_kind = kind
             self.assertIsNone(json.loads(metadata.serialize_items([component]))["components"][0]["mass"], kind)
 
+    def test_shadows(self):
+        component = item(component_type="SHADOWS", shadows_cast=False, shadows_receive=True)
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "shadows", "cast": False, "receive": True})
+        self.assertEqual(metadata.component_errors(component), [])
+
+    def test_audio_player(self):
+        component = item(component_type="AUDIO_PLAYER", audio_path=" sounds/fire.ogg ", audio_volume=0.699999988079071, audio_loop=True, audio_autoplay=False, audio_spatial=True, audio_distance=2.5)
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "audio_player", "path": "sounds/fire.ogg", "volume": 0.7, "loop": True, "autoplay": False, "spatial": True, "distance": 2.5})
+        component.audio_path = ""
+        self.assertEqual(metadata.component_errors(component), [])
+
     def test_custom(self):
         component = item(component_type="CUSTOM", custom_type="game::Marker", custom_json='{"value":42}', use_fields=False, fields=[])
         self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0]["data"]["value"], 42)

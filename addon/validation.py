@@ -1,16 +1,19 @@
 import re
 import textwrap
 from collections import namedtuple
+from pathlib import PurePosixPath
 
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from .metadata import EXTRAS_KEY, component_errors, visibility_range_problems
+from .property import AUDIO_FORMATS
 from .system import MESH_TYPES, children_map, component_of, components_for, has_faces, inherited, mesh_sources, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 
 TYPE_PATH = re.compile(r"[A-Za-z_]\w*(::[A-Za-z_]\w*)*(<.+>)?")
+WINDOWS_DRIVE = re.compile(r"[A-Za-z]:")
 SHAPE_LABELS = {
     "TRIMESH": "Triangle Mesh",
     "CONVEX": "Convex Hull",
@@ -74,6 +77,10 @@ def _object_issues(obj, children):
             issues.extend(Issue("WARNING", obj, item, message) for message in _rigid_body_warnings(obj, item, children))
         elif item.component_type == "VISIBILITY_RANGE":
             issues.extend(Issue("WARNING", obj, item, message) for message in _visibility_range_warnings(obj, item, children))
+        elif item.component_type == "SHADOWS":
+            issues.extend(Issue("WARNING", obj, item, message) for message in _shadows_warnings(obj, item, children))
+        elif item.component_type == "AUDIO_PLAYER":
+            issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item))
         elif item.component_type == "CUSTOM" and item.custom_type.strip():
             if not TYPE_PATH.fullmatch(item.custom_type):
                 issues.append(Issue("WARNING", obj, item, f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
@@ -119,6 +126,27 @@ def _visibility_range_warnings(obj, item, children):
         warnings.append("No mesh on this object or under it to show or hide")
     if not component_errors(item) and item.fade_out_end <= item.fade_in_start:
         warnings.append(f"Never visible, because Fade Out End is {item.fade_out_end:g} m")
+    return warnings
+
+
+def _shadows_warnings(obj, item, children):
+    if not mesh_sources(obj, children, "SHADOWS"):
+        return ["No mesh on this object or under it to cast or receive shadows"]
+    return []
+
+
+def _audio_warnings(item):
+    path = item.audio_path.strip()
+    if not path:
+        return ["No sound file, so nothing plays"]
+    warnings = []
+    if "\\" in path or path.startswith(("/", "../")) or WINDOWS_DRIVE.match(path):
+        warnings.append(f"\"{path}\" is not a path inside your game's assets folder, such as sounds/fire.ogg")
+    extension = PurePosixPath(path.replace("\\", "/")).suffix.lower()
+    if not extension:
+        warnings.append("The sound file has no extension, so Bevy cannot tell how to load it")
+    elif extension not in AUDIO_FORMATS:
+        warnings.append(f"Bevy cannot play {extension} files, use .ogg, .wav, .mp3 or .flac")
     return warnings
 
 

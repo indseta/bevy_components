@@ -30,6 +30,19 @@ pub enum ExportedComponent {
         kind: String,
         mass: Option<f32>,
     },
+    Shadows {
+        cast: bool,
+        receive: bool,
+    },
+    AudioPlayer {
+        path: String,
+        volume: f32,
+        #[serde(rename = "loop")]
+        looping: bool,
+        autoplay: bool,
+        spatial: bool,
+        distance: f32,
+    },
     Custom {
         type_path: String,
         data: Value,

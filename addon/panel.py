@@ -4,7 +4,7 @@ import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
 from .metadata import FIELD_VALUES, invalid_names, validate_items
-from .operator import BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
+from .operator import BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .system import panel_body_drawn, panel_header_drawn
 from .validation import check_object, draw_message
@@ -95,6 +95,31 @@ def _draw_rigid_body(layout, obj, index, item):
     mass.prop(item, "rigid_body_mass", text="")
 
 
+def _draw_shadows(layout, obj, index, item):
+    column = layout.column(heading="Shadows", align=True)
+    column.prop(item, "shadows_cast")
+    column.prop(item, "shadows_receive")
+    if item.shadows_cast and item.shadows_receive:
+        row = layout.row()
+        row.active = False
+        row.label(text="Casts and receives shadows", icon="INFO")
+
+
+def _draw_audio_player(layout, obj, index, item):
+    row = layout.row(align=True)
+    row.alert = not item.audio_path.strip()
+    row.prop(item, "audio_path")
+    row.operator(BEVY_OT_pick_sound.bl_idname, text="", icon="FILEBROWSER").index = index
+    layout.prop(item, "audio_volume", slider=True)
+    column = layout.column(heading="Playback", align=True)
+    column.prop(item, "audio_loop")
+    column.prop(item, "audio_autoplay")
+    layout.prop(item, "audio_spatial")
+    row = layout.row()
+    row.active = item.audio_spatial
+    row.prop(item, "audio_distance")
+
+
 def _draw_fields(layout, item):
     problems = invalid_names(field.name for field in item.fields)
     for field in item.fields:
@@ -123,6 +148,8 @@ DRAWERS = {
     "VISIBILITY_RANGE": _draw_visibility_range,
     "COLLIDER": _draw_collider,
     "RIGID_BODY": _draw_rigid_body,
+    "SHADOWS": _draw_shadows,
+    "AUDIO_PLAYER": _draw_audio_player,
     "CUSTOM": _draw_custom,
 }
 
@@ -284,6 +311,7 @@ class BEVY_PT_overlay(bpy.types.Panel):
         column = split.column()
         column.prop(settings, "colliders")
         column.prop(settings, "visibility_ranges")
+        column.prop(settings, "audio_ranges")
         column = split.column()
         column.prop(settings, "labels")
         column.prop(settings, "xray")

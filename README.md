@@ -49,6 +49,8 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 3. Export with **File > Export > Bevy Level (.glb)**, or from the dropdown next to **Add Component**.
 4. Put the GLB in your game's `assets/` folder.
 
+**Shadows** (under Rendering) stops the meshes on and under an object from casting or receiving shadows. **Audio Player** (under Audio) plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
+
 Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits, and dynamic Rigid Bodies can set a total mass. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Bevy Components** panel in Properties is expanded, and resize handles show on the selected object. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
 
 ## Checks
@@ -60,6 +62,8 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 - a collider rotated inside an unevenly scaled parent, which Avian sizes wrong
 - levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
 - Custom Component type paths that aren't Rust paths, or that repeat on one object
+- Shadows with no mesh on or under its object
+- an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
 
 ## Custom components
 

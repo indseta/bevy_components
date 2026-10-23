@@ -8,10 +8,13 @@ COMPONENT_TYPES = [
     ("COLLIDER", "Collider", "Avian collision shape", "MOD_PHYSICS", 1),
     ("RIGID_BODY", "Rigid Body", "Avian rigid body that is static, dynamic or kinematic", "RIGID_BODY", 2),
     ("CUSTOM", "Custom Component", "Any Rust component, filled in from JSON by your game", "FILE_SCRIPT", 4),
+    ("SHADOWS", "Shadows", "Stop the object's meshes from casting or receiving shadows", "SHADING_RENDERED", 15),
+    ("AUDIO_PLAYER", "Audio Player", "Play a sound from your game's assets folder, optionally in 3D at the object's position", "SPEAKER", 16),
 ]
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
 LAYER_COUNT = 32
+AUDIO_FORMATS = (".ogg", ".oga", ".spx", ".wav", ".mp3", ".flac")
 
 FIELD_TYPES = [
     ("FLOAT", "Float", "Decimal number, read as f32"),
@@ -72,6 +75,16 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     ], default="STATIC", update=sync_changed)
     rigid_body_use_mass: BoolProperty(name="Set Mass", description="Use a fixed total mass instead of one computed from the colliders' volume at 1 kg per cubic meter", default=False, update=sync_changed)
     rigid_body_mass: FloatProperty(name="Mass", description="Total mass of the body, including colliders on child objects", default=1.0, min=0.001, precision=3, unit="MASS", update=sync_changed)
+    shadows_cast: BoolProperty(name="Cast", description="Cast shadows onto other objects. Off adds Bevy's NotShadowCaster to the meshes on and under the object", default=False, update=sync_changed)
+    shadows_receive: BoolProperty(name="Receive", description="Show shadows cast by other objects. Off adds Bevy's NotShadowReceiver to the meshes on and under the object", default=True, update=sync_changed)
+
+    audio_path: StringProperty(name="Sound", description="Path of the sound inside your game's assets folder, such as sounds/fire.ogg. Bevy plays .ogg files by default and .wav, .mp3 and .flac with its matching cargo features", default="", update=sync_changed)
+    audio_volume: FloatProperty(name="Volume", description="How loud the sound plays, where 1 is its original volume", default=1.0, min=0.0, soft_max=1.0, subtype="FACTOR", update=sync_changed)
+    audio_loop: BoolProperty(name="Loop", description="Repeat the sound forever instead of playing it once", default=False, update=sync_changed)
+    audio_autoplay: BoolProperty(name="Autoplay", description="Start playing when the level loads. Off starts the sound paused, for your game to play through its AudioSink", default=True, update=sync_changed)
+    audio_spatial: BoolProperty(name="Spatial", description="Pan and fade the sound by where it is relative to the game's SpatialListener, usually on the camera or player", default=True, update=sync_changed)
+    audio_distance: FloatProperty(name="Distance", description="Distance within which the sound plays at full volume. Farther away it gets quieter: a quarter as loud at twice the distance and 1% as loud at ten times", default=5.0, min=0.01, unit="LENGTH", update=sync_changed)
+
     custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health. Pick a type defined in Properties > Scene to edit its fields instead of JSON", default="my_game::MyComponent", update=custom_type_changed)
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
     use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")
@@ -102,7 +115,8 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     ], default="SELECTED", update=redraw_viewports)
     colliders: BoolProperty(name="Colliders", description="Draw collider shapes", default=True, update=redraw_viewports)
     visibility_ranges: BoolProperty(name="Visibility Ranges", description="Draw fade distances as spheres", default=True, update=redraw_viewports)
+    audio_ranges: BoolProperty(name="Audio Ranges", description="Draw where spatial sounds play at full volume and where they fade to 1%", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
-    edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders", default=True, update=redraw_viewports)
+    edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders and spatial audio ranges", default=True, update=redraw_viewports)
     max_mesh_edges: IntProperty(name="Max Mesh Edges", description="Draw triangle mesh colliders with more edges than this as bounding boxes", default=2000, min=64, max=20000, update=redraw_viewports)

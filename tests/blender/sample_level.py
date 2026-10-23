@@ -10,6 +10,7 @@ from mathutils import Matrix, Vector
 
 ROOT = Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_level.glb"
+SOUNDS = FIXTURE.parent / "sounds"
 COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_level_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
 REPOSITORY = "bevy_components_test"
 RAMP_CENTER = (0, 8, 2)
@@ -243,6 +244,12 @@ def layers(*numbers):
     return [index in numbers for index in range(32)]
 
 
+def pick_sound(obj, path):
+    select(obj)
+    index = next(index for index, item in enumerate(obj.bevy_component_data.components) if item.component_type == "AUDIO_PLAYER")
+    return bpy.ops.bevy_components.pick_sound(index=index, filepath=str(path))
+
+
 def apply_lod_preset(obj, preset):
     select(obj)
     index = next(index for index, item in enumerate(obj.bevy_component_data.components) if item.component_type == "VISIBILITY_RANGE")
@@ -340,6 +347,21 @@ def build_sample_level():
         block = add_mesh(bpy.ops.mesh.primitive_cube_add, name, size=0.5, location=location, rotation=(0, slope, 0))
         add_component(block, "COLLIDER", collider_shape="CUBOID", collider_size=(0.5, 0.5, 0.5), collider_friction=friction)
         add_component(block, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+
+    water = add_mesh(bpy.ops.mesh.primitive_plane_add, "water", size=3, location=(-8, -8, 0.05))
+    add_component(water, "SHADOWS", shadows_receive=False)
+    bushes = add_empty("bushes", (6, 8, 0))
+    add_component(bushes, "SHADOWS")
+    for name, location in (("bush_a", (-0.6, 0, 0.4)), ("bush_b", (0.6, 0.3, 0.6))):
+        bush = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, name, radius=0.5, subdivisions=1, location=location)
+        bush.parent = bushes
+    add_component(bpy.data.objects["bush_b"], "SHADOWS", shadows_cast=True)
+
+    campfire = add_empty("campfire", (-2, -4, 0))
+    add_component(campfire, "AUDIO_PLAYER", audio_volume=0.8, audio_loop=True, audio_distance=4)
+    pick_sound(campfire, SOUNDS / "campfire.ogg")
+    jingle = add_empty("jingle", (0, 0, 3))
+    add_component(jingle, "AUDIO_PLAYER", audio_path="sounds/chime.ogg", audio_volume=0.5, audio_autoplay=False, audio_spatial=False)
 
     bpy.ops.object.light_add(type="SUN", location=(0, 0, 10))
     bpy.context.object.name = "sun"

@@ -14,7 +14,7 @@ import bpy
 import gpu
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, define_component, export_sample_level, install_addon, layers, read_gltf, select, set_fields, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, FIXTURE, add_component, add_empty, add_mesh, apply_lod_preset, build_sample_level, clear_scene, define_component, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -22,6 +22,7 @@ CHILD_LAYOUTS = {"row", "column", "box", "split", "grid_flow", "column_flow"}
 DEFAULT_COLLIDER = {"size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": False, "friction": 0.5, "restitution": 0.0, "memberships": 1, "filters": 4294967295}
 STATIC_BODY = {"type": "rigid_body", "kind": "static", "mass": None}
 DYNAMIC_BODY = {"type": "rigid_body", "kind": "dynamic", "mass": None}
+DEFAULT_AUDIO = {"type": "audio_player", "path": "", "volume": 1.0, "loop": False, "autoplay": True, "spatial": True, "distance": 5.0}
 EXPECTED_COMPONENTS = {
     "ground": [
         {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
@@ -104,6 +105,21 @@ EXPECTED_COMPONENTS = {
     "rubber_block": [
         {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.5, 0.5, 0.5], "friction": 1.0}},
         DYNAMIC_BODY,
+    ],
+    "water": [
+        {"type": "shadows", "cast": False, "receive": False},
+    ],
+    "bushes": [
+        {"type": "shadows", "cast": False, "receive": True},
+    ],
+    "bush_b": [
+        {"type": "shadows", "cast": True, "receive": True},
+    ],
+    "campfire": [
+        {"type": "audio_player", "path": "sounds/campfire.ogg", "volume": 0.8, "loop": True, "autoplay": True, "spatial": True, "distance": 4.0},
+    ],
+    "jingle": [
+        {"type": "audio_player", "path": "sounds/chime.ogg", "volume": 0.5, "loop": False, "autoplay": False, "spatial": False, "distance": 5.0},
     ],
 }
 
@@ -255,6 +271,10 @@ def _prop_layout(layout, prop):
     return next(child for name, bound, child in layout.calls if name == "prop" and bound["property"] == prop)
 
 
+def _operator_icon(layout, properties):
+    return next(bound.get("icon") for name, bound, child in layout.calls if name == "operator" and bound.get("properties") is properties)
+
+
 class FakePanel:
     def __init__(self, test):
         self.layout = FakeLayout(test)
@@ -279,10 +299,12 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Object, "bevy_component_data"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "export_scene.bevy_components_glb"):
+        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
+        for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_audio_handles"):
+            self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
@@ -300,7 +322,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(_operator_exists("bevy_components.add"))
 
     def test_add_menus_search_on_key_press(self):
-        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering):
+        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_audio):
             self.assertEqual(menu.bl_options, {"SEARCH_ON_KEY_PRESS"})
 
     def test_disable_and_enable_keeps_components(self):
@@ -468,6 +490,57 @@ class TestOperators(unittest.TestCase):
         bpy.ops.bevy_components.move(index=2, direction="UP")
         self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["rigid_body", "visibility_range", "collider"])
 
+    def test_shadows_are_stored(self):
+        item = add_component(self.obj, "SHADOWS")
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "shadows", "cast": False, "receive": True}])
+        item.shadows_cast = True
+        item.shadows_receive = False
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "shadows", "cast": True, "receive": False}])
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="SHADOWS"), {"CANCELLED"})
+
+    def test_audio_players_are_stored(self):
+        item = add_component(self.obj, "AUDIO_PLAYER")
+        self.assertEqual(_stored(self.obj)["components"], [DEFAULT_AUDIO])
+        item.audio_path = " sounds/fire.ogg "
+        item.audio_volume = 0.3
+        item.audio_loop = True
+        item.audio_autoplay = False
+        item.audio_spatial = False
+        item.audio_distance = 12.5
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "audio_player", "path": "sounds/fire.ogg", "volume": 0.3, "loop": True, "autoplay": False, "spatial": False, "distance": 12.5}])
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="AUDIO_PLAYER"), {"CANCELLED"})
+
+    def test_reset_restores_shadow_and_audio_defaults(self):
+        shadows = add_component(self.obj, "SHADOWS", shadows_cast=True, shadows_receive=False)
+        audio = add_component(self.obj, "AUDIO_PLAYER", audio_path="sounds/fire.ogg", audio_volume=0.2, audio_loop=True, audio_spatial=False, audio_distance=30)
+        bpy.ops.bevy_components.reset(index=0)
+        bpy.ops.bevy_components.reset(index=1)
+        self.assertEqual((shadows.shadows_cast, shadows.shadows_receive), (False, True))
+        self.assertEqual((audio.audio_path, audio.audio_volume, audio.audio_loop, audio.audio_autoplay, audio.audio_spatial, audio.audio_distance), ("", 1.0, False, True, True, 5.0))
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "shadows", "cast": False, "receive": True}, DEFAULT_AUDIO])
+
+    def test_pick_sound_stores_the_path_inside_assets(self):
+        add_component(self.obj, "COLLIDER")
+        audio = add_component(self.obj, "AUDIO_PLAYER")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "game").mkdir()
+            (root / "game" / "Cargo.toml").write_text("[package]\n")
+            cases = (
+                (root / "game" / "assets" / "sounds" / "fire.ogg", "sounds/fire.ogg"),
+                (root / "game" / "assets" / "packs" / "assets" / "wind.wav", "packs/assets/wind.wav"),
+                (root / "assets" / "music" / "theme.mp3", "music/theme.mp3"),
+                (root / "downloads" / "loose.flac", "loose.flac"),
+            )
+            for file, expected in cases:
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_bytes(b"")
+                self.assertEqual(pick_sound(self.obj, file), {"FINISHED"})
+                self.assertEqual(audio.audio_path, expected)
+            self.assertEqual(_stored(self.obj)["components"][1]["path"], "loose.flac")
+            self.assertEqual(bpy.ops.bevy_components.pick_sound(index=0, filepath=str(cases[0][0])), {"CANCELLED"})
+            self.assertEqual(audio.audio_path, "loose.flac")
+
     def test_invalid_custom_json_is_not_stored(self):
         add_component(self.obj, "CUSTOM", custom_json="{broken")
         self.assertNotIn("bevy_components", self.obj.keys())
@@ -493,7 +566,7 @@ class TestPanels(unittest.TestCase):
         self.obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "subject")
 
     def test_object_panel_draws_every_component(self):
-        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM"):
+        for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM", "SHADOWS", "AUDIO_PLAYER"):
             add_component(self.obj, kind)
         collider = self.obj.bevy_component_data.components[1]
         for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE"):
@@ -503,9 +576,9 @@ class TestPanels(unittest.TestCase):
             addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
             text, add_menu, enabled = panel.layout.buttons()[0]
             self.assertEqual((text, add_menu.name), ("Add Component", "BEVY_MT_component_add"))
-            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 4)
-            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_expanded", "show_layers", "show_expanded", "show_expanded"])
-            self.assertEqual(panel.layout.props().count("enabled"), 4)
+            self.assertEqual(panel.layout.menus(), ["BEVY_MT_object_context_menu"] + ["BEVY_MT_component_context_menu"] * 6)
+            self.assertEqual([bound["property"] for name, bound, layout in panel.layout.calls if name == "panel_prop"], ["show_expanded", "show_expanded", "show_layers", "show_expanded", "show_expanded", "show_expanded", "show_expanded"])
+            self.assertEqual(panel.layout.props().count("enabled"), 6)
         self.assertIn("collider_height", panel.layout.props())
         self.assertNotIn("Fade distances must increase from top to bottom", panel.layout.texts())
 
@@ -540,13 +613,17 @@ class TestPanels(unittest.TestCase):
         add_component(self.obj, "CUSTOM")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering"])
+        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio"])
         found = {}
-        for menu_type in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering):
+        for menu_type in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_audio):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "VISIBILITY_RANGE": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "AUDIO_PLAYER": True})
+        add_component(self.obj, "AUDIO_PLAYER")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add_audio.draw(menu, _menu_context(self.obj))
+        self.assertEqual([(text, enabled) for text, properties, enabled in menu.layout.buttons()], [("Audio Player", False)])
 
     def test_component_context_menu_targets_its_component(self):
         add_component(self.obj, "COLLIDER")
@@ -615,6 +692,35 @@ class TestPanels(unittest.TestCase):
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertTrue(_prop_layout(panel.layout, "rigid_body_mass").active)
 
+    def test_shadows_card(self):
+        shadows = add_component(self.obj, "SHADOWS")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-2:], ["shadows_cast", "shadows_receive"])
+        self.assertIn(("column", "Shadows"), [(name, bound.get("heading")) for name, bound, layout in panel.layout.calls])
+        self.assertIn("Shadows", panel.layout.texts())
+        self.assertNotIn("Casts and receives shadows", panel.layout.texts())
+        shadows.shadows_cast = True
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertIn("Casts and receives shadows", panel.layout.texts())
+
+    def test_audio_player_card(self):
+        audio = add_component(self.obj, "AUDIO_PLAYER")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-6:], ["audio_path", "audio_volume", "audio_loop", "audio_autoplay", "audio_spatial", "audio_distance"])
+        self.assertIn(("column", "Playback"), [(name, bound.get("heading")) for name, bound, layout in panel.layout.calls])
+        self.assertEqual([(properties.index, enabled) for text, properties, enabled in panel.layout.buttons() if text == "" and _operator_icon(panel.layout, properties) == "FILEBROWSER"], [(0, True)])
+        self.assertTrue(_prop_layout(panel.layout, "audio_path").alert)
+        self.assertTrue(_prop_layout(panel.layout, "audio_distance").active)
+        audio.audio_path = "sounds/fire.ogg"
+        audio.audio_spatial = False
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertFalse(_prop_layout(panel.layout, "audio_path").alert)
+        self.assertFalse(_prop_layout(panel.layout, "audio_distance").active)
+
     def test_sidebar_draws_components(self):
         add_component(self.obj, "RIGID_BODY")
         select(self.obj)
@@ -629,7 +735,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.props(), ["enabled"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
-        self.assertEqual(panel.layout.props(), ["scope", "colliders", "visibility_ranges", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "visibility_ranges", "audio_ranges", "labels", "xray", "edit_handles", "max_mesh_edges"])
         settings.enabled = False
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
@@ -998,6 +1104,64 @@ class TestViewport(unittest.TestCase):
         addon.gizmo._set_handle_value(0, -1)
         self.assertAlmostEqual(collider.collider_radius, 0.001)
 
+    def test_audio_handle_poll(self):
+        gizmo = addon.gizmo.BEVY_GGT_audio_handles
+        self.assertFalse(gizmo.poll(bpy.context))
+        audio = add_component(self.obj, "AUDIO_PLAYER")
+        self.assertTrue(gizmo.poll(bpy.context))
+        self.assertFalse(addon.gizmo.BEVY_GGT_collider_handles.poll(bpy.context))
+        audio.audio_spatial = False
+        self.assertFalse(gizmo.poll(bpy.context))
+        audio.audio_spatial = True
+        for setting in ("audio_ranges", "edit_handles", "enabled"):
+            setattr(self.settings, setting, False)
+            self.assertFalse(gizmo.poll(bpy.context), setting)
+            setattr(self.settings, setting, True)
+        self.obj.select_set(False)
+        self.assertFalse(gizmo.poll(bpy.context))
+
+    def test_audio_handle_sets_the_reference_distance(self):
+        audio = add_component(self.obj, "AUDIO_PLAYER", audio_distance=3)
+        self.assertEqual(addon.gizmo._get_audio_distance(), 3.0)
+        addon.gizmo._set_audio_distance((7.5,))
+        self.assertEqual(audio.audio_distance, 7.5)
+        self.assertEqual(_stored(self.obj)["components"][0]["distance"], 7.5)
+        addon.gizmo._set_audio_distance(-1)
+        self.assertAlmostEqual(audio.audio_distance, 0.01)
+
+    def test_audio_range_preview_is_world_sized(self):
+        self.obj.location = (1, 2, 3)
+        self.obj.scale = (2, 0.5, 3)
+        self.obj.rotation_euler = (0.3, 0.2, 0.1)
+        bpy.context.view_layer.update()
+        audio = add_component(self.obj, "AUDIO_PLAYER", audio_distance=4)
+        select(self.obj)
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        self.assertEqual([(color, width) for matrix, lines, color, width in batches], [(addon.overlay.AUDIO_COLOR, 1.9), (addon.overlay.AUDIO_QUIET_COLOR, 1.1)])
+        for (matrix, lines, color, width), radius in zip(batches, (4, 40)):
+            self.assertEqual(tuple(matrix.translation), (1.0, 2.0, 3.0))
+            distances = [(matrix @ Vector(point) - matrix.translation).length for line in lines for point in line]
+            self.assertTrue(all(abs(distance - radius) < 1e-3 for distance in distances), radius)
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Audio · no sound · full volume within 4m, 1% at 40m"])
+        audio.audio_distance = 3.5119462
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Audio · no sound · full volume within 3.51m, 1% at 35.12m"])
+        audio.audio_spatial = False
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        audio.audio_spatial = True
+        self.settings.audio_ranges = False
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [])
+        self.settings.audio_ranges = True
+
+    def test_shadow_and_audio_labels(self):
+        shadows = add_component(self.obj, "SHADOWS")
+        add_component(self.obj, "AUDIO_PLAYER", audio_path="sounds/ambience/wind.ogg", audio_loop=True, audio_autoplay=False, audio_spatial=False)
+        labels = {(False, True): "no casting", (True, False): "no receiving", (False, False): "no casting or receiving", (True, True): "as usual"}
+        for (cast, receive), label in labels.items():
+            shadows.shadows_cast = cast
+            shadows.shadows_receive = receive
+            self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [f"Shadows · {label}", "Audio · wind.ogg · loop · paused · same volume everywhere"])
+
     def test_preview_batches(self):
         add_component(self.obj, "COLLIDER", collider_sensor=True)
         add_component(self.obj, "VISIBILITY_RANGE")
@@ -1264,6 +1428,37 @@ class TestValidation(unittest.TestCase):
         bpy.context.view_layer.update()
         self.assertEqual(self._messages(), ["board: plank is rotated inside shelf, which is scaled unevenly, so the game sizes its collider wrong. Apply scale to shelf"])
 
+    def test_shadows_need_a_mesh(self):
+        group = add_empty("group", (0, 0, 0))
+        add_component(group, "SHADOWS")
+        self.assertEqual(self._messages(), ["group: No mesh on this object or under it to cast or receive shadows"])
+        child = add_mesh(bpy.ops.mesh.primitive_cube_add, "child")
+        child.parent = group
+        self.assertEqual(self._messages(), [])
+        add_component(child, "SHADOWS", shadows_cast=True)
+        self.assertEqual(self._messages(), ["group: No mesh on this object or under it to cast or receive shadows"])
+
+    def test_audio_player_sound_paths(self):
+        speaker = add_empty("speaker", (0, 0, 0))
+        audio = add_component(speaker, "AUDIO_PLAYER")
+        expected = {
+            "": ["No sound file, so nothing plays"],
+            "sounds/fire.ogg": [],
+            "music/theme.MP3": [],
+            "fire.flac": [],
+            "sounds/fire.aiff": ["Bevy cannot play .aiff files, use .ogg, .wav, .mp3 or .flac"],
+            "sounds/fire": ["The sound file has no extension, so Bevy cannot tell how to load it"],
+            "//sounds/fire.ogg": ["\"//sounds/fire.ogg\" is not a path inside your game's assets folder, such as sounds/fire.ogg"],
+            "C:/game/assets/fire.wav": ["\"C:/game/assets/fire.wav\" is not a path inside your game's assets folder, such as sounds/fire.ogg"],
+            "sounds\\fire.ogg": ["\"sounds\\fire.ogg\" is not a path inside your game's assets folder, such as sounds/fire.ogg"],
+            "../fire.ogg": ["\"../fire.ogg\" is not a path inside your game's assets folder, such as sounds/fire.ogg"],
+        }
+        for path, messages in expected.items():
+            audio.audio_path = path
+            self.assertEqual(self._messages(), [f"speaker: {message}" for message in messages], path)
+        audio.audio_path = "sounds/fire.ogg"
+        self.assertEqual(json.loads(speaker["bevy_components"])["components"][0]["path"], "sounds/fire.ogg")
+
     def test_custom_component_type_paths(self):
         marker = add_empty("marker", (0, 0, 0))
         add_component(marker, "CUSTOM", custom_type="my_game::Wrapper<f32>")
@@ -1338,7 +1533,7 @@ class TestExport(unittest.TestCase):
         cls.directory.cleanup()
 
     def test_every_object_is_exported(self):
-        self.assertEqual(set(self.nodes), set(EXPECTED_COMPONENTS) | {"chimney", "sun", "cart_body"})
+        self.assertEqual(set(self.nodes), set(EXPECTED_COMPONENTS) | {"chimney", "sun", "cart_body", "bush_a"})
         self.assertEqual(self.nodes["house"].get("children"), [self.gltf["nodes"].index(self.nodes["chimney"])])
         self.assertEqual(sorted(self.gltf["nodes"][index]["name"] for index in self.nodes["cart"]["children"]), ["cart_body", "cart_handle", "cart_shape"])
 
@@ -1353,6 +1548,7 @@ class TestExport(unittest.TestCase):
     def test_editor_state_is_not_exported(self):
         self.assertNotIn("extras", self.nodes["chimney"])
         self.assertNotIn("extras", self.nodes["cart_body"])
+        self.assertNotIn("extras", self.nodes["bush_a"])
         self.assertNotIn("extras", self.nodes["sun"])
         self.assertTrue(all("extras" not in scene for scene in self.gltf["scenes"]))
 

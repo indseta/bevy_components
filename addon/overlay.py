@@ -1,5 +1,6 @@
 from array import array
 from math import radians
+from pathlib import PurePosixPath
 
 import blf
 import bmesh
@@ -7,7 +8,7 @@ import bpy
 import gpu
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
-from mathutils import Vector
+from mathutils import Matrix, Vector
 
 from .geometry import box_lines, capsule_lines, cuboid_lines, sphere_lines
 from .system import children_map, component_of, components_for, mesh_sources, panel_expanded, redraw_viewports
@@ -21,6 +22,15 @@ COLLIDER_COLOR = (0.22, 0.96, 0.55, 0.90)
 SENSOR_COLOR = (0.96, 0.60, 0.20, 0.90)
 LOD_IN_COLOR = (0.20, 0.72, 1.0, 0.55)
 LOD_OUT_COLOR = (1.0, 0.62, 0.25, 0.55)
+AUDIO_COLOR = (0.95, 0.80, 0.25, 0.70)
+AUDIO_QUIET_COLOR = (0.95, 0.80, 0.25, 0.30)
+AUDIO_QUIET_FACTOR = 10
+SHADOW_LABELS = {
+    (False, True): "no casting",
+    (True, False): "no receiving",
+    (False, False): "no casting or receiving",
+    (True, True): "as usual",
+}
 
 
 def preview_objects(context, settings):
@@ -174,6 +184,12 @@ def preview_batches(context, settings):
                     continue
                 local_lines = [(tuple(offset + inverse @ Vector(start)), tuple(offset + inverse @ Vector(end))) for start, end in sphere_lines(radius, segments=48)]
                 batches.append((obj.matrix_world, local_lines, color, width))
+
+        audio = component_of(obj, "AUDIO_PLAYER")
+        if audio and audio.audio_spatial and settings.audio_ranges:
+            center = Matrix.Translation(obj.matrix_world.translation)
+            for radius, color, width in ((audio.audio_distance, AUDIO_COLOR, 1.9), (audio.audio_distance * AUDIO_QUIET_FACTOR, AUDIO_QUIET_COLOR, 1.1)):
+                batches.append((center, sphere_lines(radius, segments=48), color, width))
     return batches
 
 
@@ -221,6 +237,21 @@ def _label_lines(obj, settings, children):
     visibility = component_of(obj, "VISIBILITY_RANGE")
     if visibility and settings.visibility_ranges:
         descriptions.append(f"LOD · in {visibility.fade_in_start:g}–{visibility.fade_in_end:g}m · out {visibility.fade_out_start:g}–{visibility.fade_out_end:g}m")
+    shadows = component_of(obj, "SHADOWS")
+    if shadows:
+        descriptions.append(f"Shadows · {SHADOW_LABELS[(shadows.shadows_cast, shadows.shadows_receive)]}")
+    audio = component_of(obj, "AUDIO_PLAYER")
+    if audio and settings.audio_ranges:
+        details = [PurePosixPath(audio.audio_path.strip()).name or "no sound"]
+        if audio.audio_loop:
+            details.append("loop")
+        if not audio.audio_autoplay:
+            details.append("paused")
+        if audio.audio_spatial:
+            details.append(f"full volume within {round(audio.audio_distance, 2):g}m, 1% at {round(audio.audio_distance * AUDIO_QUIET_FACTOR, 2):g}m")
+        else:
+            details.append("same volume everywhere")
+        descriptions.append(f"Audio · {' · '.join(details)}")
     return descriptions
 
 
