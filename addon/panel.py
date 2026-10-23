@@ -412,7 +412,7 @@ def draw_components(layout, context, obj):
 
 
 class BEVY_PT_object_properties(bpy.types.Panel):
-    bl_label = "Bevy Components"
+    bl_label = "Components"
     bl_idname = "BEVY_PT_object_properties"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"

@@ -460,6 +460,7 @@ class TestRegistration(unittest.TestCase):
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
+        self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Components", "object"))
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.menu.bake_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())

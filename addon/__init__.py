@@ -3,7 +3,7 @@ bl_info = {
     "author": "Ask Indset",
     "version": (0, 3, 4),
     "blender": (4, 2, 0),
-    "location": "Properties > Object > Bevy Components, Properties > Scene > Bevy Custom Components, Properties > World > Bevy Ambient Light, 3D Viewport > Sidebar > Bevy, 3D Viewport > Overlays",
+    "location": "Properties > Object > Components, Properties > Scene > Bevy Custom Components, Properties > World > Bevy Ambient Light, 3D Viewport > Sidebar > Bevy, 3D Viewport > Overlays",
     "description": "Add Bevy components to objects, preview them in the viewport and export levels as GLB",
     "category": "Import-Export",
 }
