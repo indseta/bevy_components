@@ -105,6 +105,10 @@ pub enum ExportedComponent {
         bicubic: bool,
         texture: Option<usize>,
     },
+    Navigation {
+        kind: String,
+        cost: Option<f32>,
+    },
     #[serde(other)]
     Unsupported,
 }

@@ -268,6 +268,12 @@ def serialize_component(item, locate=_portable):
             "repeat": bool(item.animation_loop),
             "speed": _float32(item.animation_speed),
         }
+    if kind == "NAVIGATION":
+        return {
+            "type": "navigation",
+            "kind": item.navigation_kind.lower(),
+            "cost": _float32(item.navigation_cost) if item.navigation_kind == "WALKABLE" else None,
+        }
     raise ValueError(f"Unsupported component: {kind}")
 
 

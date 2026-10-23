@@ -13,6 +13,7 @@ spec.loader.exec_module(bsn)
 
 BODY = [{"type": "collider", "shape": "cuboid", "size": [1, 1, 1]}, {"type": "rigid_body", "kind": "dynamic"}]
 CONVEX = [{"type": "collider", "shape": "convex"}, {"type": "rigid_body", "kind": "dynamic"}]
+OBSTACLE = {"type": "navigation", "kind": "obstacle", "cost": None}
 
 
 def node(name, components=(), **fields):
@@ -74,6 +75,7 @@ class TestPrefabs(unittest.TestCase):
             (["rocket", "rock"], BODY, "object_dynamic_cuboid"),
             (["coin", "gem"], [{"type": "custom", "type_path": "my_game::Pickup<u32>", "data": {}}], "object_pickup"),
             (["Tree.001", "Tree.002"], [{"type": "shadows", "cast": False}], "object_tree"),
+            (["rocket", "rock"], BODY + [OBSTACLE], "object_dynamic_cuboid_obstacle"),
         ]
         for names, components, expected in cases:
             text, _warnings = source(scene(*(node(name, components, mesh=0) for name in names)))
@@ -101,6 +103,40 @@ class TestPrefabs(unittest.TestCase):
         self.assertNotIn("object_", text)
         self.assertIn('~AnimationTargetId::from_names([Name::new("door_a")].iter())', text)
         self.assertIn("@animated_by(#door_a)", text)
+
+
+class TestNavigation(unittest.TestCase):
+    def test_markers_reach_meshes_and_colliders_on_and_under_the_object(self):
+        gltf = scene(
+            node("level", [{"type": "navigation", "kind": "walkable", "cost": 1.0}], children=[1, 2, 3, 6]),
+            node("floor", mesh=0),
+            node("mud", [{"type": "navigation", "kind": "walkable", "cost": 3.0}], mesh=0),
+            node("props", [OBSTACLE], children=[4, 5]),
+            node("crate_box", [{"type": "collider", "shape": "cuboid", "size": [1, 1, 1]}]),
+            node("flower", [{"type": "navigation", "kind": "ignored", "cost": None}], mesh=0),
+            node("rock", [{"type": "collider", "shape": "sphere", "radius": 0.5}, OBSTACLE], mesh=0),
+        )
+        text, warnings = source(gltf, prefabs=False)
+        self.assertEqual(warnings, [])
+        self.assertIn("\nuse bevy_components_importer::{NavigationObstacle, NavigationWalkable};\n", text)
+        setup = function(text, "setup")
+        self.assertEqual(setup.count("NavigationWalkable { cost: 1.0 }"), 1)
+        self.assertEqual(setup.count("NavigationWalkable { cost: 3.0 }"), 1)
+        self.assertEqual(setup.count("NavigationObstacle"), 2)
+        self.assertIn("#crate_box\n                    Transform\n                    Visibility\n                    Collider::cuboid(1.0, 1.0, 1.0)\n                    NavigationObstacle\n", setup)
+        self.assertNotIn("Navigation", setup[:setup.index("#floor")])
+
+    def test_colliders_on_meshes_with_several_parts(self):
+        gltf = scene(node("statue", [{"type": "collider", "shape": "cuboid", "size": [1, 1, 1]}, OBSTACLE], mesh=0))
+        gltf["meshes"][0]["primitives"].append({"attributes": {"POSITION": 0}, "material": 1})
+        setup = function(source(gltf)[0], "setup")
+        self.assertEqual(setup.count("NavigationObstacle"), 3)
+
+    def test_scenes_without_navigation_need_no_importer(self):
+        text, _warnings = source(scene(node("rock", BODY, mesh=0)))
+        self.assertNotIn("bevy_components_importer", text)
+        text, _warnings = source(scene(node("rock", [OBSTACLE], mesh=0)))
+        self.assertIn("\nuse bevy_components_importer::NavigationObstacle;\n", text)
 
 
 class TestLiterals(unittest.TestCase):

@@ -68,7 +68,7 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 - a Joint with no bodies, the same body twice, only static bodies, or a body that has no Rigid Body or Collider, is part of another body or is left out of the export
 - levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
 - Custom Component type paths that aren't Rust paths, or that repeat on one object
-- Shadows with no mesh on or under its object
+- Shadows with no mesh on or under its object, and Navigation with no mesh or collider on or under its object
 - an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
 - a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported scene itself (a file on another drive than the exported scene is an error)
 - an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
@@ -96,6 +96,21 @@ The importer inserts the component itself when your type derives `Reflect` with 
 | String | `String` |
 | Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
 | Color | `Color`, in sRGB |
+
+## Navigation
+
+**Navigation** (in Add Component) tags the meshes and colliders on and under an object for a navmesh crate, unless a closer object has its own Navigation:
+
+- **Walkable** for ground that agents walk on, imported as `NavigationWalkable`. Its **Cost** says how much agents avoid it when they find a path: 1 for plain ground, 3 for mud, 0.5 for a road.
+- **Obstacle** for walls, crates and trees that agents go around, imported as `NavigationObstacle`.
+- **Ignored** to leave an object out, such as a small prop on walkable ground under a tagged parent.
+
+The viewport draws the faces of walkable ground that slope less than 45° and the bounds of obstacles. The importer only tags entities and builds no navmesh. No navmesh crate supports Bevy 0.20 yet (checked in October 2026: vleue_navigator 0.16, bevy_rerecast 0.5 and bevy_landmass 0.12 are on Bevy 0.19, oxidized_navigation on 0.15). Once one does, hand it the tagged entities:
+
+- **bevy_rerecast** builds the navmesh from the tagged meshes alone with `NavmeshSettings { filter: Some(tagged.iter().collect()), ..default() }`, where `tagged` is a `Query<Entity, Or<(With<NavigationWalkable>, With<NavigationObstacle>)>>`.
+- **vleue_navigator** cuts tagged obstacles out of the navmesh with `NavmeshUpdaterPlugin::<Collider, NavigationObstacle>`, and takes the walkable ground from `NavMesh::from_bevy_mesh` of a walkable mesh.
+- **oxidized_navigation** reads colliders that have its `NavMeshAffector`, so insert one on each entity with a `Collider` and a navigation tag.
+- **bevy_landmass** uses a navmesh from one of these, and its type index costs can come from `NavigationWalkable::cost`.
 
 ## Lights
 
@@ -179,6 +194,7 @@ fn setup(mut commands: Commands) {
 With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file, so **Export Again** writes the same files in one click, and it only rewrites files that changed. It will not write over `main.rs`, `lib.rs` or another crate root, warns before it replaces a `.rs` file it did not write or one edited since the last export (Export Again refuses those), and removes files it copied into the assets folder earlier that the scene no longer uses. Rebuild the game after exporting again.
 
 - Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors and colors.
+- Navigation writes the importer's `NavigationWalkable` and `NavigationObstacle`, so a scene that uses it needs the importer crate, though not its plugin.
 - Physics needs Avian with its `collider-from-mesh` feature. Add `BlenderBevyComponentsPlugin` when you compress textures or use a Scene Reference, since the referenced GLBs carry their components the usual way.
 - Skins and shape keys are left out.
 

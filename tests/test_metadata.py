@@ -66,6 +66,14 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "shadows", "cast": False, "receive": True})
         self.assertEqual(metadata.component_errors(component), [])
 
+    def test_navigation(self):
+        component = item(component_type="NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.5)
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "navigation", "kind": "walkable", "cost": 2.5})
+        for kind in ("OBSTACLE", "IGNORED"):
+            component.navigation_kind = kind
+            self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "navigation", "kind": kind.lower(), "cost": None})
+        self.assertEqual(metadata.component_errors(component), [])
+
     def test_audio_player(self):
         component = item(component_type="AUDIO_PLAYER", audio_path=" sounds/fire.ogg ", audio_volume=0.699999988079071, audio_loop=True, audio_autoplay=False, audio_spatial=True, audio_distance=2.5)
         self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "audio_player", "path": "sounds/fire.ogg", "volume": 0.7, "loop": True, "autoplay": False, "spatial": True, "distance": 2.5})

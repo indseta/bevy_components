@@ -175,6 +175,12 @@ def _draw_shadows(layout, obj, index, item):
         row.label(text="Casts and receives shadows", icon="INFO")
 
 
+def _draw_navigation(layout, obj, index, item):
+    layout.prop(item, "navigation_kind")
+    if item.navigation_kind == "WALKABLE":
+        layout.prop(item, "navigation_cost")
+
+
 def _draw_audio_player(layout, obj, index, item):
     row = layout.row(align=True)
     row.alert = not item.audio_path.strip()
@@ -365,6 +371,7 @@ DRAWERS = {
     "JOINT": _draw_joint,
     "SCENE_REFERENCE": _draw_scene_reference,
     "ANIMATION": _draw_animation,
+    "NAVIGATION": _draw_navigation,
     "FOG_VOLUME": _draw_fog_volume,
     "REFLECTION_PROBE": _draw_reflection_probe,
     "IRRADIANCE_VOLUME": _draw_irradiance_volume,
@@ -593,6 +600,7 @@ class BEVY_PT_overlay(bpy.types.Panel):
         column.prop(settings, "scene_references")
         column.prop(settings, "volumes")
         column.prop(settings, "lights")
+        column.prop(settings, "navigation")
         column = split.column()
         column.prop(settings, "labels")
         column.prop(settings, "xray")

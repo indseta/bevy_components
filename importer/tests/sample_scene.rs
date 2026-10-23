@@ -2,7 +2,7 @@ mod common;
 
 use avian3d::prelude::*;
 use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
-use bevy_components_importer::{BlenderCustomComponents, GltfTextures};
+use bevy_components_importer::{BlenderCustomComponents, GltfTextures, NavigationObstacle, NavigationWalkable};
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -868,6 +868,60 @@ fn shadow_flags_reach_meshes_on_and_under_the_object() {
     assert_eq!(casters.iter(world).count(), 2);
     let mut receivers = world.query_filtered::<Entity, With<NotShadowReceiver>>();
     assert_eq!(receivers.iter(world).count(), 1);
+}
+
+#[test]
+fn navigation_tags_reach_meshes_and_colliders_on_and_under_the_object() {
+    let mut app = load_scene(SCENE);
+    let world = app.world_mut();
+    for (name, cost) in [("ground", 1.0), ("water", 3.0)] {
+        let mesh = mesh(world, name);
+        assert_eq!(world.get::<NavigationWalkable>(mesh).map(|walkable| walkable.cost), Some(cost), "{name}");
+        assert!(world.get::<NavigationObstacle>(mesh).is_none(), "{name}");
+    }
+    for name in ["crate", "crate_copy", "house", "chimney", "bush_a", "cart_body"] {
+        let meshes = meshes(world, name);
+        assert!(!meshes.is_empty(), "{name}");
+        for mesh in meshes {
+            assert!(world.get::<NavigationObstacle>(mesh).is_some(), "{name}");
+        }
+    }
+    for name in ["crate", "crate_copy", "cart_shape", "cart_handle"] {
+        let node = node(world, name);
+        assert!(world.get::<Collider>(node).is_some() && world.get::<NavigationObstacle>(node).is_some(), "{name}");
+    }
+    for name in ["ground", "house", "cart", "bushes"] {
+        let node = node(world, name);
+        assert!(world.get::<NavigationObstacle>(node).is_none() && world.get::<NavigationWalkable>(node).is_none(), "{name}");
+    }
+    for name in ["bush_b", "ball", "lamp"] {
+        let mesh = mesh(world, name);
+        assert!(world.get::<NavigationObstacle>(mesh).is_none() && world.get::<NavigationWalkable>(mesh).is_none(), "{name}");
+    }
+    let mut walkable = world.query_filtered::<Entity, With<NavigationWalkable>>();
+    assert_eq!(walkable.iter(world).count(), 2);
+    let mut obstacles = world.query_filtered::<Entity, With<NavigationObstacle>>();
+    assert_eq!(obstacles.iter(world).count(), 11);
+}
+
+#[test]
+fn navigation_tags_meshes_added_later_and_survives_bad_data() {
+    let mut app = SceneApp::default().build();
+    let cuboid = json!({"type": "collider", "shape": "cuboid", "size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": false});
+    let world = app.world_mut();
+    let floor = world.spawn((Name::new("floor"), Transform::default(), component_extras(json!([{"type": "navigation", "kind": "walkable", "cost": -2.0}, cuboid.clone()])))).id();
+    let path = world.spawn((Name::new("path"), Transform::default(), component_extras(json!([{"type": "navigation", "kind": "walkable"}, cuboid.clone()])))).id();
+    let pond = world.spawn((Name::new("pond"), Transform::default(), component_extras(json!([{"type": "navigation", "kind": "swimmable", "cost": null}, cuboid])))).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world_mut();
+    assert_eq!(world.get::<NavigationWalkable>(floor).map(|walkable| walkable.cost), Some(1.0));
+    assert_eq!(world.get::<NavigationWalkable>(path).map(|walkable| walkable.cost), Some(1.0));
+    assert!(world.get::<NavigationWalkable>(pond).is_none() && world.get::<NavigationObstacle>(pond).is_none());
+    let rug = world.spawn((Mesh3d::default(), ChildOf(floor))).id();
+    app.update();
+    assert_eq!(app.world().get::<NavigationWalkable>(rug).map(|walkable| walkable.cost), Some(1.0));
 }
 
 #[test]

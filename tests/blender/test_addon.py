@@ -32,22 +32,26 @@ DYNAMIC_BODY = {**KINEMATIC_BODY, "kind": "dynamic", "gravity_scale": 1.0, "line
 DEFAULT_JOINT = {"type": "joint", "kind": "revolute", "body1": None, "body2": None, "axis": [0.0, 1.0, 0.0], "angle_limits": None, "distance_limits": None, "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.0, "collide": False}
 DEFAULT_AUDIO = {"type": "audio_player", "path": "", "volume": 1.0, "loop": False, "autoplay": True, "spatial": True, "distance": 5.0}
 WINDMILL = {"type": "scene_reference", "path": "props/windmill.glb", "scene": 0}
+OBSTACLE = {"type": "navigation", "kind": "obstacle", "cost": None}
 DEFAULT_LIGHT = {"type": "light", "intensity": None, "radius": None, "range": None, "color": None, "size": None, "shadows": True, "contact_shadows": False, "volumetric": False, "baked": False, "depth_bias": None, "normal_bias": None, "near_clip": None, "cascades": None}
 EXPECTED_COMPONENTS = {
     "ground": [
         {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
         STATIC_BODY,
         {"type": "lightmap", "bicubic": True, "texture": "ground_lightmap"},
+        {"type": "navigation", "kind": "walkable", "cost": 1.0},
     ],
     "crate": [
         {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [2.0, 2.0, 2.0], "friction": 0.8, "restitution": 0.1}},
         DYNAMIC_BODY,
         {"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False},
+        OBSTACLE,
     ],
     "crate_copy": [
         {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [2.0, 2.0, 2.0], "friction": 0.8, "restitution": 0.1}},
         DYNAMIC_BODY,
         {"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False},
+        OBSTACLE,
     ],
     "ball": [
         {"type": "collider", "shape": "sphere", **DEFAULT_COLLIDER},
@@ -81,6 +85,7 @@ EXPECTED_COMPONENTS = {
     "house": [
         {"type": "visibility_range", "start": [80.0, 85.0], "end": [250.0, 260.0], "use_aabb": True},
         {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
+        OBSTACLE,
     ],
     "tree_lod0": [
         {"type": "visibility_range", "start": [0.0, 0.0], "end": [20.0, 25.0], "use_aabb": False},
@@ -90,6 +95,7 @@ EXPECTED_COMPONENTS = {
     ],
     "cart": [
         {**DYNAMIC_BODY, "mass": 12.0},
+        OBSTACLE,
     ],
     "cart_shape": [
         {"type": "collider", "shape": "cuboid", **DEFAULT_COLLIDER},
@@ -119,12 +125,15 @@ EXPECTED_COMPONENTS = {
     ],
     "water": [
         {"type": "shadows", "cast": False, "receive": False},
+        {"type": "navigation", "kind": "walkable", "cost": 3.0},
     ],
     "bushes": [
         {"type": "shadows", "cast": False, "receive": True},
+        OBSTACLE,
     ],
     "bush_b": [
         {"type": "shadows", "cast": True, "receive": True},
+        {"type": "navigation", "kind": "ignored", "cost": None},
     ],
     "campfire": [
         {"type": "audio_player", "path": "sounds/campfire.ogg", "volume": 0.8, "loop": True, "autoplay": True, "spatial": True, "distance": 4.0},
@@ -731,6 +740,17 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(_stored(self.obj)["components"], [{"type": "shadows", "cast": True, "receive": False}])
         self.assertEqual(bpy.ops.bevy_components.add(component_type="SHADOWS"), {"CANCELLED"})
 
+    def test_navigation_is_stored(self):
+        item = add_component(self.obj, "NAVIGATION")
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "navigation", "kind": "walkable", "cost": 1.0}])
+        item.navigation_cost = 3
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "navigation", "kind": "walkable", "cost": 3.0}])
+        item.navigation_kind = "OBSTACLE"
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "navigation", "kind": "obstacle", "cost": None}])
+        item.navigation_kind = "IGNORED"
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "navigation", "kind": "ignored", "cost": None}])
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="NAVIGATION"), {"CANCELLED"})
+
     def test_audio_players_are_stored(self):
         item = add_component(self.obj, "AUDIO_PLAYER")
         self.assertEqual(_stored(self.obj)["components"], [DEFAULT_AUDIO])
@@ -1051,7 +1071,7 @@ class TestPanels(unittest.TestCase):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "LIGHT": False, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "LIGHTMAP": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "LIGHT": False, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "LIGHTMAP": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True, "NAVIGATION": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_audio.draw(menu, _menu_context(self.obj))
@@ -1236,6 +1256,18 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertIn("Casts and receives shadows", panel.layout.texts())
+
+    def test_navigation_card(self):
+        navigation = add_component(self.obj, "NAVIGATION")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-2:], ["navigation_kind", "navigation_cost"])
+        self.assertIn("Navigation", panel.layout.texts())
+        navigation.navigation_kind = "OBSTACLE"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props()[-1], "navigation_kind")
+        self.assertNotIn("navigation_cost", panel.layout.props())
 
     def test_audio_player_card(self):
         audio = add_component(self.obj, "AUDIO_PLAYER")
@@ -1439,7 +1471,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.props(), ["enabled"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
-        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "scene_references", "volumes", "lights", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "scene_references", "volumes", "lights", "navigation", "labels", "xray", "edit_handles", "max_mesh_edges"])
         settings.enabled = False
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
@@ -1784,7 +1816,7 @@ class TestCustomFields(unittest.TestCase):
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
         buttons = [(text, properties.component_type, getattr(properties, "type_path", ""), enabled) for text, properties, enabled in menu.layout.buttons()]
-        self.assertEqual(buttons, [("Custom Component", "CUSTOM", "", True), ("game::Health", "CUSTOM", "game::Health", False), ("game::Wave", "CUSTOM", "game::Wave", True)])
+        self.assertEqual(buttons, [("Custom Component", "CUSTOM", "", True), ("game::Health", "CUSTOM", "game::Health", False), ("game::Wave", "CUSTOM", "game::Wave", True), ("Navigation", "NAVIGATION", "", True)])
 
     def test_component_context_menu_edits_defined_fields(self):
         define_component("game::Health", ("amount", "INT", 100))
@@ -1926,6 +1958,52 @@ class TestViewport(unittest.TestCase):
             shadows.shadows_cast = cast
             shadows.shadows_receive = receive
             self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [f"Shadows · {label}", "Audio · wind.ogg · loop · paused · same volume everywhere"])
+
+    def test_navigation_previews_walkable_faces_and_obstacle_bounds(self):
+        walkable = addon.overlay.NAVIGATION_COLORS["WALKABLE"]
+        obstacle = addon.overlay.NAVIGATION_COLORS["OBSTACLE"]
+        navigation = add_component(self.obj, "NAVIGATION", navigation_cost=3)
+        select(self.obj)
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        self.assertEqual([(color, len(lines)) for matrix, lines, color, width in batches], [(walkable, 4)])
+        self.assertEqual({round(point[2], 4) for line in batches[0][1] for point in line}, {1.0})
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Navigation · Walkable · cost 3"])
+        self.obj.rotation_euler = (math.pi, 0, 0)
+        bpy.context.view_layer.update()
+        self.assertEqual({round(point[2], 4) for line in addon.overlay.preview_batches(bpy.context, self.settings)[0][1] for point in line}, {-1.0})
+        self.obj.rotation_euler = (math.radians(50), 0, 0)
+        bpy.context.view_layer.update()
+        self.assertEqual({round(point[1], 4) for line in addon.overlay.preview_batches(bpy.context, self.settings)[0][1] for point in line}, {1.0})
+        navigation.navigation_kind = "OBSTACLE"
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        self.assertEqual([(color, len(lines)) for matrix, lines, color, width in batches], [(obstacle, 12)])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Navigation · Obstacle"])
+        navigation.navigation_kind = "IGNORED"
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Navigation · Ignored"])
+        navigation.navigation_kind = "WALKABLE"
+        self.settings.navigation = False
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [])
+        self.settings.navigation = True
+
+    def test_navigation_previews_child_meshes_and_big_meshes(self):
+        group = add_empty("group", (0, 0, 0))
+        navigation = add_component(group, "NAVIGATION")
+        terrain = add_mesh(bpy.ops.mesh.primitive_grid_add, "terrain", x_subdivisions=10, y_subdivisions=10, size=4)
+        prop = add_mesh(bpy.ops.mesh.primitive_cube_add, "prop", location=(3, 0, 0))
+        add_component(prop, "NAVIGATION", navigation_kind="IGNORED")
+        for obj in (terrain, prop):
+            obj.parent = group
+        bpy.context.view_layer.update()
+        select(group)
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        self.assertEqual([(tuple(matrix.translation), len(lines)) for matrix, lines, color, width in batches], [((0.0, 0.0, 0.0), len(terrain.data.edges))])
+        self.settings.max_mesh_edges = 64
+        self.assertEqual(len(addon.overlay.preview_batches(bpy.context, self.settings)[0][1]), 12)
+        self.settings.max_mesh_edges = 2000
+        navigation.navigation_kind = "OBSTACLE"
+        self.assertEqual(len(addon.overlay.preview_batches(bpy.context, self.settings)[0][1]), 12)
 
     def test_scene_reference_preview_shows_the_scene_bounds(self):
         holder = add_empty("holder", (4, 5, 6))
@@ -2388,6 +2466,23 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(self._messages(), [])
         add_component(child, "SHADOWS", shadows_cast=True)
         self.assertEqual(self._messages(), ["group: No mesh on this object or under it to cast or receive shadows"])
+
+    def test_navigation_needs_a_mesh_or_collider(self):
+        group = add_empty("group", (0, 0, 0))
+        navigation = add_component(group, "NAVIGATION")
+        self.assertEqual(self._messages(), ["group: No mesh or collider on this object or under it to tag for navigation"])
+        navigation.navigation_kind = "IGNORED"
+        self.assertEqual(self._messages(), [])
+        navigation.navigation_kind = "OBSTACLE"
+        handle = add_empty("handle", (0, 0, 0))
+        add_component(handle, "COLLIDER", collider_shape="SPHERE")
+        handle.parent = group
+        self.assertEqual(self._messages(), [])
+        add_component(handle, "NAVIGATION")
+        self.assertEqual(self._messages(), ["group: No mesh or collider on this object or under it to tag for navigation"])
+        child = add_mesh(bpy.ops.mesh.primitive_cube_add, "child")
+        child.parent = group
+        self.assertEqual(self._messages(), [])
 
     def test_audio_player_sound_paths(self):
         speaker = add_empty("speaker", (0, 0, 0))

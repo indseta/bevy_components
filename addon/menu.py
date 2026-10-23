@@ -43,6 +43,7 @@ class BEVY_MT_component_add(bpy.types.Menu):
         layout.menu(BEVY_MT_component_add_audio.bl_idname)
         layout.menu(BEVY_MT_component_add_animation.bl_idname)
         layout.menu(BEVY_MT_component_add_scene.bl_idname)
+        _draw_add_items(layout, context.object, ("NAVIGATION",))
 
 
 class BEVY_MT_component_add_physics(bpy.types.Menu):

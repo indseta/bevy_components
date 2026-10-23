@@ -83,6 +83,24 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     joint = Some(JointSpec { kind, body1, body2, axis, angle_limits, distance_limits, swing_limit, linear_damping: linear_damping.unwrap_or_default(), angular_damping: angular_damping.unwrap_or_default(), collide });
                 }
                 ExportedComponent::Shadows { cast, receive } => components.shadows = Some(ShadowSettings { cast, receive }),
+                ExportedComponent::Navigation { kind, cost } => {
+                    let cost = match cost {
+                        Some(value) if value <= 0.0 => {
+                            warn!("Invalid navigation cost on {:?}", name);
+                            1.0
+                        }
+                        _ => cost.unwrap_or(1.0),
+                    };
+                    components.navigation = match kind.as_str() {
+                        "walkable" => Some(NavigationRole::Walkable(cost)),
+                        "obstacle" => Some(NavigationRole::Obstacle),
+                        "ignored" => Some(NavigationRole::Ignored),
+                        _ => {
+                            warn!("Unsupported navigation type on {:?}", name);
+                            continue;
+                        }
+                    };
+                }
                 ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance } => {
                     if path.is_empty() {
                         warn!("Audio Player on {:?} has no sound file", name);
@@ -383,6 +401,21 @@ pub fn build_colliders(mut commands: Commands, candidates: Query<(Entity, &Mesh3
             insert_collider(&mut target, collider, spec);
         } else {
             warn!("Could not create collider from mesh on entity {:?}", entity);
+        }
+    }
+}
+
+pub fn apply_navigation(mut commands: Commands, meshes: Query<Entity, Added<Mesh3d>>, nodes: Query<(Entity, &ImportedComponents), Added<ImportedComponents>>, parents: Query<&ChildOf>, specs: Query<&ImportedComponents>) {
+    let colliders = nodes.iter().filter(|(_, components)| components.collider.as_ref().is_some_and(|spec| !spec.shape.is_mesh())).map(|(entity, _)| entity);
+    for entity in meshes.iter().chain(colliders) {
+        match iter::once(entity).chain(parents.iter_ancestors(entity)).find_map(|current| specs.get(current).ok()?.navigation) {
+            Some(NavigationRole::Walkable(cost)) => {
+                commands.entity(entity).insert(NavigationWalkable { cost });
+            }
+            Some(NavigationRole::Obstacle) => {
+                commands.entity(entity).insert(NavigationObstacle);
+            }
+            Some(NavigationRole::Ignored) | None => {}
         }
     }
 }

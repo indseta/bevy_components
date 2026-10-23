@@ -102,11 +102,35 @@ impl JointKind {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub enum NavigationRole {
+    Walkable(f32),
+    Obstacle,
+    Ignored,
+}
+
+#[derive(Component, Clone, Copy, Debug, Reflect)]
+#[reflect(Component, Clone, Default)]
+pub struct NavigationWalkable {
+    pub cost: f32,
+}
+
+impl Default for NavigationWalkable {
+    fn default() -> Self {
+        return Self { cost: 1.0 };
+    }
+}
+
+#[derive(Component, Clone, Copy, Debug, Default, Reflect)]
+#[reflect(Component, Clone, Default)]
+pub struct NavigationObstacle;
+
 #[derive(Component, Default)]
 pub struct ImportedComponents {
     pub visibility_range: Option<VisibilityRange>,
     pub collider: Option<ColliderSpec>,
     pub shadows: Option<ShadowSettings>,
+    pub navigation: Option<NavigationRole>,
 }
 
 #[derive(Component)]

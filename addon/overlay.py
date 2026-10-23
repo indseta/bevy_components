@@ -1,5 +1,5 @@
 from array import array
-from math import degrees, radians
+from math import cos, degrees, radians
 from pathlib import PurePosixPath
 
 import blf
@@ -69,6 +69,16 @@ LIGHT_LABELS = {
     "SUN": "Sun",
     "AREA": "Area",
 }
+NAVIGATION_COLORS = {
+    "WALKABLE": (0.30, 0.62, 1.0, 0.85),
+    "OBSTACLE": (1.0, 0.32, 0.32, 0.85),
+}
+NAVIGATION_LABELS = {
+    "WALKABLE": "Walkable",
+    "OBSTACLE": "Obstacle",
+    "IGNORED": "Ignored",
+}
+WALKABLE_SLOPE = radians(45)
 
 
 def preview_objects(context, settings):
@@ -180,6 +190,19 @@ def light_label(obj, item):
     return " · ".join(parts)
 
 
+def navigation_lines(obj, item, limit, children):
+    sources = mesh_sources(obj, children, "NAVIGATION")
+    if item.navigation_kind == "OBSTACLE":
+        return [(matrix, box_lines(*_bounds([Vector(corner) for corner in source.bound_box]))) for source, matrix in sources]
+    return [(matrix, walkable_lines(source, matrix, limit)) for source, matrix in sources]
+
+
+def walkable_lines(obj, matrix, limit):
+    if exceeds_edge_limit(obj, limit):
+        return box_lines(*_bounds([Vector(corner) for corner in obj.bound_box]))
+    return _mesh_preview(obj, "WALKABLE", limit, matrix.to_3x3().inverted_safe().transposed())[0]
+
+
 def mesh_lines(obj, kind, limit):
     return _mesh_preview(obj, kind, limit)[0]
 
@@ -192,27 +215,30 @@ def exceeds_edge_limit(obj, limit):
     return obj.type == "MESH" and len(obj.data.edges) > limit
 
 
-def _mesh_preview(obj, kind, limit):
+def _mesh_preview(obj, kind, limit, normals=None):
     if obj.type == "MESH":
-        return _cached_preview(obj.data, kind, limit, obj.data.as_pointer())
+        return _cached_preview(obj.data, kind, limit, obj.data.as_pointer() if normals is None else (obj.data.as_pointer(), obj.as_pointer()), normals)
     try:
         mesh = obj.to_mesh()
     except RuntimeError:
         return box_lines(*_bounds([Vector(corner) for corner in obj.bound_box])), 1
     try:
-        return _cached_preview(mesh, kind, limit, obj.as_pointer()) if mesh is not None else ([], 0)
+        return _cached_preview(mesh, kind, limit, obj.as_pointer(), normals) if mesh is not None else ([], 0)
     finally:
         obj.to_mesh_clear()
 
 
-def _cached_preview(mesh, kind, limit, pointer):
+def _cached_preview(mesh, kind, limit, pointer, normals=None):
     key = (kind, pointer)
-    fingerprint = (_fingerprint(mesh), limit if kind == "TRIMESH" else None)
+    fingerprint = (_fingerprint(mesh), limit if kind == "TRIMESH" else None, None if normals is None else tuple(round(value, 4) for row in normals for value in row))
     cached = MESH_PREVIEWS.pop(key, None)
     if cached is not None and cached[0] == fingerprint:
         MESH_PREVIEWS[key] = cached
         return cached[1]
-    preview = hull_lines(mesh) if kind == "CONVEX" else (_triangle_mesh_lines(mesh, limit), 1)
+    if kind == "WALKABLE":
+        preview = (_walkable_lines(mesh, normals), 1)
+    else:
+        preview = hull_lines(mesh) if kind == "CONVEX" else (_triangle_mesh_lines(mesh, limit), 1)
     if len(MESH_PREVIEWS) >= MESH_PREVIEW_LIMIT:
         MESH_PREVIEWS.pop(next(iter(MESH_PREVIEWS)))
     MESH_PREVIEWS[key] = (fingerprint, preview)
@@ -262,6 +288,17 @@ def _triangle_mesh_lines(mesh, limit):
     return [(tuple(vertices[start].co), tuple(vertices[end].co)) for start, end in edges]
 
 
+def _walkable_lines(mesh, normals):
+    threshold = cos(WALKABLE_SLOPE)
+    edges = set()
+    for polygon in mesh.polygons:
+        normal = normals @ polygon.normal
+        if normal.length > 0 and normal.normalized().z > threshold:
+            edges.update(polygon.edge_keys)
+    vertices = mesh.vertices
+    return [(tuple(vertices[start].co), tuple(vertices[end].co)) for start, end in edges]
+
+
 def _bounds(points):
     if not points:
         return (0.0, 0.0, 0.0), (0.0, 0.0, 0.0)
@@ -301,7 +338,8 @@ def _previews_shown(context):
 
 def _hierarchy(context, objects):
     colliders = [component_of(obj, "COLLIDER") for obj in objects]
-    return children_map(context.scene.objects) if any(collider is not None and collider.collider_shape in {"TRIMESH", "CONVEX"} for collider in colliders) else {}
+    meshes = any(collider is not None and collider.collider_shape in {"TRIMESH", "CONVEX"} for collider in colliders) or any(component_of(obj, "NAVIGATION") is not None for obj in objects)
+    return children_map(context.scene.objects) if meshes else {}
 
 
 def preview_batches(context, settings):
@@ -335,6 +373,9 @@ def preview_batches(context, settings):
         light = component_of(obj, "LIGHT")
         if light and settings.lights:
             batches.extend((matrix, lines, LIGHT_COLOR, 1.5) for matrix, lines in light_lines(obj))
+        navigation = component_of(obj, "NAVIGATION")
+        if navigation and settings.navigation and navigation.navigation_kind in NAVIGATION_COLORS:
+            batches.extend((matrix, lines, NAVIGATION_COLORS[navigation.navigation_kind], 1.5) for matrix, lines in navigation_lines(obj, navigation, settings.max_mesh_edges, children))
         body = component_of(obj, "RIGID_BODY")
         if body and settings.velocities:
             batches.extend(velocity_batches(obj, body))
@@ -432,6 +473,9 @@ def _label_lines(obj, settings, children):
     lightmap = component_of(obj, "LIGHTMAP")
     if lightmap and obj.type == "MESH":
         descriptions.append(_lightmap_label(obj, lightmap))
+    navigation = component_of(obj, "NAVIGATION")
+    if navigation and settings.navigation:
+        descriptions.append(_navigation_label(navigation))
     return descriptions + _joint_label(obj, settings)
 
 
@@ -440,6 +484,13 @@ def _lightmap_label(obj, item):
         return "Lightmap · not baked"
     check = texture_check(obj, item)
     return f"Lightmap · {check.message.removesuffix(' lightmap')}" if check.level is None else "Lightmap · file problem, see its card"
+
+
+def _navigation_label(item):
+    parts = ["Navigation", NAVIGATION_LABELS[item.navigation_kind]]
+    if item.navigation_kind == "WALKABLE" and round(item.navigation_cost, 4) != 1:
+        parts.append(f"cost {item.navigation_cost:.3g}")
+    return " · ".join(parts)
 
 
 def _joint_label(obj, settings):

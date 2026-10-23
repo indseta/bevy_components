@@ -406,6 +406,7 @@ def build_sample_scene(directory=FIXTURE.parent):
     add_component(ground, "COLLIDER", collider_shape="TRIMESH")
     add_component(ground, "RIGID_BODY", rigid_body_kind="STATIC")
     add_component(ground, "LIGHTMAP", lightmap_resolution="128", lightmap_bicubic=True, probe_file=str(LIGHTMAP))
+    add_component(ground, "NAVIGATION")
     select(ground)
     bpy.ops.bevy_components.unwrap_lightmap()
 
@@ -417,6 +418,7 @@ def build_sample_scene(directory=FIXTURE.parent):
     add_component(crate, "CUSTOM", custom_type="my_game::Removed")
     select(crate)
     bpy.ops.bevy_components.remove(index=len(crate.bevy_component_data.components) - 1)
+    add_component(crate, "NAVIGATION", navigation_kind="OBSTACLE")
 
     crate_copy = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate_copy", size=2, location=(6, -2, 1))
     select(crate, crate_copy)
@@ -455,6 +457,7 @@ def build_sample_scene(directory=FIXTURE.parent):
     add_component(house, "VISIBILITY_RANGE", use_aabb=True)
     apply_lod_preset(house, "FAR")
     add_component(house, "COLLIDER", collider_shape="TRIMESH")
+    add_component(house, "NAVIGATION", navigation_kind="OBSTACLE")
     chimney = add_mesh(bpy.ops.mesh.primitive_cube_add, "chimney", size=0.5, location=(1, 1, 2.25))
     chimney.parent = house
 
@@ -466,6 +469,7 @@ def build_sample_scene(directory=FIXTURE.parent):
 
     cart = add_empty("cart", (-8, -2, 0.5))
     add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=12)
+    add_component(cart, "NAVIGATION", navigation_kind="OBSTACLE")
     cart_shape = add_empty("cart_shape", (0, 0, 0))
     add_component(cart_shape, "COLLIDER", collider_shape="CUBOID")
     cart_handle = add_empty("cart_handle", (-0.75, 0, 0.25))
@@ -495,12 +499,15 @@ def build_sample_scene(directory=FIXTURE.parent):
 
     water = add_mesh(bpy.ops.mesh.primitive_plane_add, "water", size=3, location=(-8, -8, 0.05))
     add_component(water, "SHADOWS", shadows_receive=False)
+    add_component(water, "NAVIGATION", navigation_cost=3)
     bushes = add_empty("bushes", (6, 8, 0))
     add_component(bushes, "SHADOWS")
+    add_component(bushes, "NAVIGATION", navigation_kind="OBSTACLE")
     for name, location in (("bush_a", (-0.6, 0, 0.4)), ("bush_b", (0.6, 0.3, 0.6))):
         bush = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, name, radius=0.5, subdivisions=1, location=location)
         bush.parent = bushes
     add_component(bpy.data.objects["bush_b"], "SHADOWS", shadows_cast=True)
+    add_component(bpy.data.objects["bush_b"], "NAVIGATION", navigation_kind="IGNORED")
 
     campfire = add_empty("campfire", (-2, -4, 0))
     add_component(campfire, "AUDIO_PLAYER", audio_volume=0.8, audio_loop=True, audio_distance=4)

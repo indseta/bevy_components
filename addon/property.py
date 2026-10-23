@@ -20,6 +20,7 @@ COMPONENT_TYPES = [
     ("REFLECTION_PROBE", "Reflection Probe", "Box whose meshes reflect a cubemap embedded in the exported scene", "LIGHTPROBE_SPHERE", 21),
     ("IRRADIANCE_VOLUME", "Irradiance Volume", "Box of light samples, from a 3D texture embedded in the exported scene, that light the meshes inside it", "LIGHTPROBE_VOLUME", 22),
     ("LIGHTMAP", "Lightmap", "Light baked into a texture embedded in the exported scene, which lights this static mesh through its second UV map", "SHADING_TEXTURE", 23),
+    ("NAVIGATION", "Navigation", "Tag the meshes and colliders on and under the object as ground that agents walk on or as obstacles they go around, for a navmesh crate", "CON_FOLLOWPATH", 30),
 ]
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
@@ -195,6 +196,12 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     animation_clip: StringProperty(name="Clip", description="Action to play, exported as the glTF animation of the same name", update=sync_changed)
     animation_loop: BoolProperty(name="Loop", description="Start over at the end instead of stopping on the last frame", default=True, update=sync_changed)
     animation_speed: FloatProperty(name="Speed", description="Playback speed, where 1 matches the timing in Blender", default=1.0, min=0.0, soft_max=4.0, update=sync_changed)
+    navigation_kind: EnumProperty(name="Type", items=[
+        ("WALKABLE", "Walkable", "Ground that agents walk on, such as floors, ramps and stairs. Its meshes and colliders get NavigationWalkable"),
+        ("OBSTACLE", "Obstacle", "Something agents go around, such as walls, crates and trees. Its meshes and colliders get NavigationObstacle"),
+        ("IGNORED", "Ignored", "Leave the meshes and colliders out of navigation, even when a parent has Navigation, such as small props on walkable ground"),
+    ], default="WALKABLE", update=sync_changed)
+    navigation_cost: FloatProperty(name="Cost", description="How much agents avoid this ground when they find a path: each meter here counts as Cost meters, so 1 is plain ground, 3 suits mud and 0.5 a road", default=1.0, min=0.01, soft_max=10.0, update=sync_changed)
 
 
 class BEVY_PG_object_data(bpy.types.PropertyGroup):
@@ -267,6 +274,7 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     scene_references: BoolProperty(name="Scene References", description="Draw the bounds of referenced scenes", default=True, update=redraw_viewports)
     volumes: BoolProperty(name="Fog and Probes", description="Draw fog volume and light probe boxes", default=True, update=redraw_viewports)
     lights: BoolProperty(name="Light Ranges", description="Draw how far each light reaches in Bevy, where it stops lighting anything", default=True, update=redraw_viewports)
+    navigation: BoolProperty(name="Navigation", description="Draw the faces of walkable ground that slope less than 45°, and the bounds of obstacles", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
     edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)

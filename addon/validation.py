@@ -8,6 +8,7 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from .bsn import BsnError, crate_root, custom_literal, file_state, inside
+from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
@@ -141,6 +142,8 @@ def _object_issues(obj, children, exported, destination=None, animations=True):
             issues.extend(Issue("WARNING", obj, item, message) for message in _visibility_range_warnings(obj, item, children))
         elif item.component_type == "SHADOWS":
             issues.extend(Issue("WARNING", obj, item, message) for message in _shadows_warnings(obj, item, children))
+        elif item.component_type == "NAVIGATION":
+            issues.extend(Issue("WARNING", obj, item, message) for message in _navigation_warnings(obj, item, children))
         elif item.component_type == "AUDIO_PLAYER":
             issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item))
         elif item.component_type == "JOINT":
@@ -272,6 +275,15 @@ def _shadows_warnings(obj, item, children):
     if not mesh_sources(obj, children, "SHADOWS"):
         return ["No mesh on this object or under it to cast or receive shadows"]
     return []
+
+
+def _navigation_warnings(obj, item, children):
+    if item.navigation_kind == "IGNORED" or mesh_sources(obj, children, "NAVIGATION"):
+        return []
+    tagged = subtree(obj, children, lambda child: component_of(child, "NAVIGATION") is not None)
+    if any(collider is not None and collider.collider_shape in PRIMITIVE_SHAPES for collider in (component_of(source, "COLLIDER") for source, _matrix in tagged)):
+        return []
+    return ["No mesh or collider on this object or under it to tag for navigation"]
 
 
 def _audio_warnings(item):

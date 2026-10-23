@@ -43,6 +43,11 @@ COLLIDER_SHAPES = {
     "convex": "ColliderConstructor::ConvexHullFromMesh",
 }
 MESH_SHAPES = {"trimesh", "convex"}
+NAVIGATION_WORDS = {
+    "NavigationWalkable": "walkable",
+    "NavigationObstacle": "obstacle",
+}
+IMPORTER_CRATE = "bevy_components_importer"
 BODIES = {
     "static": "RigidBody::Static",
     "dynamic": "RigidBody::Dynamic",
@@ -615,6 +620,7 @@ class _Generator:
         self.cameras = gltf.get("cameras", [])
         self.warnings = []
         self.symbols = set()
+        self.importer = set()
         self.helpers = set()
         self.physics = False
         self.labels = False
@@ -786,6 +792,9 @@ class _Generator:
         if self.physics:
             header.append("use avian3d::prelude::*;")
         header.append(f"use bevy::{_use_tree(self.symbols)};")
+        if self.importer:
+            names = sorted(self.importer)
+            header.append(f"use {IMPORTER_CRATE}::{names[0]};" if len(names) == 1 else f"use {IMPORTER_CRATE}::{{{', '.join(names)}}};")
         return stamp("\n".join(header) + "\n\n" + "\n\n".join(functions) + "\n"), self.warnings
 
     def _children_lines(self, children, prefabs=None):
@@ -880,7 +889,7 @@ class _Generator:
         for entry in [*entity.body[1:], *_settings(entity.mesh), *(entry for part in entity.mesh_parts for entry in _settings(part.body))]:
             kind = next((kind for kind, template in BODIES.items() if entry == template), None)
             shape = next((shape for shape, template in COLLIDER_SHAPES.items() if entry.startswith(template.split("(")[0])), None)
-            word = kind or shape or ("sensor" if entry == "Sensor" else self.custom_names.get(entry))
+            word = kind or shape or ("sensor" if entry == "Sensor" else NAVIGATION_WORDS.get(entry.split(" ")[0]) or self.custom_names.get(entry))
             if word is not None and all(word != existing for _order, existing in words):
                 words.append((0 if kind else 1 if shape else 2, word))
         return "_".join(word for _order, word in sorted(words, key=lambda item: item[0]))
@@ -911,6 +920,9 @@ class _Generator:
         else:
             mesh_parts.extend(_part([], "Transform", primitive + mesh_entries) for primitive in primitives)
         body.extend(self._collider_entries(index, components))
+        collider = _first(components, "collider")
+        if len(primitives) != 1 and collider is not None and collider.get("shape") in COLLIDER_SHAPES and collider.get("shape") not in MESH_SHAPES:
+            body.extend(self._navigation_entries(index))
         body.extend(self._body_entries(index, components))
         body.extend(self._light_entries(index, components))
         camera = self._camera_entries(node)
@@ -1023,6 +1035,7 @@ class _Generator:
             if not shadows.get("receive", True):
                 entries.append("NotShadowReceiver")
                 self._use("NotShadowReceiver")
+        entries.extend(self._navigation_entries(index))
         lightmap = _first(self.components[index], "lightmap")
         if lightmap is not None:
             path = self._file(index, lightmap, "lightmap")
@@ -1030,6 +1043,18 @@ class _Generator:
                 entries.append(f"Lightmap {{ image: {_string(path)}, uv_rect: Rect::new(0.0, 0.0, 1.0, 1.0), bicubic_sampling: {'true' if lightmap.get('bicubic') else 'false'} }}")
                 self._use("Lightmap")
         return entries
+
+    def _navigation_entries(self, index):
+        navigation = self._inherited(index, "navigation")
+        kind = navigation.get("kind") if navigation is not None else None
+        if kind == "walkable":
+            cost = navigation.get("cost")
+            self.importer.add("NavigationWalkable")
+            return [f"NavigationWalkable {{ cost: {_float(cost if _numeric(cost) and cost > 0 else 1.0)} }}"]
+        if kind == "obstacle":
+            self.importer.add("NavigationObstacle")
+            return ["NavigationObstacle"]
+        return []
 
     def _file(self, index, component, label):
         file = component.get("file")

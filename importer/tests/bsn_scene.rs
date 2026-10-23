@@ -8,7 +8,7 @@ mod static_scene;
 
 use avian3d::prelude::*;
 use bevy::{animation::{AnimatedBy, AnimationTargetId, graph::AnimationNodeType}, asset::UntypedAssetId, audio::PlaybackSettings, camera::visibility::VisibilityRange, gltf::Gltf, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::Face, world_serialization::WorldAssetRoot};
-use bevy_components_importer::BlenderCustomComponents;
+use bevy_components_importer::{BlenderCustomComponents, NavigationObstacle, NavigationWalkable};
 use common::*;
 use serde_json::{Value, json};
 use std::{collections::{BTreeMap, HashSet}, fmt::Debug, fs, thread, time::Duration};
@@ -230,7 +230,7 @@ fn describe(world: &World, entity: Entity) -> Vec<String> {
             })*
         };
     }
-    present!(NotShadowCaster, NotShadowReceiver, Sensor, RigidBody, Mass, NoAutoMass, SweptCcd, PointLight, SpotLight, DirectionalLight, RectLight, CascadeShadowConfig, VolumetricLight, PlaybackSettings, FogVolume, LightProbe, JointDamping, JointCollisionDisabled, AnimationTargetId);
+    present!(NavigationWalkable, NavigationObstacle, NotShadowCaster, NotShadowReceiver, Sensor, RigidBody, Mass, NoAutoMass, SweptCcd, PointLight, SpotLight, DirectionalLight, RectLight, CascadeShadowConfig, VolumetricLight, PlaybackSettings, FogVolume, LightProbe, JointDamping, JointCollisionDisabled, AnimationTargetId);
     changed!(Friction, Restitution, CollisionLayers, LockedAxes, GravityScale, LinearDamping, AngularDamping, LinearVelocity, AngularVelocity);
     if let Some(range) = target.get::<VisibilityRange>() {
         found.push(format!("VisibilityRange {} {} {}", debug(&range.start_margin), debug(&range.end_margin), range.use_aabb));
@@ -328,6 +328,7 @@ fn walk(world: &World, entity: Entity, node: usize, path: &str, tree: &Tree, nod
         found.extend(describe(world, child));
     }
     found.sort();
+    found.dedup_by(|later, earlier| later == earlier && later.starts_with("Navigation"));
     nodes.insert(path, found);
 }
 
