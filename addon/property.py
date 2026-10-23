@@ -183,7 +183,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     fog_light_intensity: FloatProperty(name="Light Intensity", description="Scales the light inside the fog, an artistic control that is not physically based", default=1.0, min=0.0, soft_max=10.0, update=sync_changed)
     probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so baked lighting matches the exported lamps", default=683.0, min=0.0, soft_max=100000.0, update=sync_changed)
     probe_parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the box walls, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
-    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the scene: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume, a 2D texture for a Lightmap", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the scene: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume, a 2D texture for a Lightmap. A path starting with // is relative to the .blend file", update=sync_changed)
     bake_fingerprint: StringProperty(name="Bake Fingerprint", description="What the meshes, lamps and World looked like when Bake rendered the file, so the export checks can tell when it is out of date", options={"HIDDEN"})
     bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the exported scene") for size in BAKE_SIZES], default="256")
     bake_voxels: IntVectorProperty(name="Voxels", description="Light samples that Bake places along the box's X, Y (up) and Z axes", size=3, default=(8, 4, 8), min=1, max=64)
@@ -210,7 +210,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
     use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields that your game or Properties > Scene defines instead of JSON")
     fields: CollectionProperty(type=BEVY_PG_field)
-    scene_file: StringProperty(name="File", description="glTF file whose scene spawns at this object. It is stored relative to the exported scene, so keep both in your game's assets folder", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    scene_file: StringProperty(name="File", description="glTF file whose scene spawns at this object. It is stored relative to the exported scene, so keep both in your game's assets folder. A path starting with // is relative to the .blend file", update=sync_changed)
     scene_index: IntProperty(name="Scene", description="Which scene of the file to spawn, counting from 0 like Bevy's Scene0 label", default=0, min=0, update=sync_changed)
     animation_clip: StringProperty(name="Clip", description="Action to play, exported as the glTF animation of the same name", update=sync_changed)
     animation_loop: BoolProperty(name="Loop", description="Start over at the end instead of stopping on the last frame", default=True, update=sync_changed)
@@ -260,6 +260,10 @@ class BEVY_PG_sky(bpy.types.PropertyGroup):
     brightness: FloatProperty(name="Brightness", description="Brightness of the sky in candela per square meter that a cubemap value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so the sky looks like the World in Blender", default=683.0, min=0.0, soft_max=100000.0)
     environment_light: BoolProperty(name="Environment Light", description="Also light the scene with the sky through an environment map light on each camera, which Bevy filters from the cubemap. Lightmaps and irradiance volumes still give the soft light where they are, and the sky adds reflections", default=True)
     environment_intensity: FloatProperty(name="Intensity", description="Brightness of the environment light in candela per square meter that a cubemap value of 1 gives. 683 matches the World in Blender", default=683.0, min=0.0, soft_max=100000.0)
+
+
+class BEVY_PG_game(bpy.types.PropertyGroup):
+    folder: StringProperty(name="Game Project", description="The folder with this game's Cargo.toml, for this .blend file. Leave empty to use the game project from the add-on preferences", subtype="DIR_PATH", options=PATH_OPTIONS)
 
 
 class BEVY_PG_bake_settings(bpy.types.PropertyGroup):

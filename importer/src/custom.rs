@@ -1,17 +1,18 @@
 use bevy::{prelude::*, reflect::{TypeRegistration, TypeRegistry, serde::TypedReflectDeserializer}};
 use serde::de::DeserializeSeed;
 use serde_json::Value;
+use crate::name::object_name;
 
 pub fn reflected_component(registry: &TypeRegistry, type_path: &str, data: &Value, name: Option<&Name>) -> Option<Box<dyn PartialReflect>> {
     let registration = registration(registry, type_path)?;
     if registration.data::<ReflectComponent>().is_none() {
-        warn!("{} on {:?} is registered for reflection but not as a component, add #[reflect(Component)] to insert it", type_path, name);
+        warn!("{}: {} is registered for reflection but not as a component, add #[reflect(Component)] to insert it", object_name(name), type_path);
         return None;
     }
     let value = match TypedReflectDeserializer::new(registration, registry).deserialize(data) {
         Ok(value) => value,
         Err(error) => {
-            warn!("Custom component {} on {:?} does not match the Rust type, so it stays in BlenderCustomComponents: {}", type_path, name, error);
+            warn!("{}: Custom component {} does not match the Rust type, so it stays in BlenderCustomComponents: {}", object_name(name), type_path, error);
             return None;
         }
     };
@@ -19,11 +20,11 @@ pub fn reflected_component(registry: &TypeRegistry, type_path: &str, data: &Valu
         return Some(component.into_partial_reflect());
     }
     let Some(mut component) = registration.data::<ReflectDefault>().map(ReflectDefault::default) else {
-        warn!("Custom component {} on {:?} leaves out fields, add #[reflect(Default)] to fill them in", type_path, name);
+        warn!("{}: Custom component {} leaves out fields, add #[reflect(Default)] to fill them in", object_name(name), type_path);
         return None;
     };
     if let Err(error) = component.try_apply(value.as_ref()) {
-        warn!("Custom component {} on {:?} does not match the Rust type, so it stays in BlenderCustomComponents: {}", type_path, name, error);
+        warn!("{}: Custom component {} does not match the Rust type, so it stays in BlenderCustomComponents: {}", object_name(name), type_path, error);
         return None;
     }
     return Some(component.into_partial_reflect());

@@ -1,6 +1,6 @@
 import bpy
 
-from .operator import BEVY_OT_add_component, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_validate, running_bake, running_export
+from .operator import BEVY_OT_add_component, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_export, running_game
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
 from .schema import short_name
 from .system import TEXT_COMPONENT, accepts, component_index, game_types, preset_folder, presets, scene_definition
@@ -296,3 +296,12 @@ def bake_status(self, context):
     row.ui_units_x = 12
     row.progress(factor=(task.done + task.fraction) / max(task.total, 1), type="BAR", text=f"Baking lighting {task.done}/{task.total}")
     row.operator(BEVY_OT_cancel_bake.bl_idname, text="", icon="X", emboss=False)
+
+
+def play_status(self, context):
+    task = running_game()
+    if task is None:
+        return
+    row = self.layout.row(align=True)
+    row.label(text=f"Building {task.name}" if task.building else f"{task.name} running", icon="PLAY")
+    row.operator(BEVY_OT_stop_game.bl_idname, text="", icon="X", emboss=False)

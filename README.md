@@ -42,12 +42,20 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 }
 ```
 
+4. To start gameplay once a scene is complete, observe `BlenderSceneReady`. It fires on the `WorldAssetRoot` entity after the importer has added everything, including mesh colliders, joints, lightmaps, probes and referenced scenes, and again whenever the scene reloads:
+
+```rust
+commands.spawn(WorldAssetRoot(asset_server.load("scene.glb#Scene0"))).observe(|ready: On<BlenderSceneReady>| info!("{} is ready", ready.entity));
+```
+
+The importer's warnings start with the Blender object's name, such as `crate: Invalid mass`, and it warns once when a scene comes from a newer addon than itself.
+
 ## Usage
 
 1. Select an object, press **Add Component** and pick a component, or start typing to search. Physics, Rendering and Lighting components sit in submenus.
 2. Each component works like a modifier: collapse it, untick it to leave it out of the export, or use its dropdown to duplicate, copy, copy to selected, reset or reorder it.
 3. Export with **File > Export > Bevy Scene (.glb)**, or from the dropdown next to **Add Component**. After that, **Export Again** in those menus and in **3D Viewport > N > Bevy > Export** writes the same file with the same settings, without the file dialog.
-4. Put the GLB in your game's `assets/` folder.
+4. Put the GLB in your game's `assets/` folder, or set a game project for [Play](#play) and exports start there.
 
 The export holds the active scene. Under **Include**, **Limit to** can leave out objects that aren't selected, are hidden in the viewport or are turned off for renders, and the checks look at the same objects. **Apply Modifiers**, on by default, exports meshes as the viewport shows them, though glTF then leaves out the shape keys of meshes with modifiers. The file is written once the export succeeds, so a failed export keeps the previous one. With more than one scene in the file, **Export All Scenes (.glb)** exports every scene that was exported before to its own GLB, with that scene's settings.
 
@@ -98,6 +106,30 @@ A BSN export rewrites its `.rs` file on save as well, but the game only picks th
 - a material that glTF flattens: one that mixes shaders, has no Principled BSDF, or drives Principled BSDF inputs with procedural nodes instead of images
 - shape keys on a mesh with modifiers while **Apply Modifiers** is on
 
+## Play
+
+**Play** in **3D Viewport > N > Bevy** exports the scene again and runs your game. Set **Game Project** to the folder with your game's `Cargo.toml` in the add-on preferences under **Play**, or for one .blend file in the Play panel. Play runs **Run Command** there, `cargo run` by default, where `{scene}` becomes the path of the exported GLB. Without a game project, set **Importer** to the `bevy_components_importer` folder and Play opens the scene in its [viewer](#viewer).
+
+- Export the scene once with **File > Export > Bevy Scene**, and Play repeats that export (GLB, BSN or both) with the same settings.
+- The status bar shows the game building and running, with an X to stop it. Play again restarts it.
+- The Play panel lists the importer's warnings, and clicking one selects its object. It also says why the game stopped, and **Show Game Output** opens everything it printed in a Text Editor.
+- The game starts with `BEVY_COMPONENTS_VIEW` set to the 3D Viewport's view. `blender_view()` reads it as a `Transform` in Bevy's axes, so the game can start its camera there:
+
+```rust
+use bevy_components_importer::blender_view;
+
+fn setup(mut commands: Commands) {
+    let start = blender_view().unwrap_or_else(|| Transform::from_xyz(0.0, 5.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y));
+    commands.spawn((Camera3d::default(), start));
+}
+```
+
+With a game project, the GLB export starts at `assets/levels/<scene>.glb` and the BSN export at `src/<scene>.rs`, the sound, scene and probe file pickers start in `assets`, and the checks warn about sounds missing from `assets` and about GLB exports or scene references outside it.
+
+## Viewer
+
+The importer comes with a viewer: run `cargo run --example viewer -- path/to/scene.glb` in the `bevy_components_importer` folder. WASD, Q and E fly, the right mouse button looks around, P pauses physics and F1 hides or shows the collider and joint outlines. It reloads the scene when the file changes, so **Export Again** or **Export on Save** in Blender updates it, and it loads files from the nearest `assets` folder above the scene.
+
 ## Custom components
 
 A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, let your game list its components for Blender, or define the fields by hand.
@@ -113,7 +145,7 @@ use bevy_components_importer::BlenderSchemaPlugin;
 app.add_plugins(BlenderSchemaPlugin::new(&["my_game"]));
 ```
 
-Each run writes `bevy_components_schema.json` next to your `Cargo.toml`. It lists every component in those crates that derives `Reflect` with `#[reflect(Component)]`, with its fields and the defaults from `#[reflect(Default)]`. Blender finds the file in the folders above the .blend file, or set its path in the add-on preferences.
+Each run writes `bevy_components_schema.json` next to your `Cargo.toml`. It lists every component in those crates that derives `Reflect` with `#[reflect(Component)]`, with its fields and the defaults from `#[reflect(Default)]`. Blender finds the file in the [game project](#play) folder or the folders above the .blend file, or set its path in the add-on preferences.
 
 Your components then show under **Add Component**, in a menu named after your crate, with typed fields. Components already added as JSON switch to them and keep their values. When the components change, run the game again. Blender picks up the new file on its own, and **Properties > Scene > Bevy Custom Components** has a button to read it right away. Fields Blender cannot edit, such as a `Timer`, show as **Game default** and are left out, so the game needs `#[reflect(Default)]` to fill them in.
 

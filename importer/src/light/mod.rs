@@ -5,7 +5,7 @@ mod system;
 use bevy::{app::SceneSpawnerSystems, gltf::extensions::GltfExtensionHandlers, prelude::*};
 
 pub use component::{BlenderSky, NoBlenderSky, PendingLight};
-pub use system::light_spec;
+pub use system::{apply_lights, apply_scene_lighting, apply_sky, light_spec};
 
 pub struct LightingPlugin;
 

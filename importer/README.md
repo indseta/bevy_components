@@ -1,6 +1,6 @@
 # Bevy Components importer
 
-Reads the `bevy_components` glTF extras exported by the Blender addon and inserts the matching Bevy and Avian components. It runs in `SpawnScene` right after Bevy spawns glTF scenes, so the components are there on the first frame the scene shows. See the [main README](../README.md) for installation.
+Reads the `bevy_components` glTF extras exported by the Blender addon and inserts the matching Bevy and Avian components. It runs in `SpawnScene` right after Bevy spawns glTF scenes, so the components are there on the first frame the scene shows, and triggers `BlenderSceneReady` on the `WorldAssetRoot` entity once mesh colliders, joints, lightmaps, probes and referenced scenes are done. See the [main README](../README.md) for installation, and `examples/viewer.rs` for a viewer that opens any exported scene.
 
 - **Visibility Range**: `VisibilityRange` on mesh descendants of the object.
 - **Collider**: cuboid, sphere and capsule colliders go on the object itself, so they also work on empties. Triangle mesh and convex hull colliders are built from each mesh under the object. Each collider gets Avian `Friction`, `Restitution` and `CollisionLayers`. Layer N is bit N of `LayerMask`, so it matches the Nth variant, counting from 0, of a `#[derive(PhysicsLayer)]` enum. Defaults to a static body when neither the object nor a parent has a Rigid Body.

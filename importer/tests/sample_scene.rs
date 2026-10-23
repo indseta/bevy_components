@@ -1,12 +1,12 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, Skybox, VolumetricLight}, pbr::Lightmap, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
-use bevy_components_importer::{BlenderCustomComponents, BlenderSky, GltfTextures, NavigationObstacle, NavigationWalkable, NoBlenderSky};
+use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, ecs::schedule::SingleThreadedExecutor, gltf::{GltfExtras, GltfSceneExtras}, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, Skybox, VolumetricLight}, log::{tracing::{self, Event, Level, Subscriber, field::{Field, Visit}}, tracing_subscriber::{Layer, layer::{Context, SubscriberExt}, registry::Registry}}, pbr::Lightmap, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
+use bevy_components_importer::{BlenderCustomComponents, BlenderSceneReady, BlenderSky, GltfTextures, NavigationObstacle, NavigationWalkable, NoBlenderSky, parse_view};
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{f32::consts::{FRAC_PI_2, FRAC_PI_4}, fs, thread, time::Duration};
+use std::{f32::consts::{FRAC_PI_2, FRAC_PI_4}, fmt, fs, sync::{Arc, Mutex}, thread, time::Duration};
 
 #[derive(Deserialize, Debug, PartialEq)]
 struct Pickup {
@@ -136,6 +136,85 @@ fn rotation(app: &App, entity: Entity) -> Quat {
 fn scene_reference(name: &str, path: &str, scene: usize) -> (Name, Transform, GltfExtras) {
     let extras = json!({"bevy_components": json!({"version": 1, "components": [{"type": "scene_reference", "path": path, "scene": scene}]}).to_string()});
     return (Name::new(name.to_string()), Transform::default(), GltfExtras { value: extras.to_string() });
+}
+
+#[derive(Debug, PartialEq)]
+struct ReadyScene {
+    path: String,
+    dynamic_crate: bool,
+    lightmapped_collider: bool,
+    hinge: bool,
+    windmill_towers: usize,
+}
+
+#[derive(Resource, Default)]
+struct ReadyScenes(Vec<ReadyScene>);
+
+#[derive(Clone, Default)]
+struct Warnings(Arc<Mutex<Vec<String>>>);
+
+impl<S: Subscriber> Layer<S> for Warnings {
+    fn on_event(&self, event: &Event<'_>, _context: Context<'_, S>) {
+        if *event.metadata().level() != Level::WARN {
+            return;
+        }
+        let mut message = Message::default();
+        event.record(&mut message);
+        self.0.lock().expect("warnings lock").push(message.0);
+    }
+}
+
+#[derive(Default)]
+struct Message(String);
+
+impl Visit for Message {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        if field.name() == "message" {
+            self.0 = format!("{value:?}");
+        }
+    }
+}
+
+fn record_ready_scene(ready: On<BlenderSceneReady>, roots: Query<&WorldAssetRoot>, children: Query<&Children>, names: Query<&Name>, bodies: Query<(&RigidBody, &Collider)>, lightmapped: Query<(), (With<Collider>, With<Lightmap>)>, hinges: Query<(), With<RevoluteJoint>>, mut scenes: ResMut<ReadyScenes>) {
+    let inside: Vec<Entity> = children.iter_descendants(ready.entity).collect();
+    let named = |entity: Entity, name: &str| names.get(entity).is_ok_and(|found| found.as_str() == name);
+    scenes.0.push(ReadyScene {
+        path: roots.get(ready.entity).ok().and_then(|root| root.0.path()).map_or(String::new(), ToString::to_string),
+        dynamic_crate: inside.iter().any(|entity| named(*entity, "crate") && bodies.get(*entity).is_ok_and(|(body, _collider)| *body == RigidBody::Dynamic)),
+        lightmapped_collider: inside.iter().any(|entity| lightmapped.contains(*entity)),
+        hinge: inside.iter().any(|entity| hinges.contains(*entity)),
+        windmill_towers: inside.iter().filter(|entity| named(**entity, "windmill_tower") && bodies.contains(**entity)).count(),
+    });
+}
+
+fn sample_scene_ready() -> ReadyScene {
+    return ReadyScene { path: format!("{SCENE}#Scene0"), dynamic_crate: true, lightmapped_collider: true, hinge: true, windmill_towers: 2 };
+}
+
+fn windmill_ready() -> ReadyScene {
+    return ReadyScene { path: "props/windmill.glb#Scene0".to_string(), dynamic_crate: false, lightmapped_collider: false, hinge: false, windmill_towers: 1 };
+}
+
+fn warnings_while(run: impl FnOnce()) -> Vec<String> {
+    let warnings = Warnings::default();
+    tracing::subscriber::with_default(Registry::default().with(warnings.clone()), run);
+    return warnings.0.lock().expect("warnings lock").clone();
+}
+
+fn single_threaded_app() -> App {
+    let mut app = SceneApp::default().build();
+    app.edit_schedule(SpawnScene, |schedule| {
+        schedule.set_executor(SingleThreadedExecutor::new());
+    });
+    return app;
+}
+
+fn scene_extras(addon: Option<&str>) -> GltfSceneExtras {
+    let mut data = json!({"version": 1, "components": []});
+    if let Some(addon) = addon {
+        data["addon"] = json!(addon);
+    }
+    return GltfSceneExtras { value: json!({"bevy_components": data.to_string()}).to_string() };
 }
 
 fn colliders(world: &mut World, name: &str) -> Vec<Entity> {
@@ -340,6 +419,98 @@ fn components_are_ready_on_the_first_frame() {
     let lamp = light_entity(world, "lamp_light");
     assert!(world.get::<PointLight>(lamp).is_some_and(|point| point.shadow_maps_enabled));
     assert_eq!(world.resource::<GlobalAmbientLight>().brightness, 120.0);
+}
+
+#[test]
+fn scene_ready_waits_for_imported_components_and_references() {
+    let mut app = SceneApp::default().build();
+    app.init_resource::<ReadyScenes>();
+    app.add_observer(record_ready_scene);
+    spawn_scene(&mut app, SCENE).unwrap_or_else(|error| panic!("{SCENE} did not load: {error}"));
+    assert_eq!(app.world().resource::<ReadyScenes>().0, vec![windmill_ready(), windmill_ready(), sample_scene_ready()]);
+}
+
+#[test]
+fn scene_ready_reaches_observers_on_the_scene_entity() {
+    let mut app = SceneApp::default().build();
+    app.init_resource::<ReadyScenes>();
+    let scene: Handle<WorldAsset> = app.world().resource::<AssetServer>().load(format!("{SCENE}#Scene0"));
+    app.world_mut().spawn(WorldAssetRoot(scene)).observe(record_ready_scene);
+    for _ in 0..1000 {
+        app.update();
+        if !app.world().resource::<ReadyScenes>().0.is_empty() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    for _ in 0..10 {
+        app.update();
+    }
+    assert_eq!(app.world().resource::<ReadyScenes>().0, vec![sample_scene_ready()]);
+}
+
+#[test]
+fn scene_ready_fires_again_after_a_reload() {
+    let mut app = SceneApp::default().build();
+    app.init_resource::<ReadyScenes>();
+    app.add_observer(record_ready_scene);
+    spawn_scene(&mut app, SCENE).unwrap_or_else(|error| panic!("{SCENE} did not load: {error}"));
+    let scene: Handle<WorldAsset> = app.world().resource::<AssetServer>().load(format!("{SCENE}#Scene0"));
+    let mut assets = app.world_mut().resource_mut::<Assets<WorldAsset>>();
+    let mut asset = assets.get_mut(&scene).expect("the scene is loaded");
+    let _modified: &mut WorldAsset = &mut asset;
+    drop(asset);
+    for _ in 0..100 {
+        app.update();
+        if app.world().resource::<ReadyScenes>().0.len() == 6 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+    let ready = &app.world().resource::<ReadyScenes>().0;
+    assert_eq!(ready.iter().filter(|scene| scene.path == sample_scene_ready().path).count(), 2);
+    assert_eq!(ready.last(), Some(&sample_scene_ready()));
+}
+
+#[test]
+fn newer_exports_warn_once_that_the_importer_needs_an_update() {
+    let mut app = single_threaded_app();
+    let warnings = warnings_while(|| {
+        app.world_mut().spawn((Name::new("old_export"), scene_extras(None)));
+        app.world_mut().spawn((Name::new("current_export"), scene_extras(Some(env!("CARGO_PKG_VERSION")))));
+        app.update();
+        app.world_mut().spawn((Name::new("newer_export"), scene_extras(Some("0.99.0"))));
+        app.world_mut().spawn((Name::new("newest_export"), scene_extras(Some("1.0.0"))));
+        app.update();
+        app.world_mut().spawn((Name::new("another_export"), scene_extras(Some("2.0.0"))));
+        app.update();
+    });
+    let expected = format!("newer_export: Exported by Bevy Components 0.99.0, which is newer than this bevy_components_importer {}, so update the importer to load all of its components", env!("CARGO_PKG_VERSION"));
+    assert_eq!(warnings, vec![expected]);
+}
+
+#[test]
+fn warnings_start_with_the_object_name() {
+    let mut app = single_threaded_app();
+    let broken = json!([{"type": "visibility_range", "start": [5.0, 1.0], "end": [2.0, 3.0], "use_aabb": false}]);
+    app.world_mut().spawn((Name::new("broken_range"), component_extras(broken.clone())));
+    app.world_mut().spawn(component_extras(broken));
+    let mut warnings = warnings_while(|| app.update());
+    warnings.sort();
+    assert_eq!(warnings, vec!["Unnamed object: Invalid visibility range".to_string(), "broken_range: Invalid visibility range".to_string()]);
+}
+
+#[test]
+fn blender_views_become_transforms() {
+    let view = parse_view("1.5, 2, -3, 0, 0.7071068, 0, 0.7071068").expect("a valid view");
+    assert_eq!(view.translation, Vec3::new(1.5, 2.0, -3.0));
+    assert!(view.rotation.angle_between(Quat::from_rotation_y(FRAC_PI_2)) < 1e-5);
+    assert_eq!(parse_view("1,2,3,0,0,0,2").map(|view| view.rotation), Some(Quat::IDENTITY));
+    let looking_down = parse_view("1,3,-2,-0.707107,0,0,0.707107").expect("a valid view");
+    assert!((*looking_down.forward() - Vec3::NEG_Y).length() < 1e-5 && (*looking_down.up() - Vec3::NEG_Z).length() < 1e-5);
+    for invalid in ["", "1,2,3", "1,2,3,0,0,0,1,4", "1,2,x,0,0,0,1", "1,2,3,0,0,0,0", "NaN,0,0,0,0,0,1"] {
+        assert_eq!(parse_view(invalid), None, "{invalid}");
+    }
 }
 
 #[test]

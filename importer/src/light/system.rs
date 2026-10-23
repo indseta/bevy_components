@@ -1,16 +1,16 @@
 use bevy::{gltf::GltfSceneExtras, light::{CascadeShadowConfig, CascadeShadowConfigBuilder, Skybox, VolumetricLight}, pbr::MAX_CASCADES_PER_LIGHT, prelude::*};
-use crate::{data::*, system::{CUBE_FACES, MAX_CUBEMAP_SIZE, decode_extras, texture_handle}, texture::GltfTextures};
+use crate::{data::*, name::object_name, system::{CUBE_FACES, MAX_CUBEMAP_SIZE, decode_extras, texture_handle}, texture::GltfTextures};
 use super::component::*;
 
 pub fn light_spec(light: ExportedLight, name: Option<&Name>) -> Option<LightSpec> {
     let Some(kind) = LightKind::from_str(&light.kind) else {
-        warn!("Unsupported light type on {:?}", name);
+        warn!("{}: Unsupported light type", object_name(name));
         return None;
     };
     let cascades = light.cascades.as_ref().and_then(|exported| {
         let built = cascades(exported);
         if built.is_none() {
-            warn!("Invalid shadow cascades on {:?}", name);
+            warn!("{}: Invalid shadow cascades", object_name(name));
         }
         return built;
     });
@@ -35,7 +35,7 @@ pub fn apply_lights(mut commands: Commands, nodes: Query<(Entity, &PendingLight,
             continue;
         }
         let Some(light) = children.into_iter().flatten().copied().find(|child| point_lights.contains(*child) || spot_lights.contains(*child) || directional_lights.contains(*child)) else {
-            warn!("No glTF light found for the light settings on {:?}", name);
+            warn!("{}: No glTF light found for the light settings", object_name(name));
             continue;
         };
         if let Ok(mut point) = point_lights.get_mut(light) {
@@ -92,7 +92,7 @@ pub fn apply_scene_lighting(mut commands: Commands, scenes: Query<(Entity, &Gltf
                 }
                 ExportedComponent::Sky { brightness, environment_light, texture } => {
                     let Some(image) = texture_handle(textures, texture) else {
-                        warn!("No cubemap embedded for the sky of {:?}", name);
+                        warn!("{}: No cubemap embedded for the sky", object_name(name));
                         continue;
                     };
                     commands.insert_resource(BlenderSky { image, brightness, environment_light });
@@ -114,9 +114,9 @@ pub fn apply_sky(mut commands: Commands, sky: Option<Res<BlenderSky>>, images: R
             continue;
         }
         if !cubemap {
-            warn!("Sky is {}x{}x{}, which is not a cubemap, so {:?} gets no sky", size.width, size.height, size.depth_or_array_layers, name);
+            warn!("{}: Sky is {}x{}x{}, which is not a cubemap, so this camera gets no sky", object_name(name), size.width, size.height, size.depth_or_array_layers);
         } else if sky.environment_light.is_some() && !filterable {
-            warn!("Sky cubemap is {}x{}, but Bevy only lights scenes with cubemaps whose size is a power of two, so {:?} gets no environment light", size.width, size.height, name);
+            warn!("{}: Sky cubemap is {}x{}, but Bevy only lights scenes with cubemaps whose size is a power of two, so this camera gets no environment light", object_name(name), size.width, size.height);
         }
         let mut camera = commands.entity(entity);
         camera.insert(SkyCamera(sky.clone()));

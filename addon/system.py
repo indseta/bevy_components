@@ -10,11 +10,13 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
-from .schema import GameField, SchemaError, find_schema, parse_schema
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
+from .project import game_folder
+from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
 
 MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 LAYER_COUNT = 32
+BEVY_AXES = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
 CLIPBOARD_TYPE = "bevy_components"
 CLIPBOARD_VERSION = 1
 SNAPSHOT_SKIPPED = {"rna_type", "text_link"}
@@ -520,13 +522,22 @@ def schema_setting():
     return preferences.schema_path.strip() if preferences is not None else ""
 
 
+def _schema_path():
+    setting = schema_setting()
+    if setting:
+        return file_path(setting)
+    folder = game_folder(bpy.context)
+    if folder is not None and (folder / SCHEMA_FILE).is_file():
+        return folder / SCHEMA_FILE
+    return find_schema(blend_directory())
+
+
 def game_schema(force=False):
     now = time.monotonic()
     if not force and _game_schema["checked"] is not None and now - _game_schema["checked"] < SCHEMA_CHECK_INTERVAL:
         return _game_schema
     _game_schema["checked"] = now
-    setting = schema_setting()
-    path = file_path(setting) if setting else find_schema(blend_directory())
+    path = _schema_path()
     try:
         stat = path.stat() if path is not None else None
     except OSError:
@@ -824,6 +835,22 @@ def asset_path(path):
     return path.relative_to(root).as_posix(), root
 
 
+def bevy_view(view_matrix):
+    location, rotation, _scale = (BEVY_AXES @ view_matrix.inverted()).decompose()
+    return ",".join(f"{value:.6g}" for value in (*location, rotation.x, rotation.y, rotation.z, rotation.w))
+
+
+def viewport_view(context):
+    space = getattr(context, "space_data", None)
+    if space is not None and space.type == "VIEW_3D" and space.region_3d is not None:
+        return bevy_view(space.region_3d.view_matrix)
+    screen = getattr(context, "screen", None)
+    for area in screen.areas if screen is not None else ():
+        if area.type == "VIEW_3D" and area.spaces.active.region_3d is not None:
+            return bevy_view(area.spaces.active.region_3d.view_matrix)
+    return None
+
+
 def image_to_png(data, mime_type):
     with tempfile.TemporaryDirectory(prefix="bevy_components_") as directory:
         source = Path(directory) / f"source{mimetypes.guess_extension(mime_type) or '.image'}"
@@ -851,10 +878,10 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_glb_export")
         _remove_extra(gltf2_scene, "bevy_bsn_export")
         _remove_extra(gltf2_scene, "bevy_component_overview")
+        _remove_extra(gltf2_scene, "bevy_game")
         world = getattr(blender_scene, "world", None)
         components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
-        if components:
-            gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components)}
+        gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}
 
 
 def _remove_extra(gltf2_element, key):

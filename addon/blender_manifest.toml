@@ -12,4 +12,4 @@ license = ["SPDX:GPL-3.0-or-later"]
 copyright = ["2026 Ask Indset"]
 
 [permissions]
-files = "Export scenes and run the KTX-Software texture encoder"
+files = "Export scenes, run the KTX-Software texture encoder and run your game from Play"

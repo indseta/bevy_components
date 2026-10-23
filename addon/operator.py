@@ -15,12 +15,14 @@ from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .fingerprint import bake_record
 from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
+from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command, needs_scene
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
+from .project import game_assets, game_folder, play_target
 from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, write_component_text, write_field
-from .validation import body_kind, check_bsn, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, viewport_view, write_component_text, write_field
+from .validation import body_kind, check_bsn, check_game_paths, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
 ACCEPTED_OBJECTS = {
@@ -32,9 +34,17 @@ IDENTITY_PROPERTIES = {
     "SCENE_REFERENCE": {"scene_file"},
     "ANIMATION": {"animation_clip"},
 }
+PICKED_FILES = {
+    "scene_file": "*.glb;*.gltf",
+    "probe_file": "*.ktx2",
+}
+OUTPUT_TEXT = "Bevy Game Output"
 
 _exports = {}
+_export_results = {}
 _bakes = {}
+_games = {}
+_played = {}
 
 
 def running_export():
@@ -52,6 +62,23 @@ def stop_exports():
         bpy.context.window_manager.event_timer_remove(timer)
         directory.cleanup()
     _exports.clear()
+
+
+def running_game():
+    return next((task for task in _games if task.running), None)
+
+
+def last_game():
+    return _played.get("game")
+
+
+def stop_games():
+    for task, timer in _games.items():
+        task.stop()
+        task.wait(5)
+        if timer is not None:
+            bpy.context.window_manager.event_timer_remove(timer)
+    _games.clear()
 
 
 def stop_bakes():
@@ -455,6 +482,10 @@ class BEVY_OT_pick_sound(bpy.types.Operator):
         items = _components(context, self.index)
         if items is None or items[self.index].component_type != "AUDIO_PLAYER":
             return {"CANCELLED"}
+        assets = game_assets(context)
+        if assets is not None and not self.filepath:
+            current = items[self.index].audio_path.strip()
+            self.filepath = str(assets / current) if current and (assets / current).is_file() else _folder_path(assets / "sounds" if (assets / "sounds").is_dir() else assets)
         context.window_manager.fileselect_add(self)
         return {"RUNNING_MODAL"}
 
@@ -466,6 +497,55 @@ class BEVY_OT_pick_sound(bpy.types.Operator):
         if root is None:
             self.report({"WARNING"}, f"{path} is not inside an assets folder, so only its name was used")
         items[self.index].audio_path = path
+        return {"FINISHED"}
+
+
+class BEVY_OT_pick_file(bpy.types.Operator):
+    bl_idname = "bevy_components.pick_file"
+    bl_label = "Pick File"
+    bl_description = "Pick the file, starting in the game's assets folder when a game project is set"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(name="Index", options={"HIDDEN", "SKIP_SAVE"})
+    target: EnumProperty(name="Target", items=[
+        ("scene_file", "Scene File", "The glTF file of a Scene Reference"),
+        ("probe_file", "Probe File", "The KTX2 file of a Reflection Probe, Irradiance Volume or Lightmap"),
+    ], options={"HIDDEN", "SKIP_SAVE"})
+    filepath: StringProperty(name="File Path", subtype="FILE_PATH", options={"SKIP_SAVE"})
+    filter_glob: StringProperty(default="*.glb;*.gltf;*.ktx2", options={"HIDDEN", "SKIP_SAVE"})
+    relative_path: BoolProperty(name="Relative Path", description="Store the path relative to the .blend file", default=True)
+
+    @classmethod
+    def poll(cls, context):
+        return _editable(context)
+
+    def _item(self, context):
+        items = _components(context, self.index)
+        if items is None:
+            return None
+        item = items[self.index]
+        accepted = item.component_type == "SCENE_REFERENCE" if self.target == "scene_file" else item.component_type in FILE_KINDS
+        return item if accepted else None
+
+    def invoke(self, context, event):
+        item = self._item(context)
+        if item is None:
+            return {"CANCELLED"}
+        self.filter_glob = PICKED_FILES[self.target]
+        current = getattr(item, self.target).strip()
+        assets = game_assets(context)
+        if current:
+            self.filepath = str(file_path(current))
+        elif assets is not None and assets.is_dir():
+            self.filepath = _folder_path(assets)
+        context.window_manager.fileselect_add(self)
+        return {"RUNNING_MODAL"}
+
+    def execute(self, context):
+        item = self._item(context)
+        if item is None or not self.filepath:
+            return {"CANCELLED"}
+        setattr(item, self.target, _blend_relative(Path(bpy.path.abspath(self.filepath))) if self.relative_path else bpy.path.abspath(self.filepath))
         return {"FINISHED"}
 
 
@@ -1048,7 +1128,8 @@ def _bsn_paths(operator):
 
 def _glb_issues(operator, objects):
     objects = list(objects)
-    return check_objects(objects, destination=_export_path(operator.filepath), animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_scene(objects)
+    destination = _export_path(operator.filepath)
+    return check_objects(objects, destination=destination, animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_scene(objects) + check_game_paths(objects, destination, game_assets(bpy.context))
 
 
 def _bsn_issues(operator, objects):
@@ -1058,6 +1139,25 @@ def _bsn_issues(operator, objects):
     if glb is not None:
         issues = check_rust_file(rust_file, getattr(operator, "again", False)) + issues + check_bsn(objects, asset_root(folder))
     return issues
+
+
+def _folder_path(path):
+    return os.path.join(str(path), "")
+
+
+def _game_default(context, extension):
+    folder = game_folder(context)
+    if folder is None or context.scene is None:
+        return None
+    name = snake_case(context.scene.name) or "scene"
+    if extension == ".rs":
+        return folder / "src" / f"{name}{extension}"
+    levels = folder / "assets" / "levels"
+    try:
+        levels.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return levels / f"{name}{extension}"
 
 
 def _blend_relative(path):
@@ -1105,6 +1205,8 @@ class _SceneExport(ExportHelper, ExportOptions):
             return self.execute(context)
         if self.remembered(context.scene) and not self.properties.is_property_set("filepath"):
             self._recall(getattr(context.scene, self._settings))
+        elif not self.properties.is_property_set("filepath") and (default := _game_default(context, self.filename_ext)) is not None:
+            self.filepath = str(default)
         return ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
@@ -1158,6 +1260,7 @@ class _SceneExport(ExportHelper, ExportOptions):
         else:
             result = self._finish(self._task.results)
         self._release()
+        _export_results[self.bl_idname] = result
         return result
 
     def cancel(self, context):
@@ -1167,6 +1270,7 @@ class _SceneExport(ExportHelper, ExportOptions):
         self._task.wait()
         self._stop_background(context)
         self._release()
+        _export_results[self.bl_idname] = {"CANCELLED"}
 
     def _recall(self, settings):
         self.filepath = str(_export_path(getattr(settings, self._target)))
@@ -1369,7 +1473,7 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
         _draw_checks(self, layout, context, (*_export_key(self), self.assets_folder), lambda: _bsn_issues(self, _exported_objects(self, context)))
 
     def invoke(self, context, event):
-        if not self.remembered(context.scene) and not self.filepath and bpy.data.filepath:
+        if not self.remembered(context.scene) and not self.filepath and bpy.data.filepath and game_folder(context) is None:
             self.filepath = str(Path(bpy.data.filepath).with_name(snake_case(Path(bpy.data.filepath).stem) + self.filename_ext))
         return _SceneExport.invoke(self, context, event)
 
@@ -1786,3 +1890,185 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
             except RuntimeError as error:
                 self.report({"WARNING"}, f"Baked {bake_summary(stored)}, but could not export again: {str(error).removeprefix('Error: ').strip()}")
         return {"FINISHED"}
+
+
+class BEVY_OT_stop_game(bpy.types.Operator):
+    bl_idname = "bevy_components.stop_game"
+    bl_label = "Stop Game"
+    bl_description = "Stop the game that Play started"
+
+    @classmethod
+    def poll(cls, context):
+        return running_game() is not None
+
+    def execute(self, context):
+        for task in _games:
+            task.stop()
+        redraw_status_bars()
+        return {"FINISHED"}
+
+
+class BEVY_OT_show_game_output(bpy.types.Operator):
+    bl_idname = "bevy_components.show_game_output"
+    bl_label = "Show Game Output"
+    bl_description = "Open everything the game printed in a Text Editor"
+
+    @classmethod
+    def poll(cls, context):
+        return last_game() is not None
+
+    def execute(self, context):
+        text = bpy.data.texts.get(OUTPUT_TEXT) or bpy.data.texts.new(OUTPUT_TEXT)
+        text.from_string("\n".join(last_game().output()))
+        if context.window is None or bpy.app.background:
+            return {"FINISHED"}
+        areas = [area for area in context.screen.areas if area.type == "TEXT_EDITOR"] if context.screen else []
+        if not areas:
+            bpy.ops.wm.window_new()
+            areas = context.window_manager.windows[-1].screen.areas[:1]
+            areas[0].type = "TEXT_EDITOR"
+        areas[0].spaces.active.text = text
+        areas[0].spaces.active.show_syntax_highlight = False
+        areas[0].spaces.active.top = max(len(text.lines) - 40, 0)
+        return {"FINISHED"}
+
+
+class BEVY_OT_play(bpy.types.Operator):
+    bl_idname = "bevy_components.play"
+    bl_label = "Play"
+    bl_description = "Export the scene again and run the game from its project folder, or open the scene in the importer's viewer when no game project is set. The game gets the 3D Viewport's view to start from"
+
+    _interactive = False
+    _timer = None
+    _task = None
+    _pending = ()
+    _waiting = None
+    _folder = None
+    _command = ""
+    _view = None
+    _shown = None
+
+    @classmethod
+    def poll(cls, context):
+        if running_export() is not None:
+            cls.poll_message_set("A Bevy scene export is still compressing textures")
+            return False
+        return context.scene is not None
+
+    def invoke(self, context, event):
+        self._interactive = context.window is not None and not bpy.app.background
+        return self.execute(context)
+
+    def execute(self, context):
+        try:
+            self._folder, self._command = play_target(context)
+        except PlayError as error:
+            self.report({"ERROR"}, str(error))
+            return {"CANCELLED"}
+        exports = [operator for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn) if operator.remembered(context.scene)]
+        if not exports:
+            self.report({"ERROR"}, "Export the scene once with File > Export > Bevy Scene (.glb), then Play exports it again each time")
+            return {"CANCELLED"}
+        if needs_scene(self._command) and BEVY_OT_export_glb not in exports:
+            self.report({"ERROR"}, "The run command opens a GLB file, export the scene once with File > Export > Bevy Scene (.glb)")
+            return {"CANCELLED"}
+        for task in _games:
+            task.stop()
+        self._view = viewport_view(context)
+        self._pending = exports
+        result = self._export_next(context)
+        if result is not None:
+            return result
+        if self._waiting is None and not self._start(context):
+            return {"CANCELLED"}
+        if not self._interactive:
+            self.report({"INFO"}, f"Started {self._task.name}: {self._command}")
+            return {"FINISHED"}
+        self._timer = context.window_manager.event_timer_add(PROGRESS_INTERVAL, window=context.window)
+        if self._task is not None:
+            _games[self._task] = self._timer
+        context.window_manager.modal_handler_add(self)
+        return {"RUNNING_MODAL"}
+
+    def modal(self, context, event):
+        if self._task is None:
+            if running_export() is not None:
+                return {"PASS_THROUGH"}
+            if "CANCELLED" in _export_results.get(self._waiting.bl_idname, {"CANCELLED"}):
+                self._stop_timer(context)
+                self.report({"ERROR"}, "Play stopped because the export did not finish")
+                return {"CANCELLED"}
+            result = self._export_next(context)
+            if result is not None:
+                self._stop_timer(context)
+                return result
+            if self._waiting is not None:
+                return {"PASS_THROUGH"}
+            if not self._start(context):
+                self._stop_timer(context)
+                return {"CANCELLED"}
+            _games[self._task] = self._timer
+            return {"PASS_THROUGH"}
+        if self._task.running:
+            if self._task.changes != self._shown:
+                self._shown = self._task.changes
+                redraw_status_bars()
+                redraw_viewports()
+            return {"PASS_THROUGH"}
+        self._stop_timer(context)
+        _games.pop(self._task, None)
+        redraw_status_bars()
+        redraw_viewports()
+        if self._task.stopped:
+            self.report({"INFO"}, f"Stopped {self._task.name}")
+        elif self._task.failed:
+            self.report({"ERROR"}, f"{self._task.name} stopped with exit code {self._task.code}: {self._task.problem()}")
+        else:
+            self.report({"INFO"}, f"{self._task.name} closed")
+        return {"FINISHED"}
+
+    def cancel(self, context):
+        if self._task is not None:
+            self._task.stop()
+            _games.pop(self._task, None)
+        self._stop_timer(context)
+
+    def _export_next(self, context):
+        self._waiting = None
+        while self._pending:
+            operator, *self._pending = self._pending
+            _export_results.pop(operator.bl_idname, None)
+            export = getattr(bpy.ops.export_scene, operator.bl_idname.split(".")[1])
+            try:
+                result = export("INVOKE_DEFAULT" if self._interactive else "EXEC_DEFAULT", again=True)
+            except RuntimeError as error:
+                self.report({"ERROR"}, f"Play stopped because the export failed: {str(error).removeprefix('Error: ').strip()}")
+                return {"CANCELLED"}
+            if "CANCELLED" in result:
+                self.report({"ERROR"}, "Play stopped because the export failed")
+                return {"CANCELLED"}
+            if "RUNNING_MODAL" in result:
+                self._waiting = operator
+                return None
+        return None
+
+    def _start(self, context):
+        glb = BEVY_OT_export_glb.remembered(context.scene)
+        scene = _export_path(glb) if glb else None
+        name = self._folder.name if self._command != VIEWER_COMMAND else "The viewer"
+        environment = {VIEW_VARIABLE: self._view} if self._view else {}
+        try:
+            self._task = GameProcess(game_command(self._command, self._folder, scene), self._folder, name, environment)
+        except (PlayError, OSError) as error:
+            self.report({"ERROR"}, f"Could not start the game: {error}")
+            return False
+        _games[self._task] = None
+        _played["game"] = self._task
+        redraw_status_bars()
+        redraw_viewports()
+        return True
+
+    def _stop_timer(self, context):
+        if self._timer is not None:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None

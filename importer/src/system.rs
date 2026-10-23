@@ -2,7 +2,7 @@ use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, Col
 use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, ecs::reflect::ReflectCommandExt, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 use std::iter;
-use crate::{component::*, custom, data::*, joint::*, light, lightmap, texture::GltfTextures};
+use crate::{component::*, custom, data::*, joint::*, light, lightmap, name::object_name, texture::GltfTextures};
 
 pub const MAX_CUBEMAP_SIZE: u32 = 8192;
 pub const CUBE_FACES: u32 = 6;
@@ -28,7 +28,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     if start[0] <= start[1] && start[1] <= end[0] && end[0] <= end[1] {
                         components.visibility_range = Some(VisibilityRange { start_margin: start[0]..start[1], end_margin: end[0]..end[1], use_aabb });
                     } else {
-                        warn!("Invalid visibility range on {:?}", name);
+                        warn!("{}: Invalid visibility range", object_name(name));
                     }
                 }
                 ExportedComponent::Collider { shape, size, radius, height, offset, sensor, events, collision_only, friction, restitution, memberships, filters } => {
@@ -37,7 +37,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         let offset = offset.map_or(Vec3::ZERO, Vec3::from_array);
                         components.collider = Some(ColliderSpec { shape, size, radius, height, offset, sensor, events: events.unwrap_or_default(), collision_only: collision_only.unwrap_or_default(), friction, restitution, layers });
                     } else {
-                        warn!("Unsupported collider shape on {:?}", name);
+                        warn!("{}: Unsupported collider shape", object_name(name));
                     }
                 }
                 ExportedComponent::RigidBody { kind, mass, gravity_scale, linear_damping, angular_damping, lock_translation, lock_rotation, ccd, linear_velocity, angular_velocity } => {
@@ -46,13 +46,13 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         "dynamic" => RigidBody::Dynamic,
                         "kinematic" => RigidBody::Kinematic,
                         _ => {
-                            warn!("Unsupported rigid body type on {:?}", name);
+                            warn!("{}: Unsupported rigid body type", object_name(name));
                             continue;
                         }
                     };
                     let mass = match mass {
                         Some(value) if value <= 0.0 => {
-                            warn!("Invalid mass on {:?}", name);
+                            warn!("{}: Invalid mass", object_name(name));
                             None
                         }
                         _ => mass,
@@ -62,7 +62,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         Some("all") => Some(SweptCcd::new().with_filter(CcdFilter::ALL)),
                         Some("off") => Some(SweptCcd::new().with_filter(CcdFilter::NONE)),
                         Some(_) => {
-                            warn!("Unsupported continuous collision setting on {:?}", name);
+                            warn!("{}: Unsupported continuous collision setting", object_name(name));
                             None
                         }
                     };
@@ -73,11 +73,11 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                 }
                 ExportedComponent::Joint { kind, body1, body2, axis, angle_limits, distance_limits, swing_limit, linear_damping, angular_damping, collide } => {
                     let Some(kind) = JointKind::from_str(&kind) else {
-                        warn!("Unsupported joint type on {:?}", name);
+                        warn!("{}: Unsupported joint type", object_name(name));
                         continue;
                     };
                     if body1.is_none() && body2.is_none() {
-                        warn!("Joint on {:?} connects no bodies", name);
+                        warn!("{}: Joint connects no bodies", object_name(name));
                         continue;
                     }
                     let axis = axis.map(Vec3::from).and_then(Vec3::try_normalize).unwrap_or(Vec3::Y);
@@ -87,7 +87,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                 ExportedComponent::Navigation { kind, cost } => {
                     let cost = match cost {
                         Some(value) if value <= 0.0 => {
-                            warn!("Invalid navigation cost on {:?}", name);
+                            warn!("{}: Invalid navigation cost", object_name(name));
                             1.0
                         }
                         _ => cost.unwrap_or(1.0),
@@ -97,16 +97,16 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         "obstacle" => Some(NavigationRole::Obstacle),
                         "ignored" => Some(NavigationRole::Ignored),
                         _ => {
-                            warn!("Unsupported navigation type on {:?}", name);
+                            warn!("{}: Unsupported navigation type", object_name(name));
                             continue;
                         }
                     };
                 }
                 ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance } => {
                     if path.is_empty() {
-                        warn!("Audio Player on {:?} has no sound file", name);
+                        warn!("{}: Audio Player has no sound file", object_name(name));
                     } else if audio_sources.is_none() {
-                        warn!("Audio Player on {:?} needs Bevy's AudioPlugin", name);
+                        warn!("{}: Audio Player needs Bevy's AudioPlugin", object_name(name));
                     } else {
                         let mode = if looping { PlaybackMode::Loop } else { PlaybackMode::Once };
                         let spatial_scale = (spatial && distance > 0.0).then(|| SpatialScale::new(1.0 / distance));
@@ -118,8 +118,8 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         commands.entity(entity).insert(light::PendingLight(spec));
                     }
                 }
-                ExportedComponent::AmbientLight(_) => warn!("Ambient light belongs on the scene, not on {:?}", name),
-                ExportedComponent::Sky { .. } => warn!("Sky belongs on the scene, not on {:?}", name),
+                ExportedComponent::AmbientLight(_) => warn!("{}: Ambient light belongs on the scene, not on an object", object_name(name)),
+                ExportedComponent::Sky { .. } => warn!("{}: Sky belongs on the scene, not on an object", object_name(name)),
                 ExportedComponent::Custom { type_path, data } => match custom::reflected_component(&registry, &type_path, &data, name) {
                     Some(component) => reflected.push(component),
                     None => custom.0.push(BlenderCustomComponent { type_path, data }),
@@ -131,7 +131,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                 }
                 ExportedComponent::ReflectionProbe { size, falloff, intensity, parallax_correction, texture } => {
                     let Some(cubemap) = texture_handle(textures, texture) else {
-                        warn!("No cubemap embedded for the reflection probe on {:?}", name);
+                        warn!("{}: No cubemap embedded for the reflection probe", object_name(name));
                         continue;
                     };
                     let mut probe = commands.spawn((Name::new("Reflection Probe"), LightProbe { falloff: Vec3::from_array(falloff) }, PendingReflectionProbe { cubemap, intensity }, Transform::from_scale(Vec3::from_array(size)), ChildOf(entity)));
@@ -141,19 +141,19 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                 }
                 ExportedComponent::IrradianceVolume { size, falloff, intensity, texture } => {
                     let Some(voxels) = texture_handle(textures, texture) else {
-                        warn!("No voxel texture embedded for the irradiance volume on {:?}", name);
+                        warn!("{}: No voxel texture embedded for the irradiance volume", object_name(name));
                         continue;
                     };
                     commands.spawn((Name::new("Irradiance Volume"), LightProbe { falloff: Vec3::from_array(falloff) }, IrradianceVolume { voxels, intensity, affects_lightmapped_meshes: true }, Transform::from_scale(Vec3::from_array(size)), ChildOf(entity)));
                 }
                 ExportedComponent::Lightmap { bicubic, texture } => {
                     let Some(image) = texture_handle(textures, texture) else {
-                        warn!("No lightmap embedded for {:?}", name);
+                        warn!("{}: No lightmap embedded", object_name(name));
                         continue;
                     };
                     commands.entity(entity).insert(lightmap::PendingLightmap { image, bicubic });
                 }
-                ExportedComponent::Unsupported => warn!("Unsupported Bevy component on {:?}", name),
+                ExportedComponent::Unsupported => warn!("{}: Unsupported Bevy component", object_name(name)),
             }
         }
 
@@ -188,14 +188,14 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
     }
 }
 
-pub fn apply_reflection_probes(mut commands: Commands, probes: Query<(Entity, &PendingReflectionProbe)>, images: Res<Assets<Image>>) {
-    for (entity, pending) in &probes {
+pub fn apply_reflection_probes(mut commands: Commands, probes: Query<(Entity, &PendingReflectionProbe, &ChildOf)>, names: Query<&Name>, images: Res<Assets<Image>>) {
+    for (entity, pending, parent) in &probes {
         let Some(image) = images.get(&pending.cubemap) else { continue; };
         let size = image.texture_descriptor.size;
         let mut target = commands.entity(entity);
         target.remove::<PendingReflectionProbe>();
         if size.depth_or_array_layers != CUBE_FACES || size.width != size.height || !size.width.is_power_of_two() || size.width > MAX_CUBEMAP_SIZE {
-            warn!("Reflection probe cubemap is {}x{}x{}, but Bevy only filters square cubemaps whose size is a power of two", size.width, size.height, size.depth_or_array_layers);
+            warn!("{}: Reflection probe cubemap is {}x{}x{}, but Bevy only filters square cubemaps whose size is a power of two", object_name(names.get(parent.parent()).ok()), size.width, size.height, size.depth_or_array_layers);
             continue;
         }
         target.insert(GeneratedEnvironmentMapLight { environment_map: pending.cubemap.clone(), intensity: pending.intensity, ..default() });
@@ -204,16 +204,16 @@ pub fn apply_reflection_probes(mut commands: Commands, probes: Query<(Entity, &P
 
 pub fn decode_extras(value: &str, name: Option<&Name>) -> Option<ExportedData> {
     let Ok(outer) = serde_json::from_str::<Value>(value) else {
-        warn!("Invalid glTF extras on {:?}", name);
+        warn!("{}: Invalid glTF extras", object_name(name));
         return None;
     };
     let serialized = outer.get("bevy_components").and_then(Value::as_str)?;
     let Ok(exported) = serde_json::from_str::<ExportedData>(serialized) else {
-        warn!("Invalid Bevy component metadata on {:?}", name);
+        warn!("{}: Invalid Bevy component metadata", object_name(name));
         return None;
     };
     if exported.version != 1 {
-        warn!("Unsupported Blender Bevy component version {} on {:?}", exported.version, name);
+        warn!("{}: Unsupported Blender Bevy component version {}", object_name(name), exported.version);
         return None;
     }
     return Some(exported);
@@ -244,11 +244,11 @@ pub fn build_joints(mut commands: Commands, joints: Query<(Entity, &PendingJoint
                 continue;
             };
             let Some(body) = find_body(target, entity, &names, &parents) else {
-                warn!("Joint on {:?} found no object named {}", name, target);
+                warn!("{}: Joint found no object named {}", object_name(name), target);
                 break;
             };
             if !bodies.contains(body) {
-                warn!("Joint on {:?} connects {}, which has no rigid body", name, target);
+                warn!("{}: Joint connects {}, which has no rigid body", object_name(name), target);
             }
             ends.push(Some(body));
         }
@@ -283,12 +283,12 @@ pub fn spawn_scene_references(mut commands: Commands, references: Query<(Entity,
         let scenes: Vec<AssetPath<'static>> = parents.iter_ancestors(entity).filter_map(|ancestor| roots.get(ancestor).ok()?.0.path().cloned()).collect();
         let base = scenes.first().map(|scene| scene.without_label().clone_owned()).unwrap_or_default();
         let Ok(path) = base.resolve_embed_str(&reference.path) else {
-            warn!("Invalid scene reference path {} on {:?}", reference.path, name);
+            warn!("{}: Invalid scene reference path {}", object_name(name), reference.path);
             continue;
         };
         let path = path.with_label(GltfAssetLabel::Scene(reference.scene).to_string());
         if scenes.contains(&path) {
-            warn!("Scene reference on {:?} would spawn {} inside itself", name, path);
+            warn!("{}: Scene reference would spawn {} inside itself", object_name(name), path);
             continue;
         }
         commands.entity(entity).insert(WorldAssetRoot(asset_server.load(path)));
@@ -312,15 +312,15 @@ pub fn play_animations(mut commands: Commands, animations: Query<(Entity, &Pendi
             }
         }
         let Some(clips) = clips else {
-            warn!("Animation on {:?} is not part of a glTF scene", name);
+            warn!("{}: Animation is not part of a glTF scene", object_name(name));
             continue;
         };
         let Some(clip) = clips.0.get(&spec.clip) else {
-            warn!("No animation named {} for {:?}", spec.clip, name);
+            warn!("{}: No animation named {}", object_name(name), spec.clip);
             continue;
         };
         let Some(player) = player else {
-            warn!("Animation {} does not animate {:?} or its parents", spec.clip, name);
+            warn!("{}: Animation {} does not animate this object or its parents", object_name(name), spec.clip);
             continue;
         };
         let Ok((mut animation_player, graph)) = players.get_mut(player) else { continue; };
@@ -393,7 +393,7 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
     }
 }
 
-pub fn build_colliders(mut commands: Commands, candidates: Query<(Entity, &Mesh3d, &PendingMeshCollider)>, mesh_assets: Res<Assets<Mesh>>) {
+pub fn build_colliders(mut commands: Commands, candidates: Query<(Entity, &Mesh3d, &PendingMeshCollider)>, mesh_assets: Res<Assets<Mesh>>, parents: Query<&ChildOf>, names: Query<&Name>) {
     for (entity, mesh3d, pending) in &candidates {
         let spec = &pending.0;
         let Some(mesh) = mesh_assets.get(&mesh3d.0) else { continue; };
@@ -407,7 +407,7 @@ pub fn build_colliders(mut commands: Commands, candidates: Query<(Entity, &Mesh3
         if let Some(collider) = collider {
             insert_collider(&mut target, collider, spec);
         } else {
-            warn!("Could not create collider from mesh on entity {:?}", entity);
+            warn!("{}: Could not create a collider from its mesh", object_name(parents.get(entity).ok().and_then(|parent| names.get(parent.parent()).ok())));
         }
     }
 }

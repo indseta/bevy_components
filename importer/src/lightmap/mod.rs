@@ -4,6 +4,7 @@ mod system;
 use bevy::prelude::*;
 
 pub use component::PendingLightmap;
+pub use system::apply_lightmaps;
 
 pub struct LightmapPlugin;
 

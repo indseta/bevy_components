@@ -212,7 +212,12 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual([metadata.light_amount(value, "lm") for value in (136600, 683.0, 99.5, 12.5, 0.25)], ["136,600 lm", "683 lm", "99.5 lm", "12.5 lm", "0.25 lm"])
 
     def test_ambient_light(self):
-        self.assertEqual(json.loads(metadata.serialize_scene([metadata.ambient_light_component((0.9, 0.95, 1.0, 1.0), 120, False)])), {"version": 1, "components": [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}]})
+        component = metadata.ambient_light_component((0.9, 0.95, 1.0, 1.0), 120, False)
+        self.assertEqual(json.loads(metadata.serialize_scene([component], "0.4.0")), {"version": 1, "addon": "0.4.0", "components": [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}]})
+
+    def test_addon_version_comes_from_the_manifest(self):
+        manifest = (MODULE.parent / "blender_manifest.toml").read_text(encoding="utf-8")
+        self.assertIn(f'version = "{metadata.addon_version()}"', manifest)
 
     def test_sky(self):
         sky = item(brightness=1000.0, environment_light=True, environment_intensity=0.1, sky_file="//baked_lighting/world_sky.ktx2")

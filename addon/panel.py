@@ -5,11 +5,13 @@ import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
+from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
+from .project import game_folder, play_target
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .schema import short_name
-from .system import ambient_light, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
-from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, draw_message, draw_problem_count, sky_check, texture_check
+from .system import ambient_light, component_index, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
+from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
 
@@ -243,14 +245,22 @@ def _draw_probe(layout, obj, index, item, text):
     _draw_bake_button(layout, obj, index)
 
 
+def _draw_file_button(layout, obj, item, target):
+    button = layout.operator(BEVY_OT_pick_file.bl_idname, text="", icon="FILEBROWSER")
+    button.index = component_index(obj, item)
+    button.target = target
+
+
 def _draw_texture(layout, obj, item, text):
-    _draw_file(layout, texture_check(obj, item), item, "probe_file", text)
+    _draw_file(layout, texture_check(obj, item), item, "probe_file", text, obj)
 
 
-def _draw_file(layout, check, owner, name, text):
-    row = layout.row()
+def _draw_file(layout, check, owner, name, text, obj=None):
+    row = layout.row(align=True)
     row.alert = check.level == "ERROR"
     row.prop(owner, name, text=text)
+    if obj is not None:
+        _draw_file_button(row, obj, owner, name)
     if check.level is None:
         row = layout.row()
         row.active = False
@@ -381,9 +391,10 @@ def _draw_custom(layout, obj, index, item):
 
 
 def _draw_scene_reference(layout, obj, index, item):
-    row = layout.row()
+    row = layout.row(align=True)
     row.alert = not item.scene_file.strip()
     row.prop(item, "scene_file")
+    _draw_file_button(row, obj, item, "scene_file")
     layout.prop(item, "scene_index")
 
 
@@ -558,6 +569,61 @@ class BEVY_PT_view_export(bpy.types.Panel):
             column.separator()
         for operator, label in exports:
             column.prop(getattr(context.scene, operator._settings), "export_on_save", text="Export on Save" if len(exports) == 1 else f"Export {label} on Save")
+
+
+def _draw_play_target(layout, context, width):
+    folder = game_folder(context)
+    layout.prop(context.scene.bevy_game, "folder", text="", placeholder=str(folder) if folder is not None else "Game project folder")
+    try:
+        target, command = play_target(context)
+    except PlayError as error:
+        draw_message(layout, str(error), width=width)
+        layout.operator("preferences.addon_show", text="Open Preferences", icon="PREFERENCES").module = __package__
+        return
+    layout.label(text="Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", icon="CONSOLE")
+    if not any(operator.remembered(context.scene) for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn)):
+        draw_message(layout, "Export the scene once, then Play exports it again each time", "INFO", width)
+
+
+def _draw_game(layout, game, width):
+    if game.running:
+        layout.label(text=f"Building {game.name}" if game.building else f"{game.name} is running", icon="SORTTIME" if game.building else "PLAY")
+        lines = [short_line(line) for line in game.tail(3) if line.strip()]
+        if lines:
+            box = layout.box().column(align=True)
+            for line in lines:
+                box.label(text=line)
+    elif game.failed:
+        draw_message(layout, f"{game.name} stopped with exit code {game.code}: {game.problem()}", width=width)
+    else:
+        layout.label(text=f"Stopped {game.name}" if game.stopped else f"{game.name} closed", icon="CHECKMARK")
+    warnings = game.game_warnings()
+    if warnings:
+        names = [obj.name for obj in bpy.data.objects]
+        draw_issues(layout.column(align=True), [("WARNING", *split_warning(text, names)) for text in warnings], 6, "in Show Game Output", select=True, width=width)
+    layout.operator(BEVY_OT_show_game_output.bl_idname, icon="TEXT")
+
+
+class BEVY_PT_view_play(bpy.types.Panel):
+    bl_label = "Play"
+    bl_idname = "BEVY_PT_view_play"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Bevy"
+
+    def draw(self, context):
+        layout = self.layout
+        width = context.region.width if context.region else 300
+        running = running_game()
+        row = layout.row(align=True)
+        row.scale_y = 1.4
+        row.operator(BEVY_OT_play.bl_idname, text="Restart" if running else "Play", icon="FILE_REFRESH" if running else "PLAY")
+        if running is not None:
+            row.operator(BEVY_OT_stop_game.bl_idname, text="", icon="X")
+        _draw_play_target(layout.column(), context, width)
+        game = last_game()
+        if game is not None:
+            _draw_game(layout.column(), game, width)
 
 
 class BEVY_UL_definitions(bpy.types.UIList):

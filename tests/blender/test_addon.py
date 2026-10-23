@@ -18,7 +18,7 @@ from unittest import mock
 import bpy
 import gpu
 import numpy
-from mathutils import Matrix, Vector
+from mathutils import Matrix, Quaternion, Vector
 
 from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, STATIC_ASSETS, STATIC_FIXTURE, STATIC_ROCKS, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_scene, build_static_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
 
@@ -544,11 +544,12 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bake_settings"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_glb_export"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bsn_export"))
+        self.assertTrue(hasattr(bpy.types.Scene, "bevy_game"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
-        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component"):
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
@@ -557,6 +558,7 @@ class TestRegistration(unittest.TestCase):
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.menu.bake_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
+        self.assertIn(addon.menu.play_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.system.save_sync, bpy.app.handlers.save_pre)
         self.assertIn(addon.operator.export_on_save, bpy.app.handlers.save_post)
         for menu in (bpy.types.VIEW3D_MT_object, bpy.types.VIEW3D_MT_object_context_menu):
@@ -1446,7 +1448,7 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertFalse(_prop_layout(panel.layout, "scene_file").alert)
-        self.assertEqual(addon.property.BEVY_PG_component.bl_rna.properties["scene_file"].subtype, "FILE_PATH")
+        self.assertEqual([(properties.index, properties.target) for text, properties, enabled in panel.layout.buttons() if hasattr(properties, "target")], [(0, "scene_file")])
 
     def test_animation_card(self):
         add_component(self.obj, "ANIMATION")
@@ -1812,15 +1814,15 @@ class TestPanels(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             preferences.ktx_path = str(Path(directory) / "missing" / "ktx")
             try:
-                panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path=preferences.ktx_path)
+                panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path=preferences.ktx_path, schema_path="", game_folder="", run_command="cargo run", viewer_folder="")
                 addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
             finally:
                 preferences.ktx_path = ""
-        self.assertEqual(panel.layout.props(), ["ktx_path", "schema_path"])
+        self.assertEqual(panel.layout.props(), ["ktx_path", "schema_path", "game_folder", "run_command", "viewer_folder"])
         self.assertTrue(panel.layout.alerts()[0].startswith("KTX-Software was not found at "))
         self.assertIn("Install KTX-Software 4.4 or newer", panel.layout.alerts()[1])
         if addon.encoder.find_encoder() is not None:
-            panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="")
+            panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="", schema_path="", game_folder="", run_command="cargo run", viewer_folder="")
             addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
             self.assertEqual(panel.layout.alerts(), [])
             self.assertTrue(any(text.startswith("KTX-Software 4.") for text in panel.layout.texts()))
@@ -2203,7 +2205,7 @@ class TestGameComponents(unittest.TestCase):
         addon.panel.BEVY_PT_scene_definitions.draw(panel, bpy.context)
         self.assertTrue(" ".join(panel.layout.alerts()).startswith("bevy_components_schema.json cannot be read. It is not valid JSON"))
         preferences = bpy.context.preferences.addons[addon.__name__].preferences
-        panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="", schema_path=str(path))
+        panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="", schema_path=str(path), game_folder="", run_command="cargo run", viewer_folder="")
         addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
         self.assertIn("bevy_components_schema.json cannot be read. It is not valid JSON", " ".join(panel.layout.alerts()))
         use_game_schema(path.with_name("missing.json"))
@@ -2217,7 +2219,7 @@ class TestGameComponents(unittest.TestCase):
         self.assertEqual([(bound["property"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"].endswith("_value")], [("float_value", "speed"), ("enum_value", "mode"), ("vector2_value", "offset"), ("int_value", "stops")])
         self.assertIn("Game default (Timer)", panel.layout.texts())
         preferences = bpy.context.preferences.addons[addon.__name__].preferences
-        panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="", schema_path=str(SCHEMA))
+        panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=preferences.bl_rna, ktx_path="", schema_path=str(SCHEMA), game_folder="", run_command="cargo run", viewer_folder="")
         addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
         self.assertIn(f"2 game components from {SCHEMA}", panel.layout.texts())
         self.assertIn("schema_path", panel.layout.props())
@@ -3809,19 +3811,19 @@ class TestExport(unittest.TestCase):
 
     def test_ambient_light_and_sky_are_exported_on_the_scene(self):
         exported = json.loads(self.gltf["scenes"][0]["extras"]["bevy_components"])
-        self.assertEqual(exported["version"], 1)
+        self.assertEqual((exported["version"], exported["addon"]), (1, addon.metadata.addon_version()))
         self.assertEqual(_named_textures(self.gltf, exported["components"]), [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}, {"type": "sky", "brightness": 1000.0, "environment_light": 300.0, "texture": "probe_cubemap"}])
         self.assertEqual(self.gltf["textures"][exported["components"][1]["texture"]], self.gltf["textures"][json.loads(self.nodes["room_probe"]["extras"]["bevy_components"])["components"][0]["texture"]])
         world = bpy.context.scene.world
         path = Path(self.directory.name) / "scene_lighting.glb"
-        scene_components = lambda: [component for scene in export_sample_scene(path)["scenes"] for component in json.loads(scene.get("extras", {}).get("bevy_components", '{"components": []}'))["components"]]
+        scene_components = lambda: [component for scene in export_sample_scene(path)["scenes"] for component in json.loads(scene["extras"]["bevy_components"])["components"]]
         world.bevy_ambient_light.enabled = False
         try:
             self.assertEqual([(component["type"], component.get("brightness")) for component in scene_components()], [("ambient_light", 0.0), ("sky", 1000.0)])
             world.bevy_sky.environment_light = False
             self.assertEqual([component["type"] for component in scene_components()], ["sky"])
             world.bevy_sky.enabled = False
-            self.assertEqual(scene_components(), [])
+            self.assertEqual([json.loads(scene["extras"]["bevy_components"]) for scene in export_sample_scene(path)["scenes"]], [{"version": 1, "addon": addon.metadata.addon_version(), "components": []}])
         finally:
             world.bevy_ambient_light.enabled = True
             world.bevy_sky.enabled = True
@@ -4155,6 +4157,214 @@ def _file_issues(rust_file, **values):
 
 def _modified(folder):
     return {path: path.stat().st_mtime_ns for path in Path(folder).rglob("*") if path.is_file()}
+
+
+GAME = """
+import os, sys
+print("scene", *sys.argv[1:])
+print("view", os.environ.get("BEVY_COMPONENTS_VIEW", ""))
+print("2026-10-23T10:00:00.000000Z  WARN bevy_components_importer::system: subject: Invalid mass")
+print("2026-10-23T10:00:00.000000Z  WARN bevy_components_importer::system: Unnamed object: Invalid visibility range")
+"""
+
+
+def _until(check, timeout=20):
+    deadline = time.monotonic() + timeout
+    while not check():
+        if time.monotonic() > deadline:
+            raise AssertionError("timed out")
+        time.sleep(0.02)
+
+
+class TestPlay(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+        self.obj = add_mesh(bpy.ops.mesh.primitive_cube_add, "subject")
+        self.directory = tempfile.TemporaryDirectory()
+        self.project = Path(self.directory.name) / "my_game"
+        (self.project / "assets" / "levels").mkdir(parents=True)
+        (self.project / "Cargo.toml").write_text("[package]\n")
+        self.glb = self.project / "assets" / "levels" / "arena.glb"
+        self.preferences = bpy.context.preferences.addons[addon.__name__].preferences
+        self.exports = _remembered_exports()
+        self.exports.__enter__()
+
+    def tearDown(self):
+        addon.operator.stop_games()
+        addon.operator._played.clear()
+        self.exports.__exit__(None, None, None)
+        self.preferences.game_folder = ""
+        self.preferences.run_command = addon.play.DEFAULT_COMMAND
+        self.preferences.viewer_folder = ""
+        bpy.context.scene.bevy_game.folder = ""
+        self.directory.cleanup()
+
+    def _game(self, source, command):
+        (self.project / "game.py").write_text(source)
+        self.preferences.game_folder = str(self.project)
+        self.preferences.run_command = f"\"{sys.executable}\" game.py {command}".strip()
+
+    def _panel(self):
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_view_play.draw(panel, bpy.context)
+        return panel.layout
+
+    def test_play_exports_again_and_runs_the_game_with_the_view(self):
+        self._game(GAME, "{scene}")
+        with self.assertRaisesRegex(RuntimeError, "Export the scene once"):
+            bpy.ops.bevy_components.play()
+        self.assertIn("Export the scene once, then Play exports it again each time", " ".join(self._panel().texts()))
+        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(self.glb)), {"FINISHED"})
+        self.glb.write_bytes(b"")
+        with mock.patch.object(addon.operator, "viewport_view", return_value="1,3,-2,-0.707107,0,0,0.707107"):
+            self.assertEqual(bpy.ops.bevy_components.play(), {"FINISHED"})
+        game = addon.operator.last_game()
+        self.assertTrue(game.wait(20))
+        self.assertGreater(self.glb.stat().st_size, 0)
+        self.assertEqual(game.output()[:2], [f"scene {self.glb}", "view 1,3,-2,-0.707107,0,0,0.707107"])
+        self.assertEqual(game.game_warnings(), ["subject: Invalid mass", "Unnamed object: Invalid visibility range"])
+        self.assertEqual((game.name, game.code, game.failed), ("my_game", 0, False))
+        layout = self._panel()
+        texts = layout.texts()
+        self.assertIn(f"Runs {self.preferences.run_command} in my_game", texts)
+        self.assertIn("my_game closed", texts)
+        self.assertIn("Unnamed object: Invalid visibility range", texts)
+        self.assertEqual([(text, properties.name) for text, properties, enabled in layout.buttons() if hasattr(properties, "name")], [("subject: Invalid mass", "subject")])
+        self.assertIn("bevy_components.show_game_output", layout.operators())
+        self.assertEqual(bpy.ops.bevy_components.show_game_output(), {"FINISHED"})
+        self.assertEqual(bpy.data.texts[addon.operator.OUTPUT_TEXT].as_string().splitlines(), game.output())
+
+    def test_play_restarts_and_stops_the_game(self):
+        self._game("import time\nprint('ready', flush=True)\ntime.sleep(60)\n", "")
+        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(self.glb)), {"FINISHED"})
+        self.assertEqual(bpy.ops.bevy_components.play(), {"FINISHED"})
+        first = addon.operator.last_game()
+        _until(first.output)
+        status = FakeLayout(self)
+        addon.menu.play_status(SimpleNamespace(layout=status), bpy.context)
+        self.assertEqual(([text for text in status.texts() if text], status.operators()), (["my_game running"], ["bevy_components.stop_game"]))
+        self.assertIn("Restart", self._panel().texts())
+        self.assertEqual(bpy.ops.bevy_components.play(), {"FINISHED"})
+        second = addon.operator.last_game()
+        self.assertTrue(first.wait(10) and first.stopped)
+        self.assertTrue(second.running)
+        self.assertEqual(bpy.ops.bevy_components.stop_game(), {"FINISHED"})
+        self.assertTrue(second.wait(10) and second.stopped and not second.failed)
+        self.assertIn("Stopped my_game", self._panel().texts())
+        status = FakeLayout(self)
+        addon.menu.play_status(SimpleNamespace(layout=status), bpy.context)
+        self.assertEqual(status.calls, [])
+        with self.assertRaises(RuntimeError):
+            bpy.ops.bevy_components.stop_game()
+
+    def test_failed_games_explain_why(self):
+        self._game("import sys\nprint(\"thread 'main' panicked at src/main.rs:3:5:\")\nprint('No scene file')\nsys.exit(101)\n", "")
+        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(self.glb)), {"FINISHED"})
+        self.assertEqual(bpy.ops.bevy_components.play(), {"FINISHED"})
+        self.assertTrue(addon.operator.last_game().wait(20))
+        self.assertIn("my_game stopped with exit code 101: No scene file", " ".join(self._panel().texts()))
+
+    def test_play_finds_the_game_project_or_the_viewer(self):
+        with self.assertRaisesRegex(addon.play.PlayError, "Set the game project folder"):
+            addon.project.play_target(bpy.context)
+        layout = self._panel()
+        self.assertIn("Set the game project folder", " ".join(layout.texts()))
+        self.assertEqual([properties.module for text, properties, enabled in layout.buttons() if hasattr(properties, "module")], [addon.__name__])
+        importer = Path(__file__).resolve().parents[2] / "importer"
+        self.preferences.viewer_folder = str(importer)
+        self.assertEqual(addon.project.play_target(bpy.context), (importer, addon.play.VIEWER_COMMAND))
+        self.assertIn("Opens the scene in the importer's viewer", self._panel().texts())
+        self.preferences.game_folder = str(self.project)
+        self.assertEqual(addon.project.play_target(bpy.context), (self.project, "cargo run"))
+        self.assertEqual(next(bound["placeholder"] for name, bound, layout in self._panel().calls if name == "prop" and bound["property"] == "folder"), str(self.project))
+        other = Path(self.directory.name) / "other"
+        other.mkdir()
+        bpy.context.scene.bevy_game.folder = str(other)
+        self.assertEqual((addon.project.game_folder(bpy.context), addon.project.game_assets(bpy.context)), (other, other / "assets"))
+        with self.assertRaisesRegex(addon.play.PlayError, "has no Cargo.toml"):
+            addon.project.play_target(bpy.context)
+        panel = SimpleNamespace(layout=FakeLayout(self), bl_rna=self.preferences.bl_rna, ktx_path="", schema_path="", game_folder=str(other), run_command="cargo run", viewer_folder=str(other))
+        addon.preferences.BEVY_AP_preferences.draw(panel, bpy.context)
+        self.assertEqual([text for text in panel.layout.alerts() if str(other) in text], [f"{other} has no Cargo.toml, pick the folder of your game's Cargo project", f"{other} has no viewer example, pick the bevy_components_importer folder"])
+
+    def test_exports_default_into_the_game_project(self):
+        name = addon.bsn.snake_case(bpy.context.scene.name)
+        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb).filepath, "")
+        self.preferences.game_folder = str(self.project)
+        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb).filepath, str(self.project / "assets" / "levels" / f"{name}.glb"))
+        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_bsn).filepath, str(self.project / "src" / f"{name}.rs"))
+        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb, filepath=str(self.glb)).filepath, str(self.glb))
+
+    def test_file_pickers_start_in_the_game_assets(self):
+        reference = add_component(self.obj, "SCENE_REFERENCE")
+        add_component(self.obj, "AUDIO_PLAYER")
+        (self.project / "assets" / "sounds").mkdir()
+        opened = []
+        context = SimpleNamespace(object=self.obj, scene=bpy.context.scene, preferences=bpy.context.preferences, window_manager=SimpleNamespace(fileselect_add=opened.append))
+        operator = SimpleNamespace(index=0, target="scene_file", filepath="", filter_glob="")
+        operator._item = MethodType(addon.operator.BEVY_OT_pick_file._item, operator)
+        self.assertEqual(addon.operator.BEVY_OT_pick_file.invoke(operator, context, None), {"RUNNING_MODAL"})
+        self.assertEqual((operator.filepath, operator.filter_glob), ("", "*.glb;*.gltf"))
+        self.preferences.game_folder = str(self.project)
+        self.assertEqual(addon.operator.BEVY_OT_pick_file.invoke(operator, context, None), {"RUNNING_MODAL"})
+        self.assertEqual(operator.filepath, os.path.join(str(self.project / "assets"), ""))
+        tree = self.project / "assets" / "props" / "tree.glb"
+        select(self.obj)
+        self.assertEqual(bpy.ops.bevy_components.pick_file(index=0, target="scene_file", filepath=str(tree), relative_path=False), {"FINISHED"})
+        self.assertEqual(reference.scene_file, str(tree))
+        operator.filepath = ""
+        addon.operator.BEVY_OT_pick_file.invoke(operator, context, None)
+        self.assertEqual(operator.filepath, str(tree))
+        self.assertEqual(bpy.ops.bevy_components.pick_file(index=1, target="scene_file", filepath=str(tree)), {"CANCELLED"})
+        self.assertEqual(bpy.ops.bevy_components.pick_file(index=0, target="probe_file", filepath=str(tree)), {"CANCELLED"})
+        sound = SimpleNamespace(index=1, filepath="")
+        self.assertEqual(addon.operator.BEVY_OT_pick_sound.invoke(sound, context, None), {"RUNNING_MODAL"})
+        self.assertEqual(sound.filepath, os.path.join(str(self.project / "assets" / "sounds"), ""))
+        self.assertEqual(len(opened), 4)
+
+    def test_paths_are_checked_against_the_game_assets(self):
+        audio = add_component(self.obj, "AUDIO_PLAYER")
+        audio.audio_path = "sounds/fire.ogg"
+        reference = add_component(add_empty("holder", (2, 0, 0)), "SCENE_REFERENCE")
+        reference.scene_file = str(Path(self.directory.name) / "tree.glb")
+        missing = "No file at sounds/fire.ogg in the game's assets folder"
+        messages = lambda: [issue.message for issue in addon.validation.check_objects(bpy.data.objects)]
+        self.assertNotIn(missing, messages())
+        self.assertEqual(addon.validation.check_game_paths(bpy.data.objects, Path(self.directory.name) / "arena.glb", None), [])
+        self.preferences.game_folder = str(self.project)
+        self.assertIn(missing, messages())
+        self.assertIn(missing, [issue.message for issue in addon.validation.check_object(self.obj, bpy.data.objects)])
+        (self.project / "assets" / "sounds").mkdir()
+        (self.project / "assets" / "sounds" / "fire.ogg").write_bytes(b"")
+        self.assertNotIn(missing, messages())
+        assets = addon.project.game_assets(bpy.context)
+        issues = [(issue.obj.name if issue.obj else None, issue.message) for issue in addon.validation.check_game_paths(bpy.data.objects, Path(self.directory.name) / "arena.glb", assets)]
+        self.assertEqual(issues, [(None, f"arena.glb is outside {assets}, so the game cannot load it"), ("holder", "tree.glb is outside the game's assets folder, so the game cannot load it")])
+        reference.scene_file = str(self.project / "assets" / "tree.glb")
+        self.assertEqual(addon.validation.check_game_paths(bpy.data.objects, self.glb, assets), [])
+
+    def test_the_game_schema_is_read_from_the_game_project(self):
+        (self.project / SCHEMA.name).write_bytes(SCHEMA.read_bytes())
+        self.preferences.game_folder = str(self.project)
+        try:
+            self.assertEqual(addon.system.game_schema(force=True)["path"], self.project / SCHEMA.name)
+            self.assertIn("my_game::Patrol", addon.system.game_types())
+            use_game_schema(SCHEMA.with_name("missing.json"))
+            self.assertEqual(addon.system.game_schema()["error"], "missing.json was not found")
+        finally:
+            self.preferences.game_folder = ""
+            use_game_schema(None)
+
+    def test_the_viewport_view_uses_bevy_axes(self):
+        values = [float(value) for value in addon.system.bevy_view(Matrix.Translation((1, 2, 3)).inverted()).split(",")]
+        self.assertEqual([round(value, 5) for value in values[:3]], [1, 3, -2])
+        rotation = Quaternion((values[6], *values[3:6]))
+        self.assertLess((rotation @ Vector((0, 0, -1)) - Vector((0, -1, 0))).length, 1e-5)
+        self.assertLess((rotation @ Vector((0, 1, 0)) - Vector((0, 0, -1))).length, 1e-5)
+        turned = Matrix.Translation((0, -5, 1)) @ Matrix.Rotation(math.radians(90), 4, "X")
+        values = [float(value) for value in addon.system.bevy_view(turned.inverted()).split(",")]
+        self.assertEqual([round(value, 5) for value in values[:3]], [0, 1, 5])
+        self.assertLess((Quaternion((values[6], *values[3:6])) @ Vector((0, 0, -1)) - Vector((0, 0, -1))).length, 1e-5)
 
 
 class TestBsnExport(unittest.TestCase):

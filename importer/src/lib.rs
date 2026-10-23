@@ -5,22 +5,27 @@ mod extension;
 mod joint;
 mod light;
 mod lightmap;
+mod name;
+mod scene;
 mod schema;
 mod system;
 mod texture;
+mod view;
 
 use bevy::{app::SceneSpawnerSystems, gltf::extensions::GltfExtensionHandlers, prelude::*};
 
 pub use component::{BlenderCustomComponent, BlenderCustomComponents, NavigationObstacle, NavigationWalkable};
 pub use light::{BlenderSky, NoBlenderSky};
+pub use scene::BlenderSceneReady;
 pub use schema::{BlenderSchemaPlugin, SCHEMA_FILE, SchemaOutput, component_schema};
 pub use texture::GltfTextures;
+pub use view::{VIEW_VARIABLE, blender_view, parse_view};
 
 pub struct BlenderBevyComponentsPlugin;
 
 impl Plugin for BlenderBevyComponentsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins((texture::TexturePlugin, light::LightingPlugin, lightmap::LightmapPlugin));
+        app.add_plugins((texture::TexturePlugin, light::LightingPlugin, lightmap::LightmapPlugin, scene::ScenePlugin));
         app.register_type::<component::SceneAnimations>();
         app.register_type::<component::NavigationWalkable>();
         app.register_type::<component::NavigationObstacle>();

@@ -3,9 +3,12 @@ import math
 import os
 import re
 import struct
+import tomllib
+from pathlib import Path
 
 SCHEMA_VERSION = 1
 EXTRAS_KEY = "bevy_components"
+MANIFEST = Path(__file__).with_name("blender_manifest.toml")
 RANGE_TOLERANCE = 0.0001
 FIELD_VALUES = {
     "FLOAT": "float_value",
@@ -427,6 +430,10 @@ def serialize_items(items, locate=_portable):
     return json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)
 
 
+def addon_version():
+    return tomllib.loads(MANIFEST.read_text(encoding="utf-8"))["version"]
+
+
 def ambient_light_component(color, brightness, baked):
     return {"type": "ambient_light", "color": [_float32(value) for value in color[:3]], "brightness": _float32(brightness), "baked": bool(baked)}
 
@@ -435,8 +442,8 @@ def sky_component(sky):
     return {"type": "sky", "brightness": _float32(sky.brightness), "environment_light": _float32(sky.environment_intensity) if sky.environment_light else None, "file": sky.sky_file or None}
 
 
-def serialize_scene(components):
-    return json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)
+def serialize_scene(components, addon):
+    return json.dumps({"version": SCHEMA_VERSION, "addon": addon, "components": list(components)}, separators=(",", ":"), ensure_ascii=False)
 
 
 def component_errors(item):

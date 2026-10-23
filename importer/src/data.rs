@@ -8,6 +8,11 @@ pub struct ExportedData {
 }
 
 #[derive(Deserialize)]
+pub struct ExportedScene {
+    pub addon: Option<String>,
+}
+
+#[derive(Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ExportedComponent {
     VisibilityRange {

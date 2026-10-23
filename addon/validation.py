@@ -14,6 +14,7 @@ from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
+from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
 from .system import MESH_TYPES, children_map, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
 
@@ -140,16 +141,29 @@ def check_objects(objects, destination=None, animations=True, modifiers=True):
     children = children_map(objects)
     exported = set(objects)
     materials = set()
+    assets = game_assets(bpy.context)
     issues = []
     for obj in objects:
-        issues.extend(_object_issues(obj, children, exported, destination, animations, modifiers, materials))
+        issues.extend(_object_issues(obj, children, exported, destination, animations, modifiers, materials, assets))
     issues.extend(_visibility_range_issues(objects))
     return issues
 
 
 def check_object(obj, objects, modifiers=True):
     objects = list(objects)
-    return _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers) + _visibility_range_issues(objects, obj)
+    return _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers, assets=game_assets(bpy.context)) + _visibility_range_issues(objects, obj)
+
+
+
+def check_game_paths(objects, destination, assets):
+    if assets is None:
+        return []
+    issues = [] if destination is None or inside(destination, assets) else [Issue("WARNING", None, None, f"{destination.name} is outside {assets}, so the game cannot load it")]
+    for obj in objects:
+        for item in components_for(obj):
+            if item.component_type == "SCENE_REFERENCE" and item.scene_file.strip() and not inside(file_path(item.scene_file), assets):
+                issues.append(Issue("WARNING", obj, item, f"{file_path(item.scene_file).name} is outside the game's assets folder, so the game cannot load it"))
+    return issues
 
 
 def check_bsn(objects, root):
@@ -200,7 +214,7 @@ def check_rust_file(rust_file, strict=False):
     return [Issue("WARNING", None, None, message)]
 
 
-def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, materials=None):
+def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, materials=None, assets=None):
     issues = []
     custom_types = set()
     for item in components_for(obj):
@@ -216,7 +230,7 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
         elif item.component_type == "NAVIGATION":
             issues.extend(Issue("WARNING", obj, item, message) for message in _navigation_warnings(obj, item, children))
         elif item.component_type == "AUDIO_PLAYER":
-            issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item))
+            issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item, assets))
         elif item.component_type == "JOINT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _joint_warnings(obj, item, exported))
         elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
@@ -475,7 +489,7 @@ def _navigation_warnings(obj, item, children):
     return ["No mesh or collider on this object or under it to tag for navigation"]
 
 
-def _audio_warnings(item):
+def _audio_warnings(item, assets=None):
     path = item.audio_path.strip()
     if not path:
         return ["No sound file, so nothing plays"]
@@ -487,6 +501,8 @@ def _audio_warnings(item):
         warnings.append("The sound file has no extension, so Bevy cannot tell how to load it")
     elif extension not in AUDIO_FORMATS:
         warnings.append(f"Bevy cannot play {extension} files, use .ogg, .wav, .mp3 or .flac")
+    if not warnings and assets is not None and not (assets / path).is_file():
+        warnings.append(f"No file at {path} in the game's assets folder")
     return warnings
 
 
