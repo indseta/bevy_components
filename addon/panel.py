@@ -3,10 +3,10 @@ import json
 import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
-from .metadata import FIELD_VALUES, invalid_names, joint_limits_inverted, validate_items
+from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
 from .operator import BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
-from .system import panel_body_drawn, panel_header_drawn
+from .system import ambient_light, panel_body_drawn, panel_header_drawn, world_background, world_color
 from .validation import check_object, draw_message, texture_check
 
 
@@ -229,6 +229,62 @@ def _draw_irradiance_volume(layout, obj, index, item):
     _draw_probe(layout, obj, item, "Voxels")
 
 
+def _draw_light(layout, obj, index, item):
+    light = light_of(obj)
+    if light is None:
+        return
+    unit = light_unit(light)
+    row = layout.row(heading="Intensity")
+    row.prop(item, "light_use_intensity", text="")
+    value = row.row(align=True)
+    if item.light_use_intensity:
+        value.prop(item, "light_intensity", text="")
+        value.label(text=unit)
+    else:
+        value.active = False
+        value.label(text=light_amount(light_intensity(light, obj), unit))
+    if light.type in {"POINT", "SPOT"}:
+        layout.prop(light, "shadow_soft_size", text="Radius")
+    if light.type != "SUN":
+        row = layout.row(heading="Range")
+        row.prop(light, "use_custom_distance", text="")
+        distance = row.row()
+        if light.use_custom_distance:
+            distance.prop(light, "cutoff_distance", text="")
+        else:
+            distance.active = False
+            distance.label(text=f"{BEVY_LIGHT_RANGE:g} m, Bevy's default")
+    if light.type == "AREA":
+        draw_message(layout, "Bevy area lights cast no shadows, and need its area_light_luts feature", icon="INFO", width=bpy.context.region.width if bpy.context.region else 300)
+        return
+    layout.prop(item, "light_baked")
+    layout.prop(item, "light_volumetric")
+    header, body = layout.panel_prop(item, "show_shadows")
+    header.prop(light, "use_shadow", text="Shadows")
+    if body is None:
+        return
+    body.active = light.use_shadow
+    body.prop(item, "light_contact_shadows")
+    body.prop(item, "light_use_bias")
+    if item.light_use_bias:
+        column = body.column(align=True)
+        column.prop(item, "light_depth_bias")
+        column.prop(item, "light_normal_bias")
+        if light.type != "SUN":
+            column.prop(item, "light_near_clip")
+    if light.type != "SUN":
+        return
+    body.prop(item, "light_use_cascades")
+    if item.light_use_cascades:
+        column = body.column(align=True)
+        column.alert = bool(validate_items([item]))
+        column.prop(item, "light_cascade_count")
+        column.prop(item, "light_cascade_near")
+        column.prop(item, "light_cascade_first")
+        column.prop(item, "light_cascade_far")
+        body.prop(item, "light_cascade_overlap")
+
+
 def _draw_fields(layout, item):
     problems = invalid_names(field.name for field in item.fields)
     for field in item.fields:
@@ -272,6 +328,7 @@ DRAWERS = {
     "RIGID_BODY": _draw_rigid_body,
     "SHADOWS": _draw_shadows,
     "AUDIO_PLAYER": _draw_audio_player,
+    "LIGHT": _draw_light,
     "CUSTOM": _draw_custom,
     "JOINT": _draw_joint,
     "SCENE_REFERENCE": _draw_scene_reference,
@@ -314,6 +371,9 @@ def draw_components(layout, context, obj):
     row.operator("wm.call_menu", text="Add Component", icon="ADD").name = BEVY_MT_component_add.bl_idname
     row.menu(BEVY_MT_object_context_menu.bl_idname, text="", icon="DOWNARROW_HLT")
     issues = check_object(obj, bpy.data.objects)
+    for issue in issues:
+        if issue.item is None:
+            draw_message(layout, issue.message, width=context.region.width if context.region else 300)
     for index, item in enumerate(obj.bevy_component_data.components):
         _draw_component(layout, context, obj, index, item, issues)
 
@@ -415,6 +475,47 @@ class BEVY_PT_scene_definitions(bpy.types.Panel):
         body.prop(field, FIELD_VALUES[field.field_type], text="Default")
 
 
+class BEVY_PT_world_ambient_light(bpy.types.Panel):
+    bl_label = "Bevy Ambient Light"
+    bl_idname = "BEVY_PT_world_ambient_light"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "world"
+
+    @classmethod
+    def poll(cls, context):
+        return context.world is not None
+
+    def draw_header(self, context):
+        self.layout.prop(context.world.bevy_ambient_light, "enabled", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        world = context.world
+        settings = world.bevy_ambient_light
+        layout.active = settings.enabled
+        layout.prop(settings, "use_world_color")
+        if settings.use_world_color:
+            background = world_background(world)
+            if background is None:
+                layout.prop(world, "color", text="Color")
+                if world_color(world) is None:
+                    draw_message(layout, "The World color comes from a texture or other nodes, so this uses its viewport color. Turn off From World to pick one", icon="INFO", width=context.region.width if context.region else 300)
+            else:
+                layout.prop(background.inputs["Color"], "default_value", text="Color")
+                layout.prop(background.inputs["Strength"], "default_value", text="Strength")
+            _color, brightness = ambient_light(world)
+            row = layout.row()
+            row.active = False
+            row.label(text=f"Bevy gets {light_amount(brightness, 'cd/m²')}")
+        else:
+            layout.prop(settings, "color")
+            layout.prop(settings, "brightness")
+        layout.prop(settings, "baked")
+
+
 class BEVY_PT_overlay(bpy.types.Panel):
     bl_label = "Bevy Components"
     bl_idname = "BEVY_PT_overlay"
@@ -444,6 +545,7 @@ class BEVY_PT_overlay(bpy.types.Panel):
         column.prop(settings, "audio_ranges")
         column.prop(settings, "scene_references")
         column.prop(settings, "volumes")
+        column.prop(settings, "lights")
         column = split.column()
         column.prop(settings, "labels")
         column.prop(settings, "xray")

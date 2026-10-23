@@ -1,4 +1,5 @@
 import json
+import math
 import os
 import struct
 
@@ -19,6 +20,19 @@ AXIS_VECTORS = {
     "X": [1.0, 0.0, 0.0],
     "Y": [0.0, 1.0, 0.0],
     "Z": [0.0, 0.0, 1.0],
+}
+WATTS_TO_LUMENS = 683
+BEVY_LIGHT_RANGE = 20.0
+LIGHT_KINDS = {
+    "POINT": "point",
+    "SPOT": "spot",
+    "SUN": "directional",
+    "AREA": "area",
+}
+SHADOW_DEFAULTS = {
+    "POINT": (0.08, 0.6, 0.1),
+    "SPOT": (0.02, 1.8, 0.1),
+    "SUN": (0.02, 1.8, None),
 }
 
 
@@ -223,6 +237,8 @@ def serialize_component(item, locate=_portable):
             "intensity": _float32(item.probe_intensity),
             "file": item.probe_file or None,
         }
+    if kind == "LIGHT":
+        return _serialize_light(item, getattr(item, "id_data", None))
     if kind == "CUSTOM":
         if item.use_fields:
             return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields)}
@@ -262,8 +278,89 @@ def _layer_bits(layers):
     return sum(1 << index for index, enabled in enumerate(layers) if enabled)
 
 
+def light_of(obj):
+    light = getattr(obj, "data", None) if getattr(obj, "type", None) == "LIGHT" else None
+    return light if light is not None and light.type in LIGHT_KINDS else None
+
+
+def light_size(light):
+    if light.shape in {"RECTANGLE", "ELLIPSE"}:
+        return float(light.size), float(light.size_y)
+    return float(light.size), float(light.size)
+
+
+def light_color(light):
+    color = [float(value) for value in light.color]
+    if getattr(light, "use_temperature", False):
+        color = [value * float(tint) for value, tint in zip(color, light.temperature_color)]
+    return [_float32(value) for value in color]
+
+
+def light_range(light):
+    return float(light.cutoff_distance) if light.use_custom_distance else BEVY_LIGHT_RANGE
+
+
+def light_intensity(light, obj=None):
+    power = float(light.energy) * 2 ** float(getattr(light, "exposure", 0.0)) * WATTS_TO_LUMENS
+    if light.type == "AREA" and not getattr(light, "normalize", True):
+        width, height = light_size(light)
+        scale = obj.matrix_world.to_scale() if obj is not None else (1.0, 1.0)
+        power *= width * height * abs(scale[0] * scale[1]) * (math.pi / 4 if light.shape in {"DISK", "ELLIPSE"} else 1.0)
+    return power
+
+
+def light_unit(light):
+    return "lx" if light.type == "SUN" else "lm"
+
+
+def light_amount(value, unit):
+    return f"{value:,.0f} {unit}" if value >= 100 else f"{value:.3g} {unit}"
+
+
+def _serialize_light(item, obj):
+    light = light_of(obj)
+    if light is None:
+        return None
+    kind = light.type
+    area = kind == "AREA"
+    bias = item.light_use_bias and not area
+    return {
+        "type": "light",
+        "kind": LIGHT_KINDS[kind],
+        "intensity": _float32(item.light_intensity) if item.light_use_intensity else _float32(light_intensity(light, obj)) if area else None,
+        "radius": _float32(light.shadow_soft_size) if kind in {"POINT", "SPOT"} else None,
+        "range": _float32(light.cutoff_distance) if area and light.use_custom_distance else None,
+        "color": light_color(light) if area else None,
+        "size": [_float32(value) for value in light_size(light)] if area else None,
+        "shadows": bool(light.use_shadow) and not area,
+        "contact_shadows": bool(item.light_contact_shadows) and not area,
+        "volumetric": bool(item.light_volumetric) and not area,
+        "baked": bool(item.light_baked) and not area,
+        "depth_bias": _float32(item.light_depth_bias) if bias else None,
+        "normal_bias": _float32(item.light_normal_bias) if bias else None,
+        "near_clip": _float32(item.light_near_clip) if bias and kind in {"POINT", "SPOT"} else None,
+        "cascades": _cascades(item) if kind == "SUN" and item.light_use_cascades else None,
+    }
+
+
+def _cascades(item):
+    return {
+        "count": int(item.light_cascade_count),
+        "minimum_distance": _float32(item.light_cascade_near),
+        "first_cascade_far_bound": _float32(item.light_cascade_first),
+        "maximum_distance": _float32(item.light_cascade_far),
+        "overlap_proportion": _float32(item.light_cascade_overlap),
+    }
+
+
 def serialize_items(items, locate=_portable):
-    return json.dumps({"version": SCHEMA_VERSION, "components": [serialize_component(item, locate) for item in items]}, separators=(",", ":"), ensure_ascii=False)
+    components = [component for component in (serialize_component(item, locate) for item in items) if component is not None]
+    return json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)
+
+
+def serialize_ambient_light(color, brightness, baked):
+    component = {"type": "ambient_light", "color": [_float32(value) for value in color[:3]], "brightness": _float32(brightness), "baked": bool(baked)}
+    return json.dumps({"version": SCHEMA_VERSION, "components": [component]}, separators=(",", ":"), ensure_ascii=False)
 
 
 def component_errors(item):
@@ -282,6 +379,11 @@ def component_errors(item):
                 json.loads(item.custom_json)
             except json.JSONDecodeError:
                 errors.append("invalid JSON in Custom Component")
+    elif item.component_type == "LIGHT":
+        light = light_of(getattr(item, "id_data", None))
+        if light is not None and light.type == "SUN" and item.light_use_cascades:
+            if not item.light_cascade_near < item.light_cascade_far or (item.light_cascade_count > 1 and not item.light_cascade_near < item.light_cascade_first < item.light_cascade_far):
+                errors.append("Shadow cascades must satisfy near < first cascade < max distance")
     elif item.component_type == "COLLIDER":
         if item.collider_shape == "CUBOID" and any(value <= 0 for value in item.collider_size):
             errors.append("collider cuboid dimensions must be positive")

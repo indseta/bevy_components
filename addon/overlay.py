@@ -10,8 +10,8 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
-from .geometry import arrow_lines, box_lines, capsule_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
-from .metadata import EXTRAS_KEY, initial_velocities
+from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
+from .metadata import EXTRAS_KEY, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .system import children_map, component_of, components_for, file_path, mesh_sources, panel_expanded, redraw_viewports
@@ -61,6 +61,13 @@ VOLUME_NAMES = {
 MISSING_TEXTURES = {
     "REFLECTION_PROBE": "no cubemap",
     "IRRADIANCE_VOLUME": "no voxels",
+}
+LIGHT_COLOR = (1.0, 0.86, 0.35, 0.6)
+LIGHT_LABELS = {
+    "POINT": "Point",
+    "SPOT": "Spot",
+    "SUN": "Sun",
+    "AREA": "Area",
 }
 
 
@@ -149,6 +156,28 @@ def volume_lines(obj, item):
     if item.component_type == "IRRADIANCE_VOLUME":
         found.append((voxel_lines(item.volume_size, texture_check(obj, item).voxels), 1.0))
     return found
+
+
+def light_lines(obj):
+    light = light_of(obj)
+    if light is None or light.type == "SUN":
+        return []
+    location, rotation, _scale = obj.matrix_world.decompose()
+    if light.type == "SPOT":
+        return [(Matrix.Translation(location) @ rotation.to_matrix().to_4x4(), cone_lines(light_range(light), light.spot_size / 2))]
+    return [(Matrix.Translation(location), sphere_lines(light_range(light), segments=48))]
+
+
+def light_label(obj, item):
+    light = light_of(obj)
+    if light is None:
+        return "Light · not a light, so not exported"
+    parts = ["Light", LIGHT_LABELS[light.type], light_amount(item.light_intensity if item.light_use_intensity else light_intensity(light, obj), light_unit(light))]
+    if light.use_shadow and light.type != "AREA":
+        parts.append("shadows")
+    if light.type != "SUN":
+        parts.append(f"range {light_range(light):g}m")
+    return " · ".join(parts)
 
 
 def mesh_lines(obj, kind, limit):
@@ -303,6 +332,9 @@ def preview_batches(context, settings):
             center = Matrix.Translation(obj.matrix_world.translation)
             for radius, color, width in ((audio.audio_distance, AUDIO_COLOR, 1.9), (audio.audio_distance * AUDIO_QUIET_FACTOR, AUDIO_QUIET_COLOR, 1.1)):
                 batches.append((center, sphere_lines(radius, segments=48), color, width))
+        light = component_of(obj, "LIGHT")
+        if light and settings.lights:
+            batches.extend((matrix, lines, LIGHT_COLOR, 1.5) for matrix, lines in light_lines(obj))
         body = component_of(obj, "RIGID_BODY")
         if body and settings.velocities:
             batches.extend(velocity_batches(obj, body))
@@ -394,6 +426,9 @@ def _label_lines(obj, settings, children):
         descriptions.append(f"Animation · {animation.animation_clip or 'no clip'} · {'loop' if animation.animation_loop else 'once'} · {animation.animation_speed:g}×")
     if settings.volumes:
         descriptions.extend(_volume_label(obj, item) for item in components_for(obj) if item.component_type in VOLUME_NAMES)
+    light = component_of(obj, "LIGHT")
+    if light and settings.lights:
+        descriptions.append(light_label(obj, light))
     return descriptions + _joint_label(obj, settings)
 
 

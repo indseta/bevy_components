@@ -59,7 +59,7 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 
 ## Checks
 
-**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a joint limit whose Min is above its Max, or a light probe file that is missing or that Bevy cannot use, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
+**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a joint limit whose Min is above its Max, shadow cascade distances out of order, or a light probe file that is missing or that Bevy cannot use, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
 
 - a Triangle Mesh or Convex Hull collider, or a Visibility Range, with no mesh on or under its object
 - a Dynamic Rigid Body with no collider, a Rigid Body inside a moving one, and Triangle Mesh colliders on Dynamic bodies
@@ -73,6 +73,7 @@ Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, rest
 - a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported level itself (a file on another drive than the level is an error)
 - an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
 - a Fog Volume with a density of 0, and a Reflection Probe or Irradiance Volume with no file
+- an area light without a Light component, which glTF leaves out, a disk or ellipse area light or a square spot light, which Bevy cannot draw, and a Volumetric light without shadows
 - a light probe file in a block-compressed format, which only loads on GPUs that support it
 
 ## Custom components
@@ -96,11 +97,23 @@ The fields export as the JSON object that serde reads into a struct with the sam
 | Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
 | Color | `Color`, in sRGB |
 
+## Lights
+
+glTF already carries a light's color, power, spot cone and Custom Distance range. Add a **Light** component (under Rendering) to a light for the rest:
+
+- shadows from the light's own **Shadow** checkbox, plus contact shadows, depth and normal bias, and for sun lights the shadow cascades
+- **Volumetric** for light shafts through Fog Volumes, and **Baked** for lights already baked into lightmaps, so they only add reflections there
+- an **Intensity** in Bevy's lumens or lux, in place of Blender's watts at 683 lm/W
+
+Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` feature and cast no shadows. Contact shadows need `ContactShadows` and a depth prepass on the camera. The viewport draws how far each light reaches, 20 m unless Custom Distance is on.
+
+**Properties > World > Bevy Ambient Light** sets the level's ambient light, from the World color or a color and brightness of its own.
+
 ## Fog and light probes
 
 **Fog Volume**, **Reflection Probe** and **Irradiance Volume** (under Rendering) are boxes. Set their size on Bevy's axes or drag the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
 
-- **Fog Volume** fills its box with volumetric fog. Bevy only draws it for cameras with `VolumetricFog` once a light has `VolumetricLight`, such as `commands.spawn((Camera3d::default(), VolumetricFog::default()))` and `commands.spawn((DirectionalLight::default(), VolumetricLight))`.
+- **Fog Volume** fills its box with volumetric fog. Bevy only draws it for cameras with `VolumetricFog`, such as `commands.spawn((Camera3d::default(), VolumetricFog::default()))`, and once a light in the level has **Volumetric** on in its Light component.
 - **Reflection Probe** gives the meshes in its box reflections and soft light from a cubemap. Bevy filters the cubemap when the level loads, so it needs six square faces whose size is a power of two, and no mipmaps. KTX-Software makes one from six renders: `ktx create --format R16G16B16A16_SFLOAT --cubemap px.exr nx.exr py.exr ny.exr pz.exr nz.exr room.ktx2`.
 - **Irradiance Volume** lights the meshes in its box from a grid of light samples, like Godot's VoxelGI. Its file is a 3D texture in Bevy's layout: X × Y × Z samples take X × 2Y × 3Z texels.
 

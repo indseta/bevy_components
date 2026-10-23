@@ -2,7 +2,7 @@ import bpy
 
 from .operator import BEVY_OT_add_component, BEVY_OT_cancel_export, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_remove_component, BEVY_OT_reset_component, BEVY_OT_validate, running_export
 from .property import COMPONENT_LABELS
-from .system import component_index, find_definition
+from .system import accepts, component_index, find_definition
 
 
 def _draw_add_items(layout, obj, kinds):
@@ -10,7 +10,7 @@ def _draw_add_items(layout, obj, kinds):
     for kind in kinds:
         text, icon = COMPONENT_LABELS[kind]
         column = layout.column()
-        column.enabled = kind == "CUSTOM" or kind not in present
+        column.enabled = (kind == "CUSTOM" or kind not in present) and accepts(obj, kind)
         column.operator(BEVY_OT_add_component.bl_idname, text=text, icon=icon).component_type = kind
 
 
@@ -60,7 +60,7 @@ class BEVY_MT_component_add_rendering(bpy.types.Menu):
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE", "SHADOWS", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME"))
+        _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE", "SHADOWS", "LIGHT", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME"))
 
 
 class BEVY_MT_component_add_audio(bpy.types.Menu):

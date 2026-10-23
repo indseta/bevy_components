@@ -9,7 +9,7 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, convert_value, field_data, relative_path, serialize_items
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, convert_value, field_data, light_intensity, light_of, relative_path, serialize_ambient_light, serialize_items
 
 MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 PANEL_EXPANDED = True
@@ -76,6 +76,10 @@ def inherited(obj, kind):
             return obj, item
         obj = obj.parent
     return None, None
+
+
+def accepts(obj, kind):
+    return kind != "LIGHT" or light_of(obj) is not None
 
 
 def children_map(objects):
@@ -198,6 +202,59 @@ def sync_changed(self, context):
     if isinstance(obj, bpy.types.Object):
         sync_object(obj)
         redraw_viewports()
+
+
+def light_intensity_toggled(self, context):
+    obj = getattr(self, "id_data", None)
+    light = light_of(obj)
+    if self.light_use_intensity and light is not None and not self.is_property_set("light_intensity"):
+        self.light_intensity = light_intensity(light, obj)
+    sync_changed(self, context)
+
+
+def light_bias_toggled(self, context):
+    light = light_of(getattr(self, "id_data", None))
+    if self.light_use_bias and light is not None and light.type in SHADOW_DEFAULTS and not self.is_property_set("light_depth_bias"):
+        depth, normal, near = SHADOW_DEFAULTS[light.type]
+        self.light_depth_bias = depth
+        self.light_normal_bias = normal
+        if near is not None:
+            self.light_near_clip = near
+    sync_changed(self, context)
+
+
+def _uses_nodes(world):
+    return world.node_tree is not None and (bpy.app.version >= (5, 0, 0) or world.use_nodes)
+
+
+def world_background(world):
+    if not _uses_nodes(world):
+        return None
+    output = next((node for node in world.node_tree.nodes if node.bl_idname == "ShaderNodeOutputWorld" and node.is_active_output), None)
+    surface = output.inputs.get("Surface") if output is not None else None
+    if surface is None or not surface.is_linked:
+        return None
+    background = surface.links[0].from_node
+    if background.bl_idname != "ShaderNodeBackground" or background.inputs["Color"].is_linked or background.inputs["Strength"].is_linked:
+        return None
+    return background
+
+
+def world_color(world):
+    if not _uses_nodes(world):
+        return tuple(world.color), 1.0
+    background = world_background(world)
+    if background is None:
+        return None
+    return tuple(background.inputs["Color"].default_value)[:3], float(background.inputs["Strength"].default_value)
+
+
+def ambient_light(world):
+    settings = world.bevy_ambient_light
+    if not settings.use_world_color:
+        return tuple(settings.color), float(settings.brightness)
+    color, strength = world_color(world) or (tuple(world.color), 1.0)
+    return color, strength * WATTS_TO_LUMENS
 
 
 def new_identifier():
@@ -378,9 +435,13 @@ class glTF2ExportUserExtension:
     def gather_node_hook(self, gltf2_node, _blender_object, _export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
 
-    def gather_scene_hook(self, gltf2_scene, _blender_scene, _export_settings):
+    def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
         _remove_extra(gltf2_scene, "bevy_component_definitions")
+        world = getattr(blender_scene, "world", None)
+        if world is not None and hasattr(world, "bevy_ambient_light") and world.bevy_ambient_light.enabled:
+            color, brightness = ambient_light(world)
+            gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_ambient_light(color, brightness, world.bevy_ambient_light.baked)}
 
 
 def _remove_extra(gltf2_element, key):

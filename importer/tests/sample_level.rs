@@ -1,7 +1,7 @@
 mod common;
 
 use avian3d::prelude::*;
-use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
+use bevy::{animation::{RepeatAnimation, graph::AnimationNodeType}, asset::RenderAssetUsages, audio::{PlaybackMode, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{CascadeShadowConfig, FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection, VolumetricLight}, prelude::*, render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureViewDimension}};
 use bevy_components_importer::{BlenderCustomComponents, GltfTextures};
 use common::*;
 use serde::Deserialize;
@@ -45,6 +45,18 @@ fn mesh_collider<'a>(world: &'a mut World, name: &str) -> &'a Collider {
 
 fn transform(world: &World, entity: Entity) -> Transform {
     return world.get::<Transform>(entity).copied().unwrap_or_else(|| panic!("{entity} has no transform"));
+}
+
+fn light_entity(world: &mut World, name: &str) -> Entity {
+    let mut nodes = world.query_filtered::<(Entity, &Name), With<GltfExtras>>();
+    let node = nodes.iter(world).find(|(_, node_name)| node_name.as_str() == name).map(|(entity, _)| entity).unwrap_or_else(|| panic!("No node named {name}"));
+    let world = &*world;
+    let children = world.get::<Children>(node).unwrap_or_else(|| panic!("{name} has no children"));
+    return children.iter().find(|child| world.get::<PointLight>(*child).is_some() || world.get::<SpotLight>(*child).is_some() || world.get::<DirectionalLight>(*child).is_some()).unwrap_or_else(|| panic!("{name} has no glTF light"));
+}
+
+fn light_extras(components: Value) -> GltfExtras {
+    return GltfExtras { value: json!({"bevy_components": json!({"version": 1, "components": components}).to_string()}).to_string() };
 }
 
 fn joint_entity<T: Component>(world: &mut World, name: &str) -> Entity {
@@ -248,7 +260,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 53);
+    assert_eq!(count, 57);
 }
 
 #[test]
@@ -835,4 +847,77 @@ fn animations_move_their_targets() {
             assert!(turned.angle_between(Quat::from_rotation_z(-FRAC_PI_4)) < 1e-3, "blades turned {:?} in half a second", turned.to_axis_angle());
         }
     }
+}
+
+#[test]
+fn lights_get_the_settings_gltf_leaves_out() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let lamp = light_entity(world, "lamp_light");
+    let point = world.get::<PointLight>(lamp).expect("lamp_light is a point light");
+    assert!((point.intensity - 136_600.0).abs() < 1.0, "{}", point.intensity);
+    assert_eq!((point.range, point.radius), (15.0, 0.1));
+    assert_eq!((point.shadow_maps_enabled, point.contact_shadows_enabled, point.affects_lightmapped_mesh_diffuse), (true, false, false));
+    assert_eq!((point.shadow_depth_bias, point.shadow_normal_bias, point.shadow_map_near_z), (0.1, 0.5, 0.05));
+    assert!(world.get::<VolumetricLight>(lamp).is_none());
+
+    let spot_light = light_entity(world, "spot_light");
+    let spot = world.get::<SpotLight>(spot_light).expect("spot_light is a spot light");
+    let defaults = SpotLight::default();
+    assert_eq!((spot.intensity, spot.radius, spot.range), (2000.0, 0.0, 20.0));
+    assert_eq!((spot.shadow_maps_enabled, spot.contact_shadows_enabled, spot.affects_lightmapped_mesh_diffuse), (false, true, true));
+    assert_eq!((spot.shadow_depth_bias, spot.shadow_normal_bias, spot.shadow_map_near_z), (defaults.shadow_depth_bias, defaults.shadow_normal_bias, defaults.shadow_map_near_z));
+
+    let sun_light = light_entity(world, "sun");
+    let sun = world.get::<DirectionalLight>(sun_light).expect("sun is a directional light");
+    let defaults = DirectionalLight::default();
+    assert_eq!((sun.illuminance, sun.shadow_maps_enabled, sun.contact_shadows_enabled), (683.0, true, false));
+    assert_eq!((sun.shadow_depth_bias, sun.shadow_normal_bias), (defaults.shadow_depth_bias, defaults.shadow_normal_bias));
+    let cascades = world.get::<CascadeShadowConfig>(sun_light).expect("sun has shadow cascades");
+    assert_eq!((cascades.bounds.len(), cascades.minimum_distance, cascades.overlap_proportion), (3, 0.1, 0.2));
+    assert!((cascades.bounds[0] - 8.0).abs() < 1e-4 && (cascades.bounds[2] - 80.0).abs() < 1e-3, "{:?}", cascades.bounds);
+    assert!(world.get::<VolumetricLight>(sun_light).is_some());
+}
+
+#[test]
+fn area_lights_become_rect_lights() {
+    let mut app = load_level(LEVEL);
+    let world = app.world_mut();
+    let mut lights = world.query::<(&Name, &RectLight, &GlobalTransform)>();
+    let found: Vec<(String, RectLight, Vec3)> = lights.iter(world).map(|(name, light, transform)| (name.to_string(), *light, Vec3::from(transform.forward()))).collect();
+    assert_eq!(found.len(), 1);
+    let (name, light, forward) = &found[0];
+    assert_eq!(name, "window_light");
+    assert_eq!((light.width, light.height, light.range, light.color), (2.0, 1.0, 20.0, Color::linear_rgb(1.0, 1.0, 1.0)));
+    assert!((light.intensity - 34_150.0).abs() < 1.0, "{}", light.intensity);
+    assert!(forward.dot(Vec3::Z) > 0.999, "window_light faces {forward}");
+}
+
+#[test]
+fn ambient_light_comes_from_the_scene() {
+    let app = load_level(LEVEL);
+    let ambient = app.world().resource::<GlobalAmbientLight>();
+    assert_eq!((ambient.color, ambient.brightness, ambient.affects_lightmapped_meshes), (Color::linear_rgb(0.9, 0.95, 1.0), 120.0, true));
+}
+
+#[test]
+fn invalid_light_settings_are_skipped() {
+    let mut app = LevelApp::default().build();
+    let light = json!({"type": "light", "kind": "directional", "shadows": true, "contact_shadows": false, "volumetric": false, "baked": true, "cascades": {"count": 3, "minimum_distance": 10.0, "first_cascade_far_bound": 5.0, "maximum_distance": 100.0, "overlap_proportion": 0.2}});
+    let world = app.world_mut();
+    let sun = world.spawn((Name::new("bad_cascades"), Transform::default(), light_extras(json!([light])))).with_child(DirectionalLight::default()).id();
+    let candle = world.spawn((Name::new("candle"), Transform::default(), light_extras(json!([{"type": "light", "kind": "candle", "shadows": true, "contact_shadows": false, "volumetric": false, "baked": false}])))).with_child(PointLight::default()).id();
+    let lonely = world.spawn((Name::new("lonely"), Transform::default(), light_extras(json!([{"type": "light", "kind": "point", "shadows": true, "contact_shadows": false, "volumetric": true, "baked": false}, {"type": "ambient_light", "color": [1.0, 0.0, 0.0], "brightness": 5.0, "baked": false}])))).id();
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world_mut();
+    let sun_light = world.get::<Children>(sun).expect("the sun keeps its light")[0];
+    let directional = world.get::<DirectionalLight>(sun_light).expect("the sun light is directional");
+    assert_eq!((directional.shadow_maps_enabled, directional.affects_lightmapped_mesh_diffuse), (true, false));
+    assert_eq!(world.get::<CascadeShadowConfig>(sun_light).map(|cascades| cascades.bounds.clone()), Some(CascadeShadowConfig::default().bounds));
+    let candle_light = world.get::<Children>(candle).expect("the candle keeps its light")[0];
+    assert_eq!(world.get::<PointLight>(candle_light).map(|point| point.shadow_maps_enabled), Some(PointLight::default().shadow_maps_enabled));
+    assert!(world.get::<VolumetricLight>(lonely).is_none());
+    assert_ne!(world.resource::<GlobalAmbientLight>().color, Color::linear_rgb(1.0, 0.0, 0.0));
 }

@@ -63,6 +63,8 @@ pub enum ExportedComponent {
         spatial: bool,
         distance: f32,
     },
+    Light(ExportedLight),
+    AmbientLight(ExportedAmbientLight),
     Custom {
         type_path: String,
         data: Value,
@@ -101,4 +103,38 @@ pub enum ExportedComponent {
     },
     #[serde(other)]
     Unsupported,
+}
+
+#[derive(Deserialize)]
+pub struct ExportedLight {
+    pub kind: String,
+    pub intensity: Option<f32>,
+    pub radius: Option<f32>,
+    pub range: Option<f32>,
+    pub color: Option<[f32; 3]>,
+    pub size: Option<[f32; 2]>,
+    pub shadows: bool,
+    pub contact_shadows: bool,
+    pub volumetric: bool,
+    pub baked: bool,
+    pub depth_bias: Option<f32>,
+    pub normal_bias: Option<f32>,
+    pub near_clip: Option<f32>,
+    pub cascades: Option<ExportedCascades>,
+}
+
+#[derive(Deserialize)]
+pub struct ExportedCascades {
+    pub count: usize,
+    pub minimum_distance: f32,
+    pub first_cascade_far_bound: f32,
+    pub maximum_distance: f32,
+    pub overlap_proportion: f32,
+}
+
+#[derive(Deserialize)]
+pub struct ExportedAmbientLight {
+    pub color: [f32; 3],
+    pub brightness: f32,
+    pub baked: bool,
 }

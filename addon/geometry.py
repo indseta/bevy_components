@@ -173,3 +173,16 @@ def voxel_lines(size, counts, limit=4096):
                     end[axis] += marker
                     lines.append((tuple(start), tuple(end)))
     return lines
+
+
+def cone_lines(length, angle, segments=48):
+    if length <= 0:
+        return []
+    depth, radius = -length * cos(angle), length * sin(angle)
+    lines = circle_lines(radius, "XY", segments, (0, 0, depth))
+    for theta in (0, pi / 2, pi, 3 * pi / 2):
+        lines.append(((0, 0, 0), (radius * cos(theta), radius * sin(theta), depth)))
+    arc_segments = max(4, segments // 4)
+    for plane in ("XZ", "YZ"):
+        lines.extend(circle_lines(length, plane, arc_segments, (0, 0, 0), 3 * pi / 2 - angle, 3 * pi / 2 + angle))
+    return lines

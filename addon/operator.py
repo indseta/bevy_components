@@ -13,7 +13,7 @@ from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
-from .system import apply_definitions, asset_path, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
+from .system import accepts, apply_definitions, asset_path, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import body_kind, check_objects, count, describe, draw_issues, issue_summary
 
 TEXTURE_COMPRESSION = [
@@ -115,6 +115,9 @@ class BEVY_OT_add_component(bpy.types.Operator):
         obj = context.object
         items = obj.bevy_component_data.components
         defined = self.component_type == "CUSTOM" and self.type_path
+        if not accepts(obj, self.component_type):
+            self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} only works on light objects")
+            return {"CANCELLED"}
         if self.component_type != "CUSTOM" and any(existing.component_type == self.component_type for existing in items):
             self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} is already on {obj.name}")
             return {"CANCELLED"}
@@ -202,7 +205,7 @@ class BEVY_OT_copy_component_to_selected(bpy.types.Operator):
         source = items[self.index]
         count = 0
         for obj in context.selected_objects:
-            if obj == context.object or obj.library:
+            if obj == context.object or obj.library or not accepts(obj, source.component_type):
                 continue
             destination = obj.bevy_component_data.components
             target = next((item for item in destination if item.component_type == source.component_type and (source.component_type != "CUSTOM" or item.custom_type == source.custom_type)), None)
@@ -232,7 +235,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
             return {"CANCELLED"}
         item = items[self.index]
         typed = item.component_type == "CUSTOM" and item.use_fields
-        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers", "show_velocity", "show_dynamics"} | IDENTITY_PROPERTIES.get(item.component_type, set()) | ({"use_fields"} if typed else set())
+        kept = {"rna_type", "name", "component_type", "enabled", "show_expanded", "show_layers", "show_velocity", "show_dynamics", "show_shadows"} | IDENTITY_PROPERTIES.get(item.component_type, set()) | ({"use_fields"} if typed else set())
         for field in item.bl_rna.properties:
             if field.identifier not in kept and field.type != "COLLECTION" and not field.is_readonly:
                 item.property_unset(field.identifier)
@@ -543,7 +546,8 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
             destination = obj.bevy_component_data.components
             destination.clear()
             for item in source.bevy_component_data.components:
-                copy_to_object(item, destination.add(), obj)
+                if accepts(obj, item.component_type):
+                    copy_to_object(item, destination.add(), obj)
             sync_object(obj)
             count += 1
         redraw_viewports()

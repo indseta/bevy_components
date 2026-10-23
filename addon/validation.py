@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from .metadata import EXTRAS_KEY, component_errors, visibility_range_problems
+from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, visibility_range_problems
 from .property import AUDIO_FORMATS
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .reference import SCENE_EXTENSIONS, read_scenes
@@ -105,12 +105,17 @@ def _object_issues(obj, children, exported, level=None, animations=True):
                 issues.append(Issue(check.level, obj, item, check.message))
         elif item.component_type == "FOG_VOLUME" and item.fog_density <= 0:
             issues.append(Issue("WARNING", obj, item, "Density is 0, so the fog is invisible"))
+        elif item.component_type == "LIGHT":
+            issues.extend(Issue("WARNING", obj, item, message) for message in _light_warnings(obj, item))
         elif item.component_type == "CUSTOM" and item.custom_type.strip():
             if not TYPE_PATH.fullmatch(item.custom_type):
                 issues.append(Issue("WARNING", obj, item, f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
             if item.custom_type in custom_types:
                 issues.append(Issue("WARNING", obj, item, f"Added more than once, but an entity holds only one {item.custom_type}"))
             custom_types.add(item.custom_type)
+    light = light_of(obj)
+    if light is not None and light.type == "AREA" and not any(item.component_type == "LIGHT" for item in obj.bevy_component_data.components):
+        issues.append(Issue("WARNING", obj, None, "glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"))
     return issues
 
 
@@ -267,6 +272,21 @@ def _animation_warnings(obj, item, children, animations):
         warnings.append(f"{clip} animates nothing on or under {'this object' if root == obj else root.name}, so nothing plays")
     if not animations:
         warnings.append("Include Animations is off in the export, so nothing plays")
+    return warnings
+
+
+def _light_warnings(obj, item):
+    light = light_of(obj)
+    if light is None:
+        return ["Only lights use this component, so it is not exported"]
+    warnings = []
+    if item.light_volumetric and light.type != "AREA" and not light.use_shadow:
+        warnings.append("Volumetric needs Shadows, or the light makes no light shafts")
+    if light.type == "AREA" and light.shape in {"DISK", "ELLIPSE"}:
+        width, height = light_size(light)
+        warnings.append(f"Bevy area lights are rectangles, so this {light.shape.lower()} becomes a {width:g} × {height:g} m rectangle")
+    if light.type == "SPOT" and light.use_square:
+        warnings.append("Bevy spot lights are round, so this square spot becomes round")
     return warnings
 
 

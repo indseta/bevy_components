@@ -132,6 +132,69 @@ class TestMetadata(unittest.TestCase):
         self.assertEqual(irradiance_data, {"type": "irradiance_volume", "size": [20, 6, 20], "falloff": [0.0, 0.0, 0.0], "intensity": 500.0, "file": None})
         self.assertEqual(metadata.validate_items([reflection, irradiance]), [])
 
+    def light_item(self, kind, **values):
+        light = item(type=kind, energy=10.0, shadow_soft_size=0.25, use_custom_distance=False, cutoff_distance=40.0, use_shadow=True, color=(1.0, 0.5, 0.25), shape="RECTANGLE", size=2.0, size_y=0.5, **values)
+        owner = item(type="LIGHT", data=light, matrix_world=item(to_scale=lambda: (2.0, 1.0, 1.0)))
+        settings = {"light_use_intensity": False, "light_intensity": 1000.0, "light_baked": False, "light_volumetric": False, "light_contact_shadows": False, "light_use_bias": False, "light_depth_bias": 0.02, "light_normal_bias": 1.8, "light_near_clip": 0.1, "light_use_cascades": False, "light_cascade_count": 4, "light_cascade_near": 0.1, "light_cascade_first": 10.0, "light_cascade_far": 150.0, "light_cascade_overlap": 0.2}
+        return item(component_type="LIGHT", id_data=owner, **settings), light
+
+    def test_point_light(self):
+        component, light = self.light_item("POINT")
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "light", "kind": "point", "intensity": None, "radius": 0.25, "range": None, "color": None, "size": None, "shadows": True, "contact_shadows": False, "volumetric": False, "baked": False, "depth_bias": None, "normal_bias": None, "near_clip": None, "cascades": None})
+        component.light_use_bias = True
+        component.light_use_intensity = True
+        light.use_shadow = False
+        result = json.loads(metadata.serialize_items([component]))["components"][0]
+        self.assertEqual((result["intensity"], result["shadows"], result["depth_bias"], result["normal_bias"], result["near_clip"]), (1000.0, False, 0.02, 1.8, 0.1))
+        self.assertEqual(metadata.light_intensity(light), 6830.0)
+        self.assertEqual(metadata.component_errors(component), [])
+
+    def test_sun_light_cascades(self):
+        component, light = self.light_item("SUN")
+        component.light_use_cascades = True
+        component.light_use_bias = True
+        result = json.loads(metadata.serialize_items([component]))["components"][0]
+        self.assertEqual((result["kind"], result["radius"], result["near_clip"]), ("directional", None, None))
+        self.assertEqual(result["cascades"], {"count": 4, "minimum_distance": 0.1, "first_cascade_far_bound": 10.0, "maximum_distance": 150.0, "overlap_proportion": 0.2})
+        self.assertEqual(metadata.light_unit(light), "lx")
+        self.assertEqual(metadata.component_errors(component), [])
+        component.light_cascade_first = 0.05
+        self.assertEqual(metadata.component_errors(component), ["Shadow cascades must satisfy near < first cascade < max distance"])
+        component.light_cascade_count = 1
+        self.assertEqual(metadata.component_errors(component), [])
+        component.light_cascade_far = 0.1
+        self.assertEqual(metadata.component_errors(component), ["Shadow cascades must satisfy near < first cascade < max distance"])
+        component.light_use_cascades = False
+        self.assertEqual(metadata.component_errors(component), [])
+
+    def test_area_light(self):
+        component, light = self.light_item("AREA", exposure=1.0)
+        component.light_volumetric = True
+        component.light_use_bias = True
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "light", "kind": "area", "intensity": 13660.0, "radius": None, "range": None, "color": [1.0, 0.5, 0.25], "size": [2.0, 0.5], "shadows": False, "contact_shadows": False, "volumetric": False, "baked": False, "depth_bias": None, "normal_bias": None, "near_clip": None, "cascades": None})
+        light.use_custom_distance = True
+        light.shape = "SQUARE"
+        light.normalize = False
+        result = json.loads(metadata.serialize_items([component]))["components"][0]
+        self.assertEqual((result["range"], result["size"], result["intensity"]), (40.0, [2.0, 2.0], 109280.0))
+        light.use_temperature = True
+        light.temperature_color = (1.0, 0.5, 0.5)
+        self.assertEqual(metadata.light_color(light), [1.0, 0.25, 0.125])
+
+    def test_lights_are_skipped_on_other_objects(self):
+        component, light = self.light_item("POINT")
+        component.id_data = item(type="MESH", data=None)
+        self.assertEqual(json.loads(metadata.serialize_items([component])), {"version": 1, "components": []})
+        light.type = "UNKNOWN"
+        component.id_data = item(type="LIGHT", data=light)
+        self.assertIsNone(metadata.light_of(component.id_data))
+
+    def test_light_amounts(self):
+        self.assertEqual([metadata.light_amount(value, "lm") for value in (136600, 683.0, 99.5, 12.5, 0.25)], ["136,600 lm", "683 lm", "99.5 lm", "12.5 lm", "0.25 lm"])
+
+    def test_ambient_light(self):
+        self.assertEqual(json.loads(metadata.serialize_ambient_light((0.9, 0.95, 1.0, 1.0), 120, False)), {"version": 1, "components": [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}]})
+
     def test_custom(self):
         component = item(component_type="CUSTOM", custom_type="game::Marker", custom_json='{"value":42}', use_fields=False, fields=[])
         self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0]["data"]["value"], 42)

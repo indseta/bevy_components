@@ -34,6 +34,15 @@ class TestGeometry(unittest.TestCase):
         self.assertAlmostEqual(max(heights), 1.5)
         self.assertAlmostEqual(min(heights), -1.5)
 
+    def test_cone_points_down_negative_z_within_its_angle(self):
+        lines = geometry.cone_lines(10, math.radians(30))
+        points = [point for line in lines for point in line]
+        self.assertAlmostEqual(max(math.dist((0, 0, 0), point) for point in points), 10)
+        self.assertTrue(all(point[2] <= 1e-9 for point in points))
+        self.assertTrue(all(math.acos(-point[2] / math.dist((0, 0, 0), point)) <= math.radians(30) + 1e-9 for point in points if math.dist((0, 0, 0), point) > 1e-9))
+        self.assertAlmostEqual(max(math.hypot(point[0], point[1]) for point in points), 5)
+        self.assertEqual(geometry.cone_lines(0, 0.5), [])
+
     def test_circles_in_3_planes(self):
         for plane in ("XY", "XZ", "YZ"):
             segments = geometry.circle_lines(4.5, plane=plane, segments=24)

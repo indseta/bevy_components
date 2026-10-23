@@ -3,7 +3,7 @@ from math import radians
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
 
-from .system import component_of, custom_type_changed, definition_renamed, field_changed, redraw_viewports, sync_changed
+from .system import component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, redraw_viewports, sync_changed
 
 COMPONENT_TYPES = [
     ("VISIBILITY_RANGE", "Visibility Range", "Fade the object in and out by camera distance, for levels of detail", "HIDE_OFF", 0),
@@ -14,6 +14,7 @@ COMPONENT_TYPES = [
     ("SCENE_REFERENCE", "Scene Reference", "Spawn a scene from another glTF file at this object, like a prefab", "OUTLINER_OB_GROUP_INSTANCE", 10),
     ("ANIMATION", "Animation", "Play an animation clip when the level loads", "ACTION", 11),
     ("SHADOWS", "Shadows", "Stop the object's meshes from casting or receiving shadows", "SHADING_RENDERED", 15),
+    ("LIGHT", "Light", "Bevy settings that glTF leaves out of a light, such as shadows, and area lights as rectangle lights", "LIGHT", 25),
     ("AUDIO_PLAYER", "Audio Player", "Play a sound from your game's assets folder, optionally in 3D at the object's position", "SPEAKER", 16),
     ("FOG_VOLUME", "Fog Volume", "Box of volumetric fog, seen by cameras with VolumetricFog once a light has VolumetricLight", "OUTLINER_OB_VOLUME", 20),
     ("REFLECTION_PROBE", "Reflection Probe", "Box whose meshes reflect a cubemap embedded in the level", "LIGHTPROBE_SPHERE", 21),
@@ -155,6 +156,23 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives", default=1000.0, min=0.0, soft_max=100000.0, update=sync_changed)
     probe_parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the box walls, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
     probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the level: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume", subtype="FILE_PATH", update=sync_changed)
+
+    light_use_intensity: BoolProperty(name="Set Intensity", description="Use this brightness in Bevy instead of the one converted from the light's power at 683 lumens per watt", default=False, update=light_intensity_toggled)
+    light_intensity: FloatProperty(name="Intensity", description="Brightness in Bevy, in lumens for point, spot and area lights and in lux for sun lights", default=1000.0, min=0.0, soft_max=1000000.0, precision=1, update=sync_changed)
+    light_baked: BoolProperty(name="Baked", description="The light is already baked into lightmaps, so on meshes with a lightmap it only adds reflections", default=False, update=sync_changed)
+    light_volumetric: BoolProperty(name="Volumetric", description="Light up fog volumes with light shafts. Needs Shadows, and VolumetricFog on the game's camera", default=False, update=sync_changed)
+    light_contact_shadows: BoolProperty(name="Contact Shadows", description="Add screen-space shadows where objects touch. Needs ContactShadows and a depth prepass on the game's camera", default=False, update=sync_changed)
+    light_use_bias: BoolProperty(name="Custom Bias", description="Tune the shadow map instead of using Bevy's defaults for this kind of light", default=False, update=light_bias_toggled)
+    light_depth_bias: FloatProperty(name="Depth Bias", description="Pushes shadows away from surfaces to stop shadow acne, too much detaches them from objects", default=0.02, min=0.0, soft_max=1.0, precision=3, update=sync_changed)
+    light_normal_bias: FloatProperty(name="Normal Bias", description="Offsets shadow lookups along the surface normal to stop shadow acne on slopes", default=1.8, min=0.0, soft_max=5.0, precision=2, update=sync_changed)
+    light_near_clip: FloatProperty(name="Near Clip", description="Objects closer to the light than this cast no shadow", default=0.1, min=0.001, precision=3, unit="LENGTH", update=sync_changed)
+    light_use_cascades: BoolProperty(name="Custom Cascades", description="Choose how the sun's shadow map is split by distance from the camera instead of Bevy's 4 cascades up to 150 m", default=False, update=sync_changed)
+    light_cascade_count: IntProperty(name="Cascades", description="Number of shadow maps, more keeps shadows sharp further away and costs more", default=4, min=1, max=4, update=sync_changed)
+    light_cascade_near: FloatProperty(name="Near", description="Distance from the camera where shadows start", default=0.1, min=0.0, precision=3, unit="LENGTH", update=sync_changed)
+    light_cascade_first: FloatProperty(name="First Cascade", description="Distance from the camera that the first and sharpest cascade covers", default=10.0, min=0.001, unit="LENGTH", update=sync_changed)
+    light_cascade_far: FloatProperty(name="Max Distance", description="Distance from the camera where shadows end", default=150.0, min=0.001, unit="LENGTH", update=sync_changed)
+    light_cascade_overlap: FloatProperty(name="Overlap", description="How far neighbouring cascades overlap, which hides the seam between them", default=0.2, min=0.0, max=0.95, subtype="FACTOR", update=sync_changed)
+    show_shadows: BoolProperty(name="Shadows", description="Show the light's shadow settings", default=False)
     custom_type: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health. Pick a type defined in Properties > Scene to edit its fields instead of JSON", default="my_game::MyComponent", update=custom_type_changed)
     custom_json: StringProperty(name="Data", description="Component fields as JSON, read by your game code", default="{}", update=sync_changed)
     use_fields: BoolProperty(name="Use Fields", description="Edit the data as the fields defined in Properties > Scene instead of JSON")
@@ -182,6 +200,14 @@ class BEVY_PG_definitions(bpy.types.PropertyGroup):
     active_index: IntProperty(name="Active Definition")
 
 
+class BEVY_PG_ambient_light(bpy.types.PropertyGroup):
+    enabled: BoolProperty(name="Bevy Ambient Light", description="Export the level's ambient light, which the importer sets as Bevy's GlobalAmbientLight", default=False)
+    use_world_color: BoolProperty(name="From World", description="Use the World's background color and strength, converted at 683 lumens per watt like lights", default=True)
+    color: FloatVectorProperty(name="Color", description="Color of the ambient light", size=3, subtype="COLOR", default=(1.0, 1.0, 1.0), min=0.0, max=1.0)
+    brightness: FloatProperty(name="Brightness", description="Ambient brightness in candela per square meter, Bevy's default is 80", default=80.0, min=0.0, soft_max=2000.0, precision=1)
+    baked: BoolProperty(name="Baked", description="The ambient light is already baked into lightmaps, so it skips meshes with a lightmap", default=False)
+
+
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport while the Bevy Components panel in Properties is expanded, never exported", default=True, update=redraw_viewports)
     scope: EnumProperty(name="Draw On", items=[
@@ -195,6 +221,7 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     audio_ranges: BoolProperty(name="Audio Ranges", description="Draw where spatial sounds play at full volume and where they fade to 1%", default=True, update=redraw_viewports)
     scene_references: BoolProperty(name="Scene References", description="Draw the bounds of referenced scenes", default=True, update=redraw_viewports)
     volumes: BoolProperty(name="Fog and Probes", description="Draw fog volume and light probe boxes", default=True, update=redraw_viewports)
+    lights: BoolProperty(name="Light Ranges", description="Draw how far each light reaches in Bevy, where it stops lighting anything", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
     edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)

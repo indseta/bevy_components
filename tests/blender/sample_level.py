@@ -74,6 +74,10 @@ def clear_scene():
             collection.remove(block)
     if hasattr(bpy.context.scene, "bevy_component_definitions"):
         bpy.context.scene.bevy_component_definitions.definitions.clear()
+    if bpy.context.scene.world is None:
+        bpy.context.scene.world = bpy.data.worlds.new("World")
+    if hasattr(bpy.context.scene.world, "bevy_ambient_light"):
+        bpy.context.scene.world.property_unset("bevy_ambient_light")
 
 
 def select(*objects):
@@ -96,6 +100,16 @@ def add_empty(name, location):
     bpy.ops.object.empty_add(type="PLAIN_AXES", location=location)
     obj = bpy.context.object
     obj.name = name
+    return obj
+
+
+def add_light(name, kind, location, rotation=(0, 0, 0), **values):
+    bpy.ops.object.light_add(type=kind, location=location, rotation=rotation)
+    obj = bpy.context.object
+    obj.name = name
+    obj.data.name = name
+    for key, value in values.items():
+        setattr(obj.data, key, value)
     return obj
 
 
@@ -511,8 +525,20 @@ def build_sample_level(directory=FIXTURE.parent):
     gi_volume = add_empty("gi_volume", (0, 0, 3))
     add_component(gi_volume, "IRRADIANCE_VOLUME", volume_size=(24, 6, 24), volume_falloff=0.1, probe_intensity=500, probe_file=str(IRRADIANCE_VOLUME))
 
-    bpy.ops.object.light_add(type="SUN", location=(0, 0, 10))
-    bpy.context.object.name = "sun"
+
+    sun = add_light("sun", "SUN", (0, 0, 10))
+    add_component(sun, "LIGHT", light_volumetric=True, light_use_cascades=True, light_cascade_count=3, light_cascade_first=8, light_cascade_far=80)
+    lamp_light = add_light("lamp_light", "POINT", (4, 4, 1), energy=200, shadow_soft_size=0.1, use_custom_distance=True, cutoff_distance=15)
+    add_component(lamp_light, "LIGHT", light_baked=True, light_use_bias=True, light_depth_bias=0.1, light_normal_bias=0.5, light_near_clip=0.05)
+    spot_light = add_light("spot_light", "SPOT", (-4, -4, 4), rotation=(math.radians(30), 0, 0), use_shadow=False)
+    add_component(spot_light, "LIGHT", light_contact_shadows=True, light_use_intensity=True, light_intensity=2000)
+    window_light = add_light("window_light", "AREA", (0, 9, 2), rotation=(math.radians(-90), 0, 0), shape="RECTANGLE", size=2, size_y=1, energy=50)
+    add_component(window_light, "LIGHT")
+    ambient = bpy.context.scene.world.bevy_ambient_light
+    ambient.enabled = True
+    ambient.use_world_color = False
+    ambient.color = (0.9, 0.95, 1.0)
+    ambient.brightness = 120
     add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp)
     select()
 

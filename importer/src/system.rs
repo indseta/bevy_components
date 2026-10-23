@@ -2,7 +2,7 @@ use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, Col
 use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 use std::iter;
-use crate::{component::*, data::*, joint::*, texture::GltfTextures};
+use crate::{component::*, data::*, joint::*, light, texture::GltfTextures};
 
 const MAX_CUBEMAP_SIZE: u32 = 8192;
 const CUBE_FACES: u32 = 6;
@@ -10,19 +10,7 @@ const CUBE_FACES: u32 = 6;
 pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfExtras, Option<&Name>, Option<&GltfTextures>), Without<DecodedGltfExtras>>, asset_server: Res<AssetServer>, audio_sources: Option<Res<Assets<AudioSource>>>) {
     for (entity, extras, name, textures) in &nodes {
         commands.entity(entity).insert(DecodedGltfExtras);
-        let Ok(outer) = serde_json::from_str::<Value>(&extras.value) else {
-            warn!("Invalid glTF extras on {:?}", name);
-            continue;
-        };
-        let Some(serialized) = outer.get("bevy_components").and_then(Value::as_str) else { continue; };
-        let Ok(exported) = serde_json::from_str::<ExportedData>(serialized) else {
-            warn!("Invalid Bevy component metadata on {:?}", name);
-            continue;
-        };
-        if exported.version != 1 {
-            warn!("Unsupported Blender Bevy component version {} on {:?}", exported.version, name);
-            continue;
-        }
+        let Some(exported) = decode_extras(&extras.value, name) else { continue; };
 
         let mut components = ImportedComponents::default();
         let mut custom = BlenderCustomComponents::default();
@@ -104,6 +92,12 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         audio = Some((AudioPlayer::new(asset_server.load(path)), PlaybackSettings { mode, volume: Volume::Linear(volume.max(0.0)), paused: !autoplay, spatial, spatial_scale, ..PlaybackSettings::ONCE }));
                     }
                 }
+                ExportedComponent::Light(light) => {
+                    if let Some(spec) = light::light_spec(light, name) {
+                        commands.entity(entity).insert(light::PendingLight(spec));
+                    }
+                }
+                ExportedComponent::AmbientLight(_) => warn!("Ambient light belongs on the scene, not on {:?}", name),
                 ExportedComponent::Custom { type_path, data } => custom.0.push(BlenderCustomComponent { type_path, data }),
                 ExportedComponent::SceneReference { path, scene } => reference = Some(PendingSceneReference { path, scene }),
                 ExportedComponent::Animation { clip, repeat, speed } => animation = Some(PendingAnimation(AnimationSpec { clip, repeat, speed })),
@@ -171,6 +165,23 @@ pub fn apply_reflection_probes(mut commands: Commands, probes: Query<(Entity, &P
         }
         target.insert(GeneratedEnvironmentMapLight { environment_map: pending.cubemap.clone(), intensity: pending.intensity, ..default() });
     }
+}
+
+pub fn decode_extras(value: &str, name: Option<&Name>) -> Option<ExportedData> {
+    let Ok(outer) = serde_json::from_str::<Value>(value) else {
+        warn!("Invalid glTF extras on {:?}", name);
+        return None;
+    };
+    let serialized = outer.get("bevy_components").and_then(Value::as_str)?;
+    let Ok(exported) = serde_json::from_str::<ExportedData>(serialized) else {
+        warn!("Invalid Bevy component metadata on {:?}", name);
+        return None;
+    };
+    if exported.version != 1 {
+        warn!("Unsupported Blender Bevy component version {} on {:?}", exported.version, name);
+        return None;
+    }
+    return Some(exported);
 }
 
 pub fn apply_default_bodies(mut commands: Commands, candidates: Query<Entity, With<DefaultStaticBody>>, parents: Query<&ChildOf>, bodies: Query<(), With<RigidBody>>) {

@@ -15,7 +15,7 @@ import bpy
 import gpu
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, PROP, add_component, add_empty, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, PROP, add_component, add_empty, add_light, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -27,6 +27,7 @@ DYNAMIC_BODY = {**KINEMATIC_BODY, "kind": "dynamic", "gravity_scale": 1.0, "line
 DEFAULT_JOINT = {"type": "joint", "kind": "revolute", "body1": None, "body2": None, "axis": [0.0, 1.0, 0.0], "angle_limits": None, "distance_limits": None, "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.0, "collide": False}
 DEFAULT_AUDIO = {"type": "audio_player", "path": "", "volume": 1.0, "loop": False, "autoplay": True, "spatial": True, "distance": 5.0}
 WINDMILL = {"type": "scene_reference", "path": "props/windmill.glb", "scene": 0}
+DEFAULT_LIGHT = {"type": "light", "intensity": None, "radius": None, "range": None, "color": None, "size": None, "shadows": True, "contact_shadows": False, "volumetric": False, "baked": False, "depth_bias": None, "normal_bias": None, "near_clip": None, "cascades": None}
 EXPECTED_COMPONENTS = {
     "ground": [
         {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
@@ -205,6 +206,18 @@ EXPECTED_COMPONENTS = {
     "gi_volume": [
         {"type": "irradiance_volume", "size": [24.0, 6.0, 24.0], "falloff": [0.1, 0.1, 0.1], "intensity": 500.0, "texture": "irradiance_volume"},
     ],
+    "sun": [
+        {**DEFAULT_LIGHT, "kind": "directional", "volumetric": True, "cascades": {"count": 3, "minimum_distance": 0.1, "first_cascade_far_bound": 8.0, "maximum_distance": 80.0, "overlap_proportion": 0.2}},
+    ],
+    "lamp_light": [
+        {**DEFAULT_LIGHT, "kind": "point", "radius": 0.1, "baked": True, "depth_bias": 0.1, "normal_bias": 0.5, "near_clip": 0.05},
+    ],
+    "spot_light": [
+        {**DEFAULT_LIGHT, "kind": "spot", "intensity": 2000.0, "radius": 0.0, "shadows": False, "contact_shadows": True},
+    ],
+    "window_light": [
+        {**DEFAULT_LIGHT, "kind": "area", "intensity": 34150.0, "color": [1.0, 1.0, 1.0], "size": [2.0, 1.0], "shadows": False},
+    ],
 }
 PROBE_IMAGES = {"probe_cubemap", "irradiance_volume"}
 
@@ -251,6 +264,8 @@ def _rounded(value):
         return round(value, 5)
     if isinstance(value, list):
         return [_rounded(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_rounded(item) for item in value)
     if isinstance(value, dict):
         return {key: _rounded(item) for key, item in value.items()}
     return value
@@ -404,9 +419,10 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Object, "bevy_component_data"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
+        self.assertTrue(hasattr(bpy.types.World, "bevy_ambient_light"))
         for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
@@ -746,6 +762,76 @@ class TestOperators(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=1), {"FINISHED"})
         self.assertEqual(_stored(other)["components"], [_stored(self.obj)["components"][1]])
 
+    def test_lights_are_stored(self):
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="LIGHT"), {"CANCELLED"})
+        self.assertEqual(len(self.obj.bevy_component_data.components), 0)
+        lamp = add_light("lamp", "POINT", (0, 0, 0), energy=10)
+        item = add_component(lamp, "LIGHT")
+        self.assertEqual(_stored(lamp)["components"], [{**DEFAULT_LIGHT, "kind": "point", "radius": 0.0}])
+        lamp.data.shadow_soft_size = 0.2
+        lamp.data.use_shadow = False
+        item.light_contact_shadows = True
+        item.light_volumetric = True
+        item.light_baked = True
+        self.assertEqual(_rounded(_stored(lamp)["components"]), [{**DEFAULT_LIGHT, "kind": "point", "radius": 0.2, "shadows": False, "contact_shadows": True, "volumetric": True, "baked": True}])
+        self.assertEqual(bpy.ops.bevy_components.add(component_type="LIGHT"), {"CANCELLED"})
+
+    def test_light_overrides_start_from_blender_and_bevy_values(self):
+        lamp = add_light("lamp", "SPOT", (0, 0, 0), energy=10)
+        item = add_component(lamp, "LIGHT")
+        item.light_use_intensity = True
+        self.assertEqual(item.light_intensity, 6830.0)
+        item.light_intensity = 500
+        item.light_use_intensity = False
+        item.light_use_intensity = True
+        self.assertEqual(_stored(lamp)["components"][0]["intensity"], 500.0)
+        item.light_use_bias = True
+        self.assertEqual(_rounded((item.light_depth_bias, item.light_normal_bias, item.light_near_clip)), (0.02, 1.8, 0.1))
+        point = add_light("point", "POINT", (0, 0, 0))
+        item = add_component(point, "LIGHT", light_use_bias=True)
+        self.assertEqual(_rounded([_stored(point)["components"][0][key] for key in ("depth_bias", "normal_bias", "near_clip")]), [0.08, 0.6, 0.1])
+        sun = add_light("sun", "SUN", (0, 0, 0), energy=3)
+        item = add_component(sun, "LIGHT", light_use_intensity=True, light_use_bias=True, light_use_cascades=True)
+        stored = _stored(sun)["components"][0]
+        self.assertEqual(_rounded([stored[key] for key in ("kind", "intensity", "radius", "depth_bias", "normal_bias", "near_clip")]), ["directional", 2049.0, None, 0.02, 1.8, None])
+        self.assertEqual(_rounded(stored["cascades"]), {"count": 4, "minimum_distance": 0.1, "first_cascade_far_bound": 10.0, "maximum_distance": 150.0, "overlap_proportion": 0.2})
+
+    def test_area_lights_are_stored_as_rectangles(self):
+        window = add_light("window", "AREA", (0, 0, 0), shape="ELLIPSE", size=2, size_y=0.5, energy=20, color=(1.0, 0.5, 0.25), use_custom_distance=True, cutoff_distance=8)
+        item = add_component(window, "LIGHT", light_volumetric=True, light_use_bias=True)
+        self.assertEqual(_rounded(_stored(window)["components"]), [{**DEFAULT_LIGHT, "kind": "area", "intensity": 13660.0, "range": 8.0, "color": [1.0, 0.5, 0.25], "size": [2.0, 0.5], "shadows": False}])
+        window.data.shape = "SQUARE"
+        if hasattr(window.data, "normalize"):
+            window.data.normalize = False
+            window.scale = (2, 1, 1)
+            bpy.context.view_layer.update()
+            self.assertEqual(addon.metadata.light_intensity(window.data, window), 20 * 683 * 2 * 2 * 2)
+        item.light_use_intensity = True
+        self.assertEqual(item.light_intensity, addon.metadata.light_intensity(window.data, window))
+
+    def test_light_components_stay_on_lights(self):
+        lamp = add_light("lamp", "POINT", (0, 0, 0))
+        add_component(lamp, "LIGHT", light_baked=True)
+        add_component(lamp, "CUSTOM", custom_type="game::Flicker")
+        other = add_light("other", "SPOT", (1, 0, 0))
+        select(lamp, self.obj, other)
+        self.assertEqual(bpy.ops.bevy_components.copy_to_selected(), {"FINISHED"})
+        self.assertEqual([item.component_type for item in self.obj.bevy_component_data.components], ["CUSTOM"])
+        self.assertEqual([item.component_type for item in other.bevy_component_data.components], ["LIGHT", "CUSTOM"])
+        self.obj.bevy_component_data.components.clear()
+        other.bevy_component_data.components.clear()
+        self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=0), {"FINISHED"})
+        self.assertEqual(len(self.obj.bevy_component_data.components), 0)
+        self.assertEqual(_stored(other)["components"][0]["baked"], True)
+
+    def test_reset_restores_light_defaults(self):
+        lamp = add_light("lamp", "POINT", (0, 0, 0))
+        item = add_component(lamp, "LIGHT", light_use_intensity=True, light_intensity=5, light_baked=True, light_use_bias=True, light_depth_bias=0.3, show_shadows=True)
+        bpy.ops.bevy_components.reset(index=0)
+        self.assertEqual((item.light_use_intensity, item.light_baked, item.light_use_bias, item.show_shadows), (False, False, False, True))
+        item.light_use_bias = True
+        self.assertEqual(_rounded(item.light_depth_bias), 0.08)
+
     def test_invalid_custom_json_is_not_stored(self):
         add_component(self.obj, "CUSTOM", custom_json="{broken")
         self.assertNotIn("bevy_components", self.obj.keys())
@@ -841,11 +927,19 @@ class TestPanels(unittest.TestCase):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             found.update({properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()})
-        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
+        self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "LIGHT": False, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_audio.draw(menu, _menu_context(self.obj))
         self.assertEqual([(text, enabled) for text, properties, enabled in menu.layout.buttons()], [("Audio Player", False)])
+        lamp = add_light("lamp", "POINT", (0, 0, 0))
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add_rendering.draw(menu, _menu_context(lamp))
+        self.assertTrue(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Light"])
+        add_component(lamp, "LIGHT")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add_rendering.draw(menu, _menu_context(lamp))
+        self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Light"])
 
     def test_component_context_menu_targets_its_component(self):
         add_component(self.obj, "COLLIDER")
@@ -1077,6 +1171,111 @@ class TestPanels(unittest.TestCase):
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertIn("16 × 16 cubemap", panel.layout.texts())
 
+    def _draw_card(self, obj):
+        select(obj)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        return panel.layout
+
+    def test_light_card(self):
+        lamp = add_light("lamp", "POINT", (0, 0, 0), energy=200)
+        item = add_component(lamp, "LIGHT")
+        layout = self._draw_card(lamp)
+        self.assertEqual(layout.props()[-6:], ["light_use_intensity", "shadow_soft_size", "use_custom_distance", "light_baked", "light_volumetric", "use_shadow"])
+        self.assertIn(("row", "Intensity"), [(name, bound.get("heading")) for name, bound, child in layout.calls])
+        self.assertIn("136,600 lm", layout.texts())
+        self.assertIn("20 m, Bevy's default", layout.texts())
+        self.assertNotIn("light_contact_shadows", layout.props())
+        item.light_use_intensity = True
+        item.show_shadows = True
+        lamp.data.use_custom_distance = True
+        layout = self._draw_card(lamp)
+        self.assertIn("light_intensity", layout.props())
+        self.assertIn("lm", layout.texts())
+        self.assertIn("cutoff_distance", layout.props())
+        self.assertEqual(layout.props()[-3:], ["use_shadow", "light_contact_shadows", "light_use_bias"])
+        self.assertTrue(_prop_layout(layout, "light_contact_shadows").active)
+        item.light_use_bias = True
+        lamp.data.use_shadow = False
+        layout = self._draw_card(lamp)
+        self.assertEqual(layout.props()[-3:], ["light_depth_bias", "light_normal_bias", "light_near_clip"])
+        self.assertFalse(_prop_layout(layout, "light_contact_shadows").active)
+
+    def test_sun_card_draws_cascades(self):
+        sun = add_light("sun", "SUN", (0, 0, 0), energy=2)
+        item = add_component(sun, "LIGHT", show_shadows=True, light_use_bias=True)
+        layout = self._draw_card(sun)
+        self.assertIn("1,366 lx", layout.texts())
+        for prop in ("shadow_soft_size", "use_custom_distance", "light_near_clip", "light_cascade_count"):
+            self.assertNotIn(prop, layout.props())
+        self.assertEqual(layout.props()[-3:], ["light_depth_bias", "light_normal_bias", "light_use_cascades"])
+        item.light_use_cascades = True
+        layout = self._draw_card(sun)
+        self.assertEqual(layout.props()[-5:], ["light_cascade_count", "light_cascade_near", "light_cascade_first", "light_cascade_far", "light_cascade_overlap"])
+        self.assertFalse(_prop_layout(layout, "light_cascade_first").is_alert())
+        item.light_cascade_first = 200
+        layout = self._draw_card(sun)
+        self.assertTrue(_prop_layout(layout, "light_cascade_first").is_alert())
+
+    def test_area_light_card(self):
+        window = add_light("window", "AREA", (0, 0, 0), energy=5)
+        add_component(window, "LIGHT")
+        layout = self._draw_card(window)
+        self.assertEqual(layout.props()[-2:], ["light_use_intensity", "use_custom_distance"])
+        self.assertIn("3,415 lm", layout.texts())
+        self.assertIn("Bevy area lights cast no shadows", " ".join(layout.texts()))
+        self.assertNotIn("light_baked", layout.props())
+
+    def test_area_lights_without_a_light_component_explain_why(self):
+        window = add_light("window", "AREA", (0, 0, 0))
+        self.assertIn("glTF leaves out area lights", " ".join(self._draw_card(window).texts()))
+        add_component(window, "LIGHT")
+        self.assertNotIn("glTF leaves out area lights", " ".join(self._draw_card(window).texts()))
+
+    def test_world_ambient_light_panel(self):
+        panel_type = addon.panel.BEVY_PT_world_ambient_light
+        world = bpy.data.worlds.new("ambient_test")
+        try:
+            if bpy.app.version < (5, 0, 0):
+                world.use_nodes = True
+            background = addon.system.world_background(world)
+            background.inputs["Color"].default_value = (0.2, 0.4, 0.6, 1.0)
+            background.inputs["Strength"].default_value = 2
+            context = SimpleNamespace(world=world, region=None)
+            self.assertTrue(panel_type.poll(context))
+            self.assertFalse(panel_type.poll(SimpleNamespace(world=None)))
+            panel = FakePanel(self)
+            panel_type.draw_header(panel, context)
+            self.assertEqual(panel.layout.props(), ["enabled"])
+            panel = FakePanel(self)
+            panel_type.draw(panel, context)
+            self.assertFalse(panel.layout.active)
+            self.assertEqual(panel.layout.props(), ["use_world_color", "default_value", "default_value", "baked"])
+            self.assertIn("Bevy gets 1,366 cd/m²", panel.layout.texts())
+            self.assertEqual(_rounded(addon.system.ambient_light(world)), ((0.2, 0.4, 0.6), 1366.0))
+            world.bevy_ambient_light.enabled = True
+            world.bevy_ambient_light.use_world_color = False
+            panel = FakePanel(self)
+            panel_type.draw(panel, context)
+            self.assertTrue(panel.layout.active)
+            self.assertEqual(panel.layout.props(), ["use_world_color", "color", "brightness", "baked"])
+            self.assertEqual(addon.system.ambient_light(world), ((1.0, 1.0, 1.0), 80.0))
+            world.bevy_ambient_light.use_world_color = True
+            color = world.node_tree.nodes.new("ShaderNodeRGB")
+            world.node_tree.links.new(color.outputs["Color"], background.inputs["Color"])
+            panel = FakePanel(self)
+            panel_type.draw(panel, context)
+            self.assertEqual(panel.layout.props(), ["use_world_color", "color", "baked"])
+            self.assertIn("The World color comes from a texture", " ".join(panel.layout.texts()))
+            self.assertEqual(_rounded(addon.system.ambient_light(world)), (_rounded(tuple(world.color)), 683.0))
+            if bpy.app.version < (5, 0, 0):
+                world.use_nodes = False
+                panel = FakePanel(self)
+                panel_type.draw(panel, context)
+                self.assertNotIn("The World color comes from a texture", " ".join(panel.layout.texts()))
+        finally:
+            bpy.data.worlds.remove(world)
+
     def test_sidebar_draws_components(self):
         add_component(self.obj, "RIGID_BODY")
         select(self.obj)
@@ -1091,7 +1290,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(panel.layout.props(), ["enabled"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
-        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "scene_references", "volumes", "labels", "xray", "edit_handles", "max_mesh_edges"])
+        self.assertEqual(panel.layout.props(), ["scope", "colliders", "joints", "velocities", "visibility_ranges", "audio_ranges", "scene_references", "volumes", "lights", "labels", "xray", "edit_handles", "max_mesh_edges"])
         settings.enabled = False
         panel = FakePanel(self)
         addon.panel.BEVY_PT_overlay.draw(panel, _menu_context())
@@ -1555,6 +1754,45 @@ class TestViewport(unittest.TestCase):
         animation.animation_loop = False
         animation.animation_speed = 0.5
         self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Animation · door_open · once · 0.5×"])
+
+    def test_light_range_previews(self):
+        lamp = add_light("lamp", "POINT", (1, 2, 3), energy=10, use_custom_distance=True, cutoff_distance=15)
+        lamp.scale = (2, 2, 2)
+        bpy.context.view_layer.update()
+        add_component(lamp, "LIGHT")
+        select(lamp)
+        batches = addon.overlay.preview_batches(bpy.context, self.settings)
+        self.assertEqual([(color, width) for matrix, lines, color, width in batches], [(addon.overlay.LIGHT_COLOR, 1.5)])
+        matrix, lines, color, width = batches[0]
+        self.assertEqual(tuple(matrix.translation), (1.0, 2.0, 3.0))
+        self.assertTrue(all(abs((matrix @ Vector(point) - matrix.translation).length - 15) < 1e-3 for line in lines for point in line))
+        self.assertEqual(addon.overlay._label_lines(lamp, self.settings, {}), ["Light · Point · 6,830 lm · shadows · range 15m"])
+        self.settings.lights = False
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(lamp, self.settings, {}), [])
+        self.settings.lights = True
+
+    def test_spot_light_preview_is_a_cone(self):
+        spot = add_light("spot", "SPOT", (0, 0, 0), rotation=(math.radians(90), 0, 0), energy=10, spot_size=math.radians(60), use_shadow=False)
+        add_component(spot, "LIGHT")
+        select(spot)
+        bpy.context.view_layer.update()
+        matrix, lines, color, width = addon.overlay.preview_batches(bpy.context, self.settings)[0]
+        points = [matrix @ Vector(point) for line in lines for point in line]
+        self.assertAlmostEqual(max(point.length for point in points), 20, places=3)
+        self.assertTrue(all(point.y > -1e-4 for point in points))
+        self.assertTrue(all(point.angle(Vector((0, 1, 0))) < math.radians(30) + 1e-3 for point in points if point.length > 1e-3))
+        self.assertEqual(addon.overlay._label_lines(spot, self.settings, {}), ["Light · Spot · 6,830 lm · range 20m"])
+
+    def test_sun_and_area_light_labels(self):
+        sun = add_light("sun", "SUN", (0, 0, 0))
+        add_component(sun, "LIGHT", light_use_intensity=True, light_intensity=12.5)
+        select(sun)
+        self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+        self.assertEqual(addon.overlay._label_lines(sun, self.settings, {}), ["Light · Sun · 12.5 lx · shadows"])
+        window = add_light("window", "AREA", (0, 0, 0), energy=1)
+        add_component(window, "LIGHT")
+        self.assertEqual(addon.overlay._label_lines(window, self.settings, {}), ["Light · Area · 683 lm · range 20m"])
 
     def test_preview_batches(self):
         add_component(self.obj, "COLLIDER", collider_sensor=True)
@@ -2085,6 +2323,42 @@ class TestValidation(unittest.TestCase):
         fog.fog_density = 0.01
         self.assertEqual(self._messages(), [])
 
+    def test_light_warnings(self):
+        lamp = add_light("lamp", "POINT", (0, 0, 0))
+        add_component(lamp, "LIGHT", light_volumetric=True)
+        self.assertEqual(self._messages(), [])
+        lamp.data.use_shadow = False
+        self.assertEqual(self._messages(), ["lamp: Volumetric needs Shadows, or the light makes no light shafts"])
+        spot = add_light("spot", "SPOT", (0, 0, 0), use_square=True)
+        add_component(spot, "LIGHT")
+        self.assertEqual(self._messages(spot), ["spot: Bevy spot lights are round, so this square spot becomes round"])
+        window = add_light("window", "AREA", (0, 0, 0), shape="DISK", size=1.5)
+        self.assertEqual(self._messages(window), ["window: glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"])
+        light = add_component(window, "LIGHT", light_volumetric=True)
+        self.assertEqual(self._messages(window), ["window: Bevy area lights are rectangles, so this disk becomes a 1.5 × 1.5 m rectangle"])
+        window.data.shape = "ELLIPSE"
+        window.data.size_y = 0.5
+        self.assertEqual(self._messages(window), ["window: Bevy area lights are rectangles, so this ellipse becomes a 1.5 × 0.5 m rectangle"])
+        light.enabled = False
+        self.assertEqual(self._messages(window), [])
+        stray = add_mesh(bpy.ops.mesh.primitive_cube_add, "stray")
+        stray.bevy_component_data.components.add().component_type = "LIGHT"
+        self.assertEqual(self._messages(stray), ["stray: Only lights use this component, so it is not exported"])
+
+    def test_invalid_shadow_cascades_block_export(self):
+        sun = add_light("sun", "SUN", (0, 0, 0))
+        item = add_component(sun, "LIGHT", light_use_cascades=True, light_cascade_first=200)
+        message = "sun: Shadow cascades must satisfy near < first cascade < max distance"
+        self.assertEqual(self._messages(), [message])
+        item.light_cascade_count = 1
+        self.assertEqual(self._messages(), [])
+        item.light_cascade_near = 150
+        self.assertEqual(self._messages(), [message])
+        with self.assertRaisesRegex(RuntimeError, "1 problem blocks export"):
+            bpy.ops.bevy_components.validate()
+        item.light_use_cascades = False
+        self.assertEqual(self._messages(), [])
+
     def test_custom_component_type_paths(self):
         marker = add_empty("marker", (0, 0, 0))
         add_component(marker, "CUSTOM", custom_type="my_game::Wrapper<f32>")
@@ -2160,7 +2434,7 @@ class TestExport(unittest.TestCase):
         cls.directory.cleanup()
 
     def test_every_object_is_exported(self):
-        self.assertEqual(set(self.nodes), set(EXPECTED_COMPONENTS) | {"chimney", "sun", "cart_body", "bush_a"})
+        self.assertEqual(set(self.nodes), set(EXPECTED_COMPONENTS) | {"chimney", "cart_body", "bush_a"})
         self.assertEqual(self.nodes["house"].get("children"), [self.gltf["nodes"].index(self.nodes["chimney"])])
         self.assertEqual(sorted(self.gltf["nodes"][index]["name"] for index in self.nodes["cart"]["children"]), ["cart_body", "cart_handle", "cart_shape"])
 
@@ -2176,8 +2450,36 @@ class TestExport(unittest.TestCase):
         self.assertNotIn("extras", self.nodes["chimney"])
         self.assertNotIn("extras", self.nodes["cart_body"])
         self.assertNotIn("extras", self.nodes["bush_a"])
-        self.assertNotIn("extras", self.nodes["sun"])
-        self.assertTrue(all("extras" not in scene for scene in self.gltf["scenes"]))
+        self.assertEqual([list(scene.get("extras", {})) for scene in self.gltf["scenes"]], [["bevy_components"]])
+
+    def test_ambient_light_is_exported_on_the_scene(self):
+        self.assertEqual(json.loads(self.gltf["scenes"][0]["extras"]["bevy_components"]), {"version": 1, "components": [{"type": "ambient_light", "color": [0.9, 0.95, 1.0], "brightness": 120.0, "baked": False}]})
+        ambient = bpy.context.scene.world.bevy_ambient_light
+        path = Path(self.directory.name) / "no_ambient.glb"
+        ambient.enabled = False
+        try:
+            self.assertTrue(all("extras" not in scene for scene in export_sample_level(path)["scenes"]))
+        finally:
+            ambient.enabled = True
+
+    def test_light_data_is_read_at_export(self):
+        window = bpy.data.objects["window_light"]
+        path = Path(self.directory.name) / "dimmer.glb"
+        window.data.energy = 10
+        window.data.size = 3
+        try:
+            node = next(node for node in export_sample_level(path)["nodes"] if node["name"] == "window_light")
+        finally:
+            window.data.energy = 50
+            window.data.size = 2
+        self.assertEqual(json.loads(node["extras"]["bevy_components"])["components"][0]["intensity"], 6830.0)
+        self.assertEqual(json.loads(node["extras"]["bevy_components"])["components"][0]["size"], [3.0, 1.0])
+
+    def test_light_nodes_face_like_in_blender(self):
+        self.assertEqual(_rounded(self.nodes["sun"]["rotation"]), [-0.70711, 0.0, 0.0, 0.70711])
+        self.assertEqual([abs(value) for value in _rounded(self.nodes["window_light"]["rotation"])], [1.0, 0.0, 0.0, 0.0])
+        self.assertEqual(self.nodes["lamp_light"]["extensions"], {"KHR_lights_punctual": {"light": self.gltf["extensions"]["KHR_lights_punctual"]["lights"].index(next(light for light in self.gltf["extensions"]["KHR_lights_punctual"]["lights"] if light["name"] == "lamp_light"))}})
+        self.assertNotIn("extensions", self.nodes["window_light"])
 
     def test_transforms_are_y_up(self):
         self.assertEqual(_rounded(self.nodes["crate"]["translation"]), [3.0, 1.0, 2.0])
@@ -2216,7 +2518,7 @@ class TestExport(unittest.TestCase):
         bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True)
         gltf = read_gltf(path)
         self.assertTrue(all(set(node.get("extras", {})) <= {"bevy_components"} for node in gltf["nodes"]))
-        self.assertTrue(all("extras" not in scene for scene in gltf["scenes"]))
+        self.assertTrue(all(set(scene.get("extras", {})) <= {"bevy_components"} for scene in gltf["scenes"]))
 
     def test_light_probe_files_are_embedded(self):
         gltf, binary = addon.compression.read_glb((Path(self.directory.name) / "sample_level.glb").read_bytes())
