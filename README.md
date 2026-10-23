@@ -46,7 +46,7 @@ fn setup(mut commands: Commands, asset_server: Res<AssetServer>) {
 
 1. Select an object, press **Add Component** and pick a component, or start typing to search.
 2. Each component works like a modifier: collapse it, untick it to leave it out of the export, or use its dropdown to duplicate, copy to selected, reset or reorder it.
-3. Export with **File > Export > Bevy Scene (.glb)**, or from the dropdown next to **Add Component**.
+3. Export with **File > Export > Bevy Scene (.glb)**, or from the dropdown next to **Add Component**. After that, **Export Again** in those menus and in **3D Viewport > N > Bevy > Export** writes the same file with the same settings, without the file dialog.
 4. Put the GLB in your game's `assets/` folder.
 
 **Shadows** (under Rendering) stops the meshes on and under an object from casting or receiving shadows. **Audio Player** (under Audio) plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
@@ -176,7 +176,7 @@ fn setup(mut commands: Commands) {
 }
 ```
 
-With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file and only rewrites files that changed. It will not write over `main.rs`, `lib.rs` or another crate root, warns before it replaces a `.rs` file it did not write or one edited since the last export, and removes files it copied into the assets folder earlier that the scene no longer uses. Rebuild the game after exporting again.
+With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file, so **Export Again** writes the same files in one click, and it only rewrites files that changed. It will not write over `main.rs`, `lib.rs` or another crate root, warns before it replaces a `.rs` file it did not write or one edited since the last export (Export Again refuses those), and removes files it copied into the assets folder earlier that the scene no longer uses. Rebuild the game after exporting again.
 
 - Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors and colors.
 - Physics needs Avian with its `collider-from-mesh` feature. Add `BlenderBevyComponentsPlugin` when you compress textures or use a Scene Reference, since the referenced GLBs carry their components the usual way.

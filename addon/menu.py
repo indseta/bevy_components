@@ -135,11 +135,20 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
         layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake Lighting...", icon="RENDER_STILL")
         layout.operator(BEVY_OT_export_glb.bl_idname, text="Export Bevy Scene (.glb)...", icon="EXPORT")
         layout.operator(BEVY_OT_export_bsn.bl_idname, text="Export Bevy Scene (BSN)...", icon="EXPORT")
+        draw_export_again(layout, context.scene)
+
+
+def draw_export_again(layout, scene):
+    for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn):
+        path = operator.remembered(scene)
+        if path:
+            layout.operator(operator.bl_idname, text=f"Export Again ({bpy.path.basename(path)})", icon="FILE_REFRESH").again = True
 
 
 def export_menu(self, context):
     self.layout.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Scene (.glb)")
     self.layout.operator(BEVY_OT_export_bsn.bl_idname, text="Bevy Scene (BSN)")
+    draw_export_again(self.layout, context.scene)
 
 
 def export_status(self, context):

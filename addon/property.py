@@ -26,6 +26,12 @@ COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description,
 LAYER_COUNT = 32
 AUDIO_FORMATS = (".ogg", ".oga", ".spx", ".wav", ".mp3", ".flac")
 PATH_OPTIONS = {"PATH_SUPPORTS_BLEND_RELATIVE"} if "is_path_supports_blend_relative" in bpy.types.Property.bl_rna.properties else set()
+TEXTURE_COMPRESSION = [
+    ("DISABLED", "Disabled", "Export ordinary embedded textures"),
+    ("ETC1S", "ETC1S", "Compress every texture as ETC1S KTX2, for the smallest files"),
+    ("UASTC", "UASTC", "Compress every texture as UASTC KTX2, for the best quality"),
+    ("AUTOMATIC", "Automatic", "UASTC for normal maps, data textures such as metallic-roughness and pixel art with Closest sampling, ETC1S for other color textures"),
+]
 
 FIELD_TYPES = [
     ("FLOAT", "Float", "Decimal number, read as f32"),
@@ -221,8 +227,27 @@ class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
     lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the scene exports its lamps, since Bevy already lights meshes with them", default=False)
 
 
-class BEVY_PG_bsn_export(bpy.types.PropertyGroup):
-    rust_file: StringProperty(name="Rust File", description="Rust file that the last BSN export wrote, which the next one writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
+class ExportOptions:
+    selected_only: BoolProperty(name="Selected Objects Only", default=False)
+    include_lights: BoolProperty(name="Include Lights", default=True)
+    include_cameras: BoolProperty(name="Include Cameras", default=False)
+    include_animations: BoolProperty(name="Include Animations", default=False)
+    texture_compression: EnumProperty(name="Texture Compression", description="Convert textures to KTX2 with KTX-Software and embed them in the GLB", items=TEXTURE_COMPRESSION, default="DISABLED")
+    etc1s_quality: IntProperty(name="ETC1S Quality", description="Higher keeps more detail in ETC1S textures and makes them larger", default=128, min=1, max=255)
+    etc1s_effort: IntProperty(name="ETC1S Effort", description="Higher encodes ETC1S textures more slowly with slightly better quality", default=2, min=0, max=6)
+    uastc_quality: IntProperty(name="UASTC Quality", description="Higher encodes UASTC textures more slowly with better quality", default=2, min=0, max=4)
+    uastc_zstd: IntProperty(name="UASTC Supercompression", description="Zstandard level that shrinks UASTC textures in the file, 0 turns it off", default=18, min=0, max=22)
+
+
+EXPORT_OPTIONS = tuple(ExportOptions.__annotations__)
+
+
+class BEVY_PG_glb_export(bpy.types.PropertyGroup, ExportOptions):
+    filepath: StringProperty(name="GLB File", description="GLB file that the last export wrote, which Export Again writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
+
+
+class BEVY_PG_bsn_export(bpy.types.PropertyGroup, ExportOptions):
+    rust_file: StringProperty(name="Rust File", description="Rust file that the last BSN export wrote, which Export Again writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
     assets_folder: StringProperty(name="Assets Folder", description="Assets folder that the last BSN export wrote, empty for the default next to Cargo.toml", subtype="DIR_PATH", options=PATH_OPTIONS)
     prefab_functions: BoolProperty(name="Prefab Functions", description="Whether the last BSN export wrote shared objects as object_ functions", default=True)
     written_files: StringProperty(name="Written Files", description="Assets folder and files that the last BSN export wrote there, so the next export can remove the ones it no longer needs", options={"HIDDEN"})

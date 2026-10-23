@@ -2,9 +2,9 @@ import json
 
 import bpy
 
-from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu
+from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .system import ambient_light, lightmap_uv_map, panel_body_drawn, panel_header_drawn, world_background, world_color
 from .validation import check_object, draw_message, texture_check
@@ -442,6 +442,20 @@ class BEVY_PT_view_sidebar(bpy.types.Panel):
             self.layout.label(text="Select an object", icon="INFO")
             return
         draw_components(self.layout, context, context.object)
+
+
+class BEVY_PT_view_export(bpy.types.Panel):
+    bl_label = "Export"
+    bl_idname = "BEVY_PT_view_export"
+    bl_space_type = "VIEW_3D"
+    bl_region_type = "UI"
+    bl_category = "Bevy"
+
+    def draw(self, context):
+        column = self.layout.column()
+        draw_export_again(column, context.scene)
+        column.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Scene (.glb)...", icon="EXPORT")
+        column.operator(BEVY_OT_export_bsn.bl_idname, text="Bevy Scene (BSN)...", icon="EXPORT")
 
 
 class BEVY_UL_definitions(bpy.types.UIList):

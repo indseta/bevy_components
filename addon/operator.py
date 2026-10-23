@@ -14,16 +14,10 @@ from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
-from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
+from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
 from .system import accepts, apply_definitions, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
 from .validation import body_kind, check_bsn, check_objects, check_rust_file, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
-TEXTURE_COMPRESSION = [
-    ("DISABLED", "Disabled", "Export ordinary embedded textures"),
-    ("ETC1S", "ETC1S", "Compress every texture as ETC1S KTX2, for the smallest files"),
-    ("UASTC", "UASTC", "Compress every texture as UASTC KTX2, for the best quality"),
-    ("AUTOMATIC", "Automatic", "UASTC for normal maps, data textures such as metallic-roughness and pixel art with Closest sampling, ETC1S for other color textures"),
-]
 PROGRESS_INTERVAL = 0.1
 ACCEPTED_OBJECTS = {
     "LIGHT": "light",
@@ -715,16 +709,8 @@ def _blend_relative(path):
         return str(path)
 
 
-class _SceneExport(ExportHelper):
-    selected_only: BoolProperty(name="Selected Objects Only", default=False)
-    include_lights: BoolProperty(name="Include Lights", default=True)
-    include_cameras: BoolProperty(name="Include Cameras", default=False)
-    include_animations: BoolProperty(name="Include Animations", default=False)
-    texture_compression: EnumProperty(name="Texture Compression", description="Convert textures to KTX2 with KTX-Software and embed them in the GLB", items=TEXTURE_COMPRESSION, default="DISABLED")
-    etc1s_quality: IntProperty(name="ETC1S Quality", description="Higher keeps more detail in ETC1S textures and makes them larger", default=128, min=1, max=255)
-    etc1s_effort: IntProperty(name="ETC1S Effort", description="Higher encodes ETC1S textures more slowly with slightly better quality", default=2, min=0, max=6)
-    uastc_quality: IntProperty(name="UASTC Quality", description="Higher encodes UASTC textures more slowly with better quality", default=2, min=0, max=4)
-    uastc_zstd: IntProperty(name="UASTC Supercompression", description="Zstandard level that shrinks UASTC textures in the file, 0 turns it off", default=18, min=0, max=22)
+class _SceneExport(ExportHelper, ExportOptions):
+    again: BoolProperty(name="Export Again", description="Export to the file the last export wrote, with the settings it used, without the file dialog", default=False, options={"HIDDEN", "SKIP_SAVE"})
 
     _interactive = False
     _directory = None
@@ -740,14 +726,40 @@ class _SceneExport(ExportHelper):
             return False
         return True
 
+    @classmethod
+    def description(cls, context, properties):
+        if not properties.again:
+            return cls.bl_description
+        path = cls.remembered(context.scene)
+        if not path:
+            return f"Export the scene once with File > Export > {cls.bl_label}, then export it again here with one click"
+        return f"Export the scene again to {path} with the settings the last export used, without the file dialog"
+
+    @classmethod
+    def remembered(cls, scene):
+        return getattr(getattr(scene, cls._settings), cls._target).strip() if scene is not None else ""
+
     def invoke(self, context, event):
         self._interactive = True
+        if self.again:
+            return self.execute(context)
+        if self.remembered(context.scene) and not self.properties.is_property_set("filepath"):
+            self._recall(getattr(context.scene, self._settings))
         return ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
         if not hasattr(bpy.ops.export_scene, "gltf"):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
             return {"CANCELLED"}
+        if self.again:
+            if not self.remembered(context.scene):
+                self.report({"ERROR"}, f"Nothing to export again yet, export the scene once with File > Export > {self.bl_label}")
+                return {"CANCELLED"}
+            self._recall(getattr(context.scene, self._settings))
+        if not self.filepath.strip():
+            self.report({"ERROR"}, "Pick a file to export the scene to")
+            return {"CANCELLED"}
+        self._remember(getattr(context.scene, self._settings))
         objects = _exported_objects(self, context)
         destination = self._destination()
         issues = self._check(objects)
@@ -800,6 +812,16 @@ class _SceneExport(ExportHelper):
         self._stop_background(context)
         self._release()
 
+    def _recall(self, settings):
+        self.filepath = str(_export_path(getattr(settings, self._target)))
+        for name in EXPORT_OPTIONS:
+            setattr(self, name, getattr(settings, name))
+
+    def _remember(self, settings):
+        setattr(settings, self._target, _blend_relative(_export_path(self.filepath)))
+        for name in EXPORT_OPTIONS:
+            setattr(settings, name, getattr(self, name))
+
     def _export_gltf(self, path):
         try:
             return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_selection=self.selected_only, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
@@ -837,6 +859,7 @@ class _SceneExport(ExportHelper):
             _exports[self._task] = (window_manager.event_timer_add(PROGRESS_INTERVAL, window=context.window), self._directory)
             window_manager.modal_handler_add(self)
             redraw_status_bars()
+            redraw_viewports()
             return {"RUNNING_MODAL"}
         window_manager.progress_begin(0, max(len(jobs), 1))
         try:
@@ -852,6 +875,7 @@ class _SceneExport(ExportHelper):
             timer, _directory = _exports.pop(self._task)
             context.window_manager.event_timer_remove(timer)
         redraw_status_bars()
+        redraw_viewports()
 
     def _release(self):
         self._directory.cleanup()
@@ -900,6 +924,8 @@ class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
     filename_ext = ".glb"
     filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
     _read_error = "Could not embed {name} in the scene: {reason}"
+    _settings = "bevy_glb_export"
+    _target = "filepath"
 
     def draw(self, context):
         layout = self.layout
@@ -943,6 +969,8 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
     prefab_functions: BoolProperty(name="Prefab Functions", description="Write objects that share a combination of components, such as a mesh with a rigid body and collider, as object_ functions below setup() and use them there. Off writes every object out in full inside setup()", default=True)
 
     _read_error = "Could not copy {name} into the assets folder: {reason}"
+    _settings = "bevy_bsn_export"
+    _target = "rust_file"
     _files = None
     _copies = ()
 
@@ -968,14 +996,19 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
         _draw_checks(self, layout, context, (self.selected_only, self.include_animations, self.filepath, self.assets_folder), lambda: _bsn_issues(self, _exported_objects(self, context)))
 
     def invoke(self, context, event):
-        settings = context.scene.bevy_bsn_export
-        if settings.rust_file.strip():
-            self.filepath = bpy.path.abspath(settings.rust_file)
-            self.assets_folder = settings.assets_folder
-            self.prefab_functions = settings.prefab_functions
-        elif not self.filepath and bpy.data.filepath:
+        if not self.remembered(context.scene) and not self.filepath and bpy.data.filepath:
             self.filepath = str(Path(bpy.data.filepath).with_name(snake_case(Path(bpy.data.filepath).stem) + self.filename_ext))
         return _SceneExport.invoke(self, context, event)
+
+    def _recall(self, settings):
+        _SceneExport._recall(self, settings)
+        self.assets_folder = settings.assets_folder
+        self.prefab_functions = settings.prefab_functions
+
+    def _remember(self, settings):
+        _SceneExport._remember(self, settings)
+        settings.assets_folder = _blend_relative(_bsn_paths(self)[1]) if self.assets_folder.strip() else ""
+        settings.prefab_functions = self.prefab_functions
 
     def _destination(self):
         return _bsn_paths(self)[2]
@@ -1044,10 +1077,6 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
             print("Bevy Components:", warning)
         if warnings:
             self.report({"WARNING"}, f"{count(len(warnings), 'part')} of the scene left out of the BSN file: {warnings[0]}")
-        settings = bpy.context.scene.bevy_bsn_export
-        settings.rust_file = _blend_relative(rust_file)
-        settings.assets_folder = _blend_relative(folder) if self.assets_folder.strip() else ""
-        settings.prefab_functions = self.prefab_functions
         files = 2 + len(self._copies)
         stale = f", removed {count(len(removed), 'old file')}" if removed else ""
         return f"{rust_file} ({count(written, 'file')} of {files} changed{stale})"

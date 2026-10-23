@@ -10,8 +10,9 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
-from types import SimpleNamespace
+from types import MethodType, SimpleNamespace
 from unittest import mock
 
 import bpy
@@ -447,6 +448,38 @@ def _menu_context(obj=None, item=None):
     return SimpleNamespace(object=obj, bevy_component=item, scene=bpy.context.scene, space_data=SimpleNamespace(overlay=SimpleNamespace(show_overlays=True)))
 
 
+@contextmanager
+def _remembered_exports(glb="", bsn=""):
+    glb_settings = bpy.context.scene.bevy_glb_export
+    bsn_settings = bpy.context.scene.bevy_bsn_export
+    before = (glb_settings.filepath, bsn_settings.rust_file)
+    glb_settings.filepath = glb
+    bsn_settings.rust_file = bsn
+    try:
+        yield
+    finally:
+        glb_settings.filepath, bsn_settings.rust_file = before
+
+
+def _open_dialog(operator_class, **values):
+    operator = SimpleNamespace(again=False, filepath="", assets_folder="", prefab_functions=True, filename_ext=operator_class.filename_ext, _settings=operator_class._settings, _target=operator_class._target, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
+    for name, value in {**{name: None for name in addon.property.EXPORT_OPTIONS}, **values}.items():
+        setattr(operator, name, value)
+    operator._recall = MethodType(operator_class._recall, operator)
+    with mock.patch.object(addon.operator.ExportHelper, "invoke", return_value={"RUNNING_MODAL"}) as invoke:
+        operator_class.invoke(operator, bpy.context, None)
+    invoke.assert_called_once()
+    return operator
+
+
+def _resolved(path):
+    return Path(os.path.abspath(bpy.path.abspath(path)))
+
+
+def _again_buttons(layout):
+    return [(text, getattr(properties, "again", False)) for text, properties, enabled in layout.buttons()]
+
+
 class TestRegistration(unittest.TestCase):
     def test_extension_registers_types_and_operators(self):
         self.assertTrue(hasattr(bpy.types.Object, "bevy_component_data"))
@@ -454,10 +487,11 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
         self.assertTrue(hasattr(bpy.types.World, "bevy_ambient_light"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bake_settings"))
+        self.assertTrue(hasattr(bpy.types.Scene, "bevy_glb_export"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bsn_export"))
         for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_export", "BEVY_PT_scene_definitions", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
@@ -1047,8 +1081,13 @@ class TestPanels(unittest.TestCase):
 
     def test_object_context_menu(self):
         menu = FakePanel(self)
-        addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
+        with _remembered_exports():
+            addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
         self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.bake_lighting", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
+        menu = FakePanel(self)
+        with _remembered_exports(glb="//level.glb"):
+            addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
+        self.assertEqual(_again_buttons(menu.layout)[-3:], [("Export Bevy Scene (.glb)...", False), ("Export Bevy Scene (BSN)...", False), ("Export Again (level.glb)", True)])
 
     def test_sidebar_without_active_object(self):
         select()
@@ -1409,8 +1448,35 @@ class TestPanels(unittest.TestCase):
 
     def test_export_menu(self):
         panel = FakePanel(self)
-        addon.menu.export_menu(panel, bpy.context)
+        with _remembered_exports():
+            addon.menu.export_menu(panel, bpy.context)
         self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
+        panel = FakePanel(self)
+        with _remembered_exports(glb="//level.glb", bsn="//src/level.rs"):
+            addon.menu.export_menu(panel, bpy.context)
+        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
+        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)", False), ("Bevy Scene (BSN)", False), ("Export Again (level.glb)", True), ("Export Again (level.rs)", True)])
+
+    def test_sidebar_export_panel(self):
+        panel = FakePanel(self)
+        with _remembered_exports():
+            addon.panel.BEVY_PT_view_export.draw(panel, bpy.context)
+        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)...", False), ("Bevy Scene (BSN)...", False)])
+        panel = FakePanel(self)
+        with _remembered_exports(bsn="//src/level.rs"):
+            addon.panel.BEVY_PT_view_export.draw(panel, bpy.context)
+        self.assertEqual(_again_buttons(panel.layout), [("Export Again (level.rs)", True), ("Bevy Scene (.glb)...", False), ("Bevy Scene (BSN)...", False)])
+        self.assertEqual(panel.layout.operators()[0], "export_scene.bevy_components_bsn")
+
+    def test_export_again_describes_where_it_exports(self):
+        glb = addon.operator.BEVY_OT_export_glb
+        self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False)), glb.bl_description)
+        with _remembered_exports(glb="//level.glb"):
+            self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True)), "Export the scene again to //level.glb with the settings the last export used, without the file dialog")
+        with _remembered_exports():
+            self.assertEqual(addon.operator.BEVY_OT_export_bsn.description(bpy.context, SimpleNamespace(again=True)), "Export the scene once with File > Export > Bevy Scene (BSN), then export it again here with one click")
+        again = bpy.ops.export_scene.bevy_components_glb.get_rna_type().properties["again"]
+        self.assertTrue(again.is_hidden and again.is_skip_save)
 
     def test_status_bar_shows_running_exports(self):
         header = FakePanel(self)
@@ -2624,6 +2690,25 @@ class TestExport(unittest.TestCase):
         finally:
             ambient.enabled = True
 
+    def test_export_again_uses_the_remembered_settings(self):
+        path = Path(self.directory.name) / "again" / "again.glb"
+        gltf = export_sample_scene(path, include_lights=False)
+        settings = bpy.context.scene.bevy_glb_export
+        self.assertEqual((_resolved(settings.filepath), settings.include_lights, settings.include_animations, settings.texture_compression), (path, False, True, "DISABLED"))
+        self.assertNotIn("KHR_lights_punctual", gltf.get("extensionsUsed", []))
+        dialog = _open_dialog(addon.operator.BEVY_OT_export_glb)
+        self.assertEqual((Path(dialog.filepath), dialog.include_lights, dialog.include_animations), (path, False, True))
+        dialog = _open_dialog(addon.operator.BEVY_OT_export_glb, filepath=str(path.with_name("picked.glb")), include_lights=True)
+        self.assertEqual((Path(dialog.filepath), dialog.include_lights), (path.with_name("picked.glb"), True))
+        path.unlink()
+        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(again=True), {"FINISHED"})
+        self.assertEqual(read_gltf(path), gltf)
+
+    def test_export_again_needs_an_earlier_export(self):
+        with _remembered_exports():
+            with self.assertRaisesRegex(RuntimeError, "Nothing to export again yet"):
+                bpy.ops.export_scene.bevy_components_glb(again=True)
+
     def test_light_data_is_read_at_export(self):
         window = bpy.data.objects["window_light"]
         path = Path(self.directory.name) / "dimmer.glb"
@@ -2807,14 +2892,20 @@ class TestBsnExport(unittest.TestCase):
 
     def test_settings_are_remembered(self):
         path = self.root / "remembered" / "remembered.rs"
-        export_bsn_scene(path, self.root / "remembered" / "assets", prefab_functions=False)
+        export_bsn_scene(path, self.root / "remembered" / "assets", prefab_functions=False, include_lights=False)
         settings = bpy.context.scene.bevy_bsn_export
-        self.assertEqual((Path(bpy.path.abspath(settings.rust_file)), Path(bpy.path.abspath(settings.assets_folder)), settings.prefab_functions), (path, self.root / "remembered" / "assets", False))
-        operator = SimpleNamespace(filepath="", assets_folder="", prefab_functions=True, filename_ext=".rs")
-        with mock.patch.object(addon.operator._SceneExport, "invoke", return_value={"RUNNING_MODAL"}) as invoke:
-            addon.operator.BEVY_OT_export_bsn.invoke(operator, bpy.context, None)
-        invoke.assert_called_once()
-        self.assertEqual((Path(operator.filepath), Path(operator.assets_folder), operator.prefab_functions), (path, self.root / "remembered" / "assets", False))
+        self.assertEqual((_resolved(settings.rust_file), _resolved(settings.assets_folder), settings.prefab_functions, settings.include_lights), (path, self.root / "remembered" / "assets", False, False))
+        dialog = _open_dialog(addon.operator.BEVY_OT_export_bsn)
+        self.assertEqual((Path(dialog.filepath), _resolved(dialog.assets_folder), dialog.prefab_functions, dialog.include_lights), (path, self.root / "remembered" / "assets", False, False))
+        source = path.read_text(encoding="utf-8")
+        path.unlink()
+        self.assertEqual(bpy.ops.export_scene.bevy_components_bsn(again=True), {"FINISHED"})
+        self.assertEqual(path.read_text(encoding="utf-8"), source)
+        self.assertTrue((self.root / "remembered" / "assets" / "remembered.glb").is_file())
+        path.write_text(source + "// tuned by hand\n", encoding="utf-8")
+        with self.assertRaisesRegex(RuntimeError, "remembered.rs was edited since the last export"):
+            bpy.ops.export_scene.bevy_components_bsn(again=True)
+        self.assertTrue(path.read_text(encoding="utf-8").endswith("// tuned by hand\n"))
         export_bsn_scene(path)
         self.assertEqual(settings.assets_folder, "")
 
