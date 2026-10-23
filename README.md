@@ -114,10 +114,25 @@ Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` featur
 **Fog Volume**, **Reflection Probe** and **Irradiance Volume** (under Rendering) are boxes. Set their size on Bevy's axes or drag the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
 
 - **Fog Volume** fills its box with volumetric fog. Bevy only draws it for cameras with `VolumetricFog`, such as `commands.spawn((Camera3d::default(), VolumetricFog::default()))`, and once a light in the level has **Volumetric** on in its Light component.
-- **Reflection Probe** gives the meshes in its box reflections and soft light from a cubemap. Bevy filters the cubemap when the level loads, so it needs six square faces whose size is a power of two, and no mipmaps. KTX-Software makes one from six renders: `ktx create --format R16G16B16A16_SFLOAT --cubemap px.exr nx.exr py.exr ny.exr pz.exr nz.exr room.ktx2`.
-- **Irradiance Volume** lights the meshes in its box from a grid of light samples, like Godot's VoxelGI. Its file is a 3D texture in Bevy's layout: X × Y × Z samples take X × 2Y × 3Z texels.
+- **Reflection Probe** gives the meshes in its box reflections and soft light from a cubemap. Bevy filters the cubemap when the level loads, so it needs six square faces whose size is a power of two, and no mipmaps. **Bake** makes one (see [Baked lighting](#baked-lighting)), or KTX-Software from six renders: `ktx create --format R16G16B16A16_SFLOAT --cubemap px.exr nx.exr py.exr ny.exr pz.exr nz.exr room.ktx2`.
+- **Irradiance Volume** lights the meshes in its box from a grid of light samples, like Godot's VoxelGI. Its file is a 3D texture in Bevy's layout, where X × Y × Z samples take X × 2Y × 3Z texels, and **Bake** makes one.
 
 The export embeds each probe's `.ktx2` file in the GLB, so the level stays one file and needs no extra loading code. Save them uncompressed, such as RGBA16F. Bevy cannot use Basis Universal here, and block-compressed formats only load on GPUs that support them.
+
+## Baked lighting
+
+The addon bakes Reflection Probes and Irradiance Volumes with Cycles, a static alternative to Godot's VoxelGI.
+
+1. Size the probe's box, then set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
+2. Click **Bake** on the component to bake that probe, or pick **Bake Lighting...** in the components dropdown to bake every probe in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default.
+
+A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; probes that already finished keep their new files. Each probe's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.
+
+- Irradiance volumes hold the light that bounces off surfaces and the light from the sky and emissive materials. They leave out the light lamps shine straight at them, since Bevy lights meshes with the exported lamps itself. Turn on **Direct Lamp Light** for lamps you do not export.
+- Bevy adds its ambient light on top of irradiance volumes, so turn off **Bevy Ambient Light** in the World properties when volumes cover the level, or the sky lights it twice.
+- A probe's **Intensity** starts at 683, which converts Blender's light units the way the glTF export converts lamps, so baked light matches them.
+- Let each box reach a little past the floors and walls it should light, since Bevy skips surfaces right on its edge. A Reflection Probe renders its cubemap from the center of its box, so keep that spot clear of meshes.
+- The bake uses your Cycles settings, such as the device, light bounces and denoising, and skips objects that are disabled in renders.
 
 ## Texture compression
 

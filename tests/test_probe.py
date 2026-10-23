@@ -8,6 +8,7 @@ import unittest
 import zlib
 
 ADDON = pathlib.Path(__file__).resolve().parents[1] / "addon"
+ASSETS = pathlib.Path(__file__).resolve().parent / "blender" / "assets"
 package = types.ModuleType("bevy_probe_addon")
 package.__path__ = [str(ADDON)]
 sys.modules.setdefault("bevy_probe_addon", package)
@@ -76,6 +77,30 @@ class TestTextureChecks(unittest.TestCase):
     def test_other_files(self):
         for data in (b"", b"\x89PNG\r\n\x1a\n" + b"\0" * 100, _ktx2()[:60]):
             self.assertEqual(probe.check_texture(data, "CUBEMAP"), ("ERROR", "is not a KTX2 file"))
+
+
+def _parts(data):
+    dfd_offset, dfd_length = struct.unpack_from("<II", data, 48)
+    data_offset, data_length = struct.unpack_from("<QQ", data, 80)
+    return data[:48], data[dfd_offset:dfd_offset + dfd_length], data[data_offset:data_offset + data_length], data_offset
+
+
+class TestWriting(unittest.TestCase):
+    def test_rgba16f_matches_ktx_software(self):
+        for name, size in (("probe_cubemap.ktx2", (16, 16, 0, 6)), ("irradiance_volume.ktx2", (2, 4, 6, 1))):
+            reference = (ASSETS / name).read_bytes()
+            header, dfd, pixels, _offset = _parts(reference)
+            width, height, depth, faces = size
+            written = probe.ktx2_rgba16f(width, height, pixels, depth=depth, faces=faces)
+            self.assertEqual(_parts(written)[:3], (header, dfd, pixels), name)
+            self.assertEqual(_parts(written)[3] % 8, 0, name)
+            self.assertEqual(len(written), _parts(written)[3] + len(pixels), name)
+
+    def test_written_probes_pass_the_checks(self):
+        self.assertEqual(probe.check_texture(probe.ktx2_rgba16f(32, 32, bytes(32 * 32 * 8 * 6), faces=6), "CUBEMAP"), (None, "32 × 32 cubemap"))
+        self.assertEqual(probe.check_texture(probe.ktx2_rgba16f(8, 8, bytes(8 * 8 * 24 * 8), depth=24), "VOXELS"), (None, "8 × 4 × 8 voxels"))
+        info = compression.ktx2_info(probe.ktx2_rgba16f(4, 4, bytes(4 * 4 * 8)))
+        self.assertEqual((info["format"], info["model"], info["primaries"], info["transfer"], info["channels"], info["levels"], info["supercompression"]), (RGBA16F, 1, 1, 1, [0, 1, 2, 15], 1, 0))
 
 
 class TestEmbedding(unittest.TestCase):

@@ -1,7 +1,7 @@
 from math import radians
 
 import bpy
-from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, IntVectorProperty, PointerProperty, StringProperty
 
 from .system import component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, redraw_viewports, sync_changed
 
@@ -46,6 +46,7 @@ JOINT_TYPES = [
 
 JOINT_LABELS = {identifier: name for identifier, name, _description, _icon, _number in JOINT_TYPES}
 
+BAKE_SIZES = (64, 128, 256, 512, 1024)
 AXES = [
     ("X", "X", "Bevy's X axis"),
     ("Y", "Y (Up)", "Bevy's Y axis, which points up"),
@@ -153,9 +154,11 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     fog_anisotropy: FloatProperty(name="Anisotropy", description="Direction light scatters in: positive values scatter it forward, so light shafts show when the camera faces the light", default=0.5, min=-0.99, max=0.99, update=sync_changed)
     fog_light_tint: FloatVectorProperty(name="Light Tint", description="Tints the light inside the fog, an artistic control that is not physically based", size=3, subtype="COLOR_GAMMA", default=(1.0, 1.0, 1.0), min=0.0, max=1.0, update=sync_changed)
     fog_light_intensity: FloatProperty(name="Light Intensity", description="Scales the light inside the fog, an artistic control that is not physically based", default=1.0, min=0.0, soft_max=10.0, update=sync_changed)
-    probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives", default=1000.0, min=0.0, soft_max=100000.0, update=sync_changed)
+    probe_intensity: FloatProperty(name="Intensity", description="Brightness in candela per square meter that a texture value of 1 gives. The default, 683, converts Blender's light units the way the glTF export converts lights, so baked lighting matches the exported lamps", default=683.0, min=0.0, soft_max=100000.0, update=sync_changed)
     probe_parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the box walls, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
-    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the level: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume", subtype="FILE_PATH", update=sync_changed)
+    probe_file: StringProperty(name="File", description="KTX2 file that the export embeds in the level: a cubemap for a Reflection Probe, a 3D texture for an Irradiance Volume", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    bake_resolution: EnumProperty(name="Bake Size", description="Size of each cubemap face that Bake renders", items=[(str(size), f"{size} px", f"{size} × {size} pixels per cubemap face, which adds {size * size * 48 / 2 ** 20:.2g} MB to the level") for size in BAKE_SIZES], default="256")
+    bake_voxels: IntVectorProperty(name="Voxels", description="Light samples that Bake places along the box's X, Y (up) and Z axes", size=3, default=(8, 4, 8), min=1, max=64)
 
     light_use_intensity: BoolProperty(name="Set Intensity", description="Use this brightness in Bevy instead of the one converted from the light's power at 683 lumens per watt", default=False, update=light_intensity_toggled)
     light_intensity: FloatProperty(name="Intensity", description="Brightness in Bevy, in lumens for point, spot and area lights and in lux for sun lights", default=1000.0, min=0.0, soft_max=1000000.0, precision=1, update=sync_changed)
@@ -206,6 +209,12 @@ class BEVY_PG_ambient_light(bpy.types.PropertyGroup):
     color: FloatVectorProperty(name="Color", description="Color of the ambient light", size=3, subtype="COLOR", default=(1.0, 1.0, 1.0), min=0.0, max=1.0)
     brightness: FloatProperty(name="Brightness", description="Ambient brightness in candela per square meter, Bevy's default is 80", default=80.0, min=0.0, soft_max=2000.0, precision=1)
     baked: BoolProperty(name="Baked", description="The ambient light is already baked into lightmaps, so it skips meshes with a lightmap", default=False)
+
+
+class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
+    samples: IntProperty(name="Samples", description="Cycles samples per pixel. More samples give smoother light and take longer", default=128, min=1, soft_max=4096)
+    folder: StringProperty(name="Folder", description="Folder for the baked .ktx2 files, where // is the folder of the .blend file", subtype="DIR_PATH", default="//baked_lighting/", options=PATH_OPTIONS)
+    lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the level exports its lamps, since Bevy already lights meshes with them", default=False)
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):

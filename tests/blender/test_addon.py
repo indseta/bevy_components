@@ -3,9 +3,11 @@ import importlib.util
 import json
 import math
 import os
+import struct
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -13,9 +15,10 @@ from unittest import mock
 
 import bpy
 import gpu
+import numpy
 from mathutils import Matrix, Vector
 
-from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, PROP, add_component, add_empty, add_light, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
+from sample_level import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, PROP, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_level, clear_scene, define_component, export_props, export_sample_level, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -220,6 +223,34 @@ EXPECTED_COMPONENTS = {
     ],
 }
 PROBE_IMAGES = {"probe_cubemap", "irradiance_volume"}
+BEVY_FROM_BLENDER = Matrix(((1, 0, 0), (0, 0, 1), (0, -1, 0)))
+SIDE_COLORS = {
+    (1, 0, 0): (1.0, 0.0, 0.0),
+    (-1, 0, 0): (0.0, 1.0, 1.0),
+    (0, 1, 0): (0.0, 1.0, 0.0),
+    (0, -1, 0): (1.0, 0.0, 1.0),
+    (0, 0, 1): (0.0, 0.0, 1.0),
+    (0, 0, -1): (1.0, 1.0, 0.0),
+}
+FAKE_BLENDER = """#!{python}
+import os
+import sys
+import traceback
+
+import bpy
+
+arguments = sys.argv[1:]
+bpy.ops.wm.open_mainfile(filepath=arguments[arguments.index("--background") + 1])
+try:
+    exec(arguments[arguments.index("--python-expr") + 1])
+except Exception:
+    traceback.print_exc()
+    code = 1
+else:
+    code = 0
+sys.stdout.flush()
+os._exit(code)
+"""
 
 addon = None
 
@@ -420,7 +451,8 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_previews"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_definitions"))
         self.assertTrue(hasattr(bpy.types.World, "bevy_ambient_light"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "export_scene.bevy_components_glb"):
+        self.assertTrue(hasattr(bpy.types.Scene, "bevy_bake_settings"))
+        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "export_scene.bevy_components_glb"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_scene_definitions", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
@@ -429,6 +461,7 @@ class TestRegistration(unittest.TestCase):
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
+        self.assertIn(addon.menu.bake_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.system.save_sync, bpy.app.handlers.save_pre)
         self.assertEqual(bpy.context.preferences.addons[addon.__name__].preferences.ktx_path, "")
 
@@ -752,10 +785,10 @@ class TestOperators(unittest.TestCase):
         fog, reflection, irradiance = _stored(self.obj)["components"]
         self.assertEqual(fog, {"type": "fog_volume", "size": [4.0, 2.0, 4.0], "color": [1.0, 1.0, 1.0], "density": 0.25, "absorption": 0.3, "scattering": 0.3, "anisotropy": 0.5, "light_tint": [1.0, 1.0, 1.0], "light_intensity": 1.0})
         self.assertEqual(reflection, {"type": "reflection_probe", "size": [10.0, 5.0, 10.0], "falloff": [0.5, 0.5, 0.5], "intensity": 300.0, "parallax_correction": False, "file": str(CUBEMAP)})
-        self.assertEqual(irradiance, {"type": "irradiance_volume", "size": [10.0, 5.0, 10.0], "falloff": [0.0, 0.0, 0.0], "intensity": 1000.0, "file": None})
+        self.assertEqual(irradiance, {"type": "irradiance_volume", "size": [10.0, 5.0, 10.0], "falloff": [0.0, 0.0, 0.0], "intensity": 683.0, "file": None})
         self.assertEqual(bpy.ops.bevy_components.add(component_type="REFLECTION_PROBE"), {"CANCELLED"})
         self.assertEqual(bpy.ops.bevy_components.reset(index=1), {"FINISHED"})
-        self.assertEqual((tuple(probe.volume_size), probe.volume_falloff, probe.probe_intensity, probe.probe_parallax, probe.probe_file), ((10.0, 5.0, 10.0), 0.0, 1000.0, True, ""))
+        self.assertEqual((tuple(probe.volume_size), probe.volume_falloff, probe.probe_intensity, probe.probe_parallax, probe.probe_file), ((10.0, 5.0, 10.0), 0.0, 683.0, True, ""))
         other = add_mesh(bpy.ops.mesh.primitive_cube_add, "other")
         probe.probe_file = str(CUBEMAP)
         select(self.obj, other)
@@ -957,7 +990,7 @@ class TestPanels(unittest.TestCase):
     def test_object_context_menu(self):
         menu = FakePanel(self)
         addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.validate", "export_scene.bevy_components_glb"])
+        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.bake_lighting", "export_scene.bevy_components_glb"])
 
     def test_sidebar_without_active_object(self):
         select()
@@ -1156,8 +1189,10 @@ class TestPanels(unittest.TestCase):
         add_component(self.obj, "IRRADIANCE_VOLUME", probe_file=str(IRRADIANCE_VOLUME))
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), ["enabled", "volume_size", "volume_size", "volume_size", "volume_falloff", "probe_intensity", "probe_parallax", "probe_file", "enabled", "volume_size", "volume_size", "volume_size", "volume_falloff", "probe_intensity", "probe_file"])
+        self.assertEqual(panel.layout.props(), ["enabled", "volume_size", "volume_size", "volume_size", "volume_falloff", "probe_intensity", "probe_parallax", "probe_file", "bake_resolution", "enabled", "volume_size", "volume_size", "volume_size", "volume_falloff", "probe_intensity", "probe_file", "bake_voxels", "bake_voxels", "bake_voxels"])
         self.assertEqual([bound["text"] for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "probe_file"], ["Cubemap", "Voxels"])
+        self.assertEqual([(bound["index"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "bake_voxels"], [(0, "Bake Voxels X"), (1, "Y (Up)"), (2, "Z")])
+        self.assertEqual([(text, properties.object_name, properties.index) for text, properties, enabled in panel.layout.buttons() if text == "Bake"], [("Bake", "subject", 0), ("Bake", "subject", 1)])
         self.assertIn("2 × 2 × 2 voxels", panel.layout.texts())
         self.assertIn("No cubemap, so the probe adds no reflections", " ".join(panel.layout.texts()))
         self.assertFalse(any(layout.alert for layout in _prop_layouts(panel.layout, "probe_file")))
@@ -1317,6 +1352,32 @@ class TestPanels(unittest.TestCase):
         self.assertEqual([bound for name, bound, layout in header.layout.calls if name == "progress"], [{"factor": 0.375, "type": "BAR", "text": "Compressing textures 3/8"}])
         self.assertEqual(header.layout.operators(), ["bevy_components.cancel_export"])
         self.assertTrue(bpy.ops.export_scene.bevy_components_glb.poll())
+
+    def test_status_bar_shows_running_bakes(self):
+        header = FakePanel(self)
+        addon.menu.bake_status(header, bpy.context)
+        self.assertEqual(header.layout.calls, [])
+        self.assertTrue(bpy.ops.bevy_components.bake_lighting.poll())
+        self.assertFalse(bpy.ops.bevy_components.cancel_bake.poll())
+        task = mock.Mock(done=1, total=4, fraction=0.5)
+        with mock.patch.dict(addon.operator._bakes, {task: None}):
+            addon.menu.bake_status(header, bpy.context)
+            self.assertFalse(bpy.ops.bevy_components.bake_lighting.poll())
+            bpy.ops.bevy_components.cancel_bake()
+        task.cancel.assert_called_once_with()
+        self.assertEqual([bound for name, bound, layout in header.layout.calls if name == "progress"], [{"factor": 0.375, "type": "BAR", "text": "Baking lighting 1/4"}])
+        self.assertEqual(header.layout.operators(), ["bevy_components.cancel_bake"])
+        self.assertTrue(bpy.ops.bevy_components.bake_lighting.poll())
+
+    def test_unregister_stops_running_bakes(self):
+        task = mock.Mock()
+        directory = tempfile.TemporaryDirectory()
+        addon.operator._bakes[task] = (bpy.context.window_manager.event_timer_add(60.0, window=bpy.context.window), directory)
+        addon.operator.stop_bakes()
+        task.cancel.assert_called_once_with()
+        task.wait.assert_called_once_with()
+        self.assertFalse(Path(directory.name).exists())
+        self.assertEqual(addon.operator._bakes, {})
 
     def test_unregister_stops_running_exports(self):
         task = mock.Mock()
@@ -2562,6 +2623,359 @@ class TestExport(unittest.TestCase):
         finally:
             select(bpy.data.objects["lamp"])
             bpy.ops.bevy_components.remove(index=list(bpy.data.objects["lamp"].bevy_component_data.components).index(item))
+
+
+def _fake_blender(directory):
+    path = Path(directory) / "blender"
+    path.write_text(FAKE_BLENDER.format(python=sys.executable), encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _dark_world():
+    world = bpy.data.worlds.new("bake_test")
+    if bpy.app.version < (5, 0, 0):
+        world.use_nodes = True
+    addon.system.world_background(world).inputs["Strength"].default_value = 0.0
+    return world
+
+
+def _emissive(obj, color):
+    material = bpy.data.materials.new(obj.name)
+    material.use_nodes = True
+    nodes = material.node_tree.nodes
+    nodes.clear()
+    emission = nodes.new("ShaderNodeEmission")
+    emission.inputs["Color"].default_value = (*color, 1.0)
+    material.node_tree.links.new(emission.outputs["Emission"], nodes.new("ShaderNodeOutputMaterial").inputs["Surface"])
+    obj.data.materials.append(material)
+    return obj
+
+
+def _ktx2_pixels(path):
+    data = Path(bpy.path.abspath(path)).read_bytes()
+    info = addon.compression.ktx2_info(data)
+    offset, length = struct.unpack_from("<QQ", data, 80)
+    return numpy.frombuffer(data[offset:offset + length], dtype="<f2").astype(numpy.float32).reshape(6 if info["faces"] == 6 else info["depth"], info["height"], info["width"], 4)
+
+
+def _bevy_lookup(obj, item, direction):
+    probe = BEVY_FROM_BLENDER @ obj.matrix_world.to_3x3() @ BEVY_FROM_BLENDER.transposed() @ Matrix.Diagonal(item.volume_size)
+    local = probe.inverted() @ BEVY_FROM_BLENDER @ Vector(direction)
+    return local.x, local.y, -local.z
+
+
+def _cube_texel(direction, size):
+    x, y, z = direction
+    largest = max(abs(x), abs(y), abs(z))
+    if largest == abs(x):
+        face, u, v = (0, -z, -y) if x > 0 else (1, z, -y)
+    elif largest == abs(y):
+        face, u, v = (2, x, z) if y > 0 else (3, x, -z)
+    else:
+        face, u, v = (4, x, -y) if z > 0 else (5, -x, -y)
+    return face, min(int((v / largest + 1) / 2 * size), size - 1), min(int((u / largest + 1) / 2 * size), size - 1)
+
+
+def _bake_operator(**values):
+    members = {name: getattr(addon.operator.BEVY_OT_bake_lighting, name) for name in ("draw", "modal", "cancel", "_find_jobs", "_start", "_stop_background", "_release", "_store_files", "_failed", "_finish")}
+    operator = type("FakeBakeOperator", (), members)()
+    operator.reports = []
+    operator.report = lambda levels, message: operator.reports.append((next(iter(levels)), message))
+    for name, value in {"object_name": "", "index": -1, "_directory": None, "_task": None, "_jobs": (), "_folder": "", "_shown": None, **values}.items():
+        setattr(operator, name, value)
+    return operator
+
+
+def _wait_for(operator, context):
+    deadline = time.monotonic() + 300
+    while time.monotonic() < deadline:
+        result = operator.modal(context, None)
+        if result != {"PASS_THROUGH"}:
+            return result
+        time.sleep(0.1)
+    operator.cancel(context)
+    raise AssertionError("The background bake did not finish")
+
+
+class TestBakeLighting(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+        self.scene = bpy.context.scene
+        self.settings = self.scene.bevy_bake_settings
+        self.settings.samples = 4
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.folder = Path(self.directory.name) / "baked_lighting"
+        self.addCleanup(self._restore, self.scene.world.name)
+        self.scene.world = _dark_world()
+        bpy.ops.wm.save_as_mainfile(filepath=str(Path(self.directory.name) / "level.blend"))
+
+    def _restore(self, world):
+        scene = bpy.context.scene
+        for name in ("samples", "lamp_direct", "folder"):
+            scene.bevy_bake_settings.property_unset(name)
+        dark = scene.world
+        scene.world = bpy.data.worlds.get(world)
+        if dark is not None and dark.users == 0:
+            bpy.data.worlds.remove(dark)
+
+    def _probe(self, name, kind, location=(0, 0, 0), **values):
+        holder = add_empty(name, location)
+        return holder, add_component(holder, kind, **values)
+
+    def _context(self):
+        manager = SimpleNamespace(event_timer_add=mock.Mock(return_value="timer"), event_timer_remove=mock.Mock(), modal_handler_add=mock.Mock())
+        return SimpleNamespace(scene=self.scene, view_layer=bpy.context.view_layer, window="window", window_manager=manager)
+
+    def _start(self, context):
+        operator = _bake_operator(_folder=self.settings.folder)
+        operator._jobs = operator._find_jobs(context)
+        self.assertEqual(operator._start(context, self.settings, _fake_blender(self.directory.name)), {"RUNNING_MODAL"})
+        return operator
+
+    def test_cubemaps_hold_what_bevy_samples_in_each_direction(self):
+        for direction, color in SIDE_COLORS.items():
+            _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, f"side_{len(bpy.data.objects)}", size=6, location=tuple(5 * value for value in direction)), color)
+        holder, item = self._probe("room", "REFLECTION_PROBE", volume_size=(3, 1, 2), bake_resolution="64")
+        holder.rotation_euler = (0.3, 0.2, 0.9)
+        holder.scale = (1, 2, 1)
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="room", index=0), {"FINISHED"})
+        pixels = _ktx2_pixels(item.probe_file)
+        self.assertEqual(pixels.shape, (6, 64, 64, 4))
+        for direction, color in SIDE_COLORS.items():
+            face, row, column = _cube_texel(_bevy_lookup(holder, item, direction), 64)
+            self.assertTrue(numpy.allclose(pixels[face, row, column, :3], color, atol=0.1), f"{direction} looks up {pixels[face, row, column]}")
+        self.assertTrue(numpy.all(pixels[..., 3] == 1.0))
+
+    def test_irradiance_volumes_hold_light_from_each_side_of_each_voxel(self):
+        _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "green", size=2, location=(4, 0, 0)), (0.0, 1.0, 0.0))
+        _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "red", size=2, location=(0, 0, -3)), (1.0, 0.0, 0.0))
+        _emissive(add_mesh(bpy.ops.mesh.primitive_cube_add, "blue", size=2, location=(0, -4, 0)), (0.0, 0.0, 1.0))
+        holder, item = self._probe("gi", "IRRADIANCE_VOLUME", volume_size=(2, 2, 2), bake_voxels=(2, 2, 2))
+        self.settings.samples = 16
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        pixels = _ktx2_pixels(item.probe_file)
+        self.assertEqual(pixels.shape, (6, 4, 2, 4))
+        side = lambda axis, negative, x, y, z: pixels[axis * 2 + z, negative * 2 + y, x, :3]
+        for x, y, z in ((x, y, z) for x in range(2) for y in range(2) for z in range(2)):
+            self.assertGreater(side(0, 0, x, y, z)[1], 0.02)
+            self.assertLess(side(0, 1, x, y, z)[1], 0.002)
+            self.assertGreater(side(1, 1, x, y, z)[0], 0.02)
+            self.assertLess(side(1, 0, x, y, z)[0], 0.002)
+            self.assertGreater(side(2, 0, x, y, z)[2], 0.02)
+            self.assertLess(side(2, 1, x, y, z)[2], 0.002)
+            self.assertGreater(side(0, 0, 1, y, z)[1], side(0, 0, 0, y, z)[1] * 1.3)
+            self.assertGreater(side(1, 1, x, 0, z)[0], side(1, 1, x, 1, z)[0] * 1.3)
+            self.assertGreater(side(2, 0, x, y, 1)[2], side(2, 0, x, y, 0)[2] * 1.3)
+
+    def test_lamp_light_is_left_to_bevy_unless_asked(self):
+        floor = add_mesh(bpy.ops.mesh.primitive_plane_add, "floor", size=40)
+        material, shader = add_material("floor")
+        shader.inputs["Base Color"].default_value = (0.8, 0.8, 0.8, 1.0)
+        floor.data.materials.append(material)
+        sun = add_light("sun", "SUN", (0, 0, 10), energy=3.0)
+        holder, item = self._probe("gi", "IRRADIANCE_VOLUME", location=(0, 0, 1), volume_size=(2, 1, 2), bake_voxels=(1, 1, 1))
+        select(floor)
+        before = (self.scene.render.engine, self.scene.cycles.samples, self.scene.camera, len(bpy.data.objects), len(bpy.data.meshes), len(bpy.data.materials), len(bpy.data.images), len(bpy.data.cameras), [obj.name for obj in bpy.context.selected_objects], bpy.context.view_layer.objects.active)
+        sides = {}
+        for lamp_direct in (False, True):
+            self.settings.lamp_direct = lamp_direct
+            self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+            pixels = _ktx2_pixels(item.probe_file)
+            sides[lamp_direct] = (pixels[1, 0, 0, :3], pixels[1, 1, 0, :3])
+        self.assertLess(sides[False][0].max(), 0.01)
+        self.assertAlmostEqual(float(sides[True][0].mean()), 3.0 / math.pi, delta=0.05)
+        self.assertGreater(sides[False][1].min(), 0.2)
+        self.assertTrue(numpy.allclose(sides[False][1], sides[True][1], rtol=0.15))
+        self.assertFalse(sun.hide_render)
+        self.assertEqual((self.scene.render.engine, self.scene.cycles.samples, self.scene.camera, len(bpy.data.objects), len(bpy.data.meshes), len(bpy.data.materials), len(bpy.data.images), len(bpy.data.cameras), [obj.name for obj in bpy.context.selected_objects], bpy.context.view_layer.objects.active), before)
+
+    def test_bakes_every_probe_into_a_folder_next_to_the_blend_file(self):
+        room, reflection = self._probe("Room Probe.001", "REFLECTION_PROBE", bake_resolution="64")
+        gi, volume = self._probe("gi", "IRRADIANCE_VOLUME", bake_voxels=(3, 2, 1))
+        same, clash = self._probe("room probe_001", "REFLECTION_PROBE", bake_resolution="64")
+        _off, disabled = self._probe("off", "REFLECTION_PROBE", enabled=False)
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        self.assertEqual((reflection.probe_file, volume.probe_file, clash.probe_file, disabled.probe_file), ("//baked_lighting/room_probe_001_reflection.ktx2", "//baked_lighting/gi_irradiance.ktx2", "//baked_lighting/room_probe_001_reflection_2.ktx2", ""))
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ["gi_irradiance.ktx2", "room_probe_001_reflection.ktx2", "room_probe_001_reflection_2.ktx2"])
+        self.assertEqual(addon.validation.texture_check(room, reflection)[:2], (None, "64 × 64 cubemap"))
+        self.assertEqual(addon.validation.texture_check(gi, volume)[:2], (None, "3 × 2 × 1 voxels"))
+        self.assertEqual(_stored(gi)["components"][0]["file"], "//baked_lighting/gi_irradiance.ktx2")
+        self.settings.folder = str(Path(self.directory.name) / "absolute")
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="gi", index=0), {"FINISHED"})
+        self.assertEqual(volume.probe_file, str(Path(self.directory.name) / "absolute" / "gi_irradiance.ktx2"))
+        self.settings.folder = "//"
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="gi", index=0), {"FINISHED"})
+        self.assertEqual(volume.probe_file, "//gi_irradiance.ktx2")
+
+    @unittest.skipUnless(os.environ.get("BEVY_COMPONENTS_REQUIRE_KTX") or _encoder_available(), "KTX-Software is not installed")
+    def test_baked_files_pass_khronos_validation(self):
+        _room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
+        _gi, volume = self._probe("gi", "IRRADIANCE_VOLUME", bake_voxels=(3, 2, 1))
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        path, _version = addon.encoder.check_encoder()
+        for item in (reflection, volume):
+            result = subprocess.run([str(path), "validate", bpy.path.abspath(item.probe_file)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, f"{item.probe_file}: {result.stdout}{result.stderr}")
+
+    def test_one_probe_bakes_alone(self):
+        _first, first = self._probe("first", "REFLECTION_PROBE", bake_resolution="64")
+        _second, second = self._probe("second", "IRRADIANCE_VOLUME", bake_voxels=(1, 1, 1))
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="second", index=0), {"FINISHED"})
+        self.assertEqual((first.probe_file, second.probe_file), ("", "//baked_lighting/second_irradiance.ktx2"))
+        self.assertEqual([path.name for path in self.folder.iterdir()], ["second_irradiance.ktx2"])
+        with self.assertRaisesRegex(RuntimeError, "No enabled Reflection Probes or Irradiance Volumes to bake"):
+            bpy.ops.bevy_components.bake_lighting(object_name="second", index=1)
+
+    def test_needs_a_folder_and_object_mode(self):
+        cube = add_mesh(bpy.ops.mesh.primitive_cube_add, "cube")
+        self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
+        self.settings.folder = " "
+        with self.assertRaisesRegex(RuntimeError, "Pick a folder for the baked lighting files"):
+            bpy.ops.bevy_components.bake_lighting()
+        select(cube)
+        bpy.ops.object.mode_set(mode="EDIT")
+        try:
+            self.assertFalse(bpy.ops.bevy_components.bake_lighting.poll())
+        finally:
+            bpy.ops.object.mode_set(mode="OBJECT")
+        self.assertTrue(bpy.ops.bevy_components.bake_lighting.poll())
+
+    def test_unsaved_files_need_a_folder_of_their_own(self):
+        bpy.ops.wm.read_homefile(use_empty=True)
+        self.scene = bpy.context.scene
+        self.scene.world = bpy.data.worlds.new("World")
+        settings = self.scene.bevy_bake_settings
+        settings.samples = 4
+        _gi, volume = self._probe("gi", "IRRADIANCE_VOLUME", bake_voxels=(1, 1, 1))
+        with self.assertRaisesRegex(RuntimeError, "Save the .blend file first, or pick a bake folder that does not start with //"):
+            bpy.ops.bevy_components.bake_lighting()
+        settings.folder = str(self.folder)
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(), {"FINISHED"})
+        self.assertEqual(volume.probe_file, str(self.folder / "gi_irradiance.ktx2"))
+
+    def test_failures_keep_the_probes_that_finished(self):
+        _first, first = self._probe("first", "REFLECTION_PROBE")
+        _second, second = self._probe("second", "REFLECTION_PROBE")
+
+        def failing(scene, view_layer, jobs, samples, lamp_direct):
+            yield jobs[0]
+            raise RuntimeError("Cycles ran out of memory")
+
+        with mock.patch.object(addon.operator, "bake_jobs", failing):
+            with self.assertRaisesRegex(RuntimeError, "Baking lighting failed after 1 probe: Cycles ran out of memory"):
+                bpy.ops.bevy_components.bake_lighting()
+        self.assertEqual((first.probe_file, second.probe_file), ("//baked_lighting/first_reflection.ktx2", ""))
+
+    def test_dialog_shows_the_settings_and_what_it_bakes(self):
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertEqual(operator.layout.props(), ["samples", "folder", "lamp_direct"])
+        self.assertIn("No enabled Reflection Probes or Irradiance Volumes in this scene", " ".join(operator.layout.texts()))
+        self._probe("room", "REFLECTION_PROBE")
+        self._probe("hall", "REFLECTION_PROBE")
+        self._probe("gi", "IRRADIANCE_VOLUME")
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertIn("Bakes 2 reflection probes and 1 irradiance volume", operator.layout.texts())
+        self.assertNotIn("Bevy Ambient Light", " ".join(operator.layout.texts()))
+        self.scene.world.bevy_ambient_light.enabled = True
+        operator = _bake_operator(layout=FakeLayout(self))
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertIn("Bevy Ambient Light adds to the sky light baked into irradiance volumes", " ".join(operator.layout.texts()))
+        operator = _bake_operator(layout=FakeLayout(self), object_name="room", index=0)
+        addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
+        self.assertIn("Bakes 1 reflection probe", operator.layout.texts())
+
+    def test_background_bakes_render_a_saved_copy(self):
+        _room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
+        gi, volume = self._probe("gi", "IRRADIANCE_VOLUME", bake_voxels=(2, 1, 2))
+        context = self._context()
+        operator = self._start(context)
+        scratch = Path(operator._directory.name)
+        context.window_manager.modal_handler_add.assert_called_once_with(operator)
+        context.window_manager.event_timer_add.assert_called_once_with(addon.operator.PROGRESS_INTERVAL, window="window")
+        self.assertIs(addon.operator.running_bake(), operator._task)
+        self.assertEqual(json.loads((scratch / "bake.json").read_text(encoding="utf-8"))["jobs"], operator._jobs)
+        bpy.data.objects.remove(gi)
+        self.assertEqual(_wait_for(operator, context), {"FINISHED"})
+        self.assertEqual(operator.reports, [("INFO", "Baked 1 probe into //baked_lighting/")])
+        self.assertEqual(reflection.probe_file, "//baked_lighting/room_reflection.ktx2")
+        self.assertEqual(sorted(path.name for path in self.folder.iterdir()), ["gi_irradiance.ktx2", "room_reflection.ktx2"])
+        self.assertEqual(addon.probe.check_texture((self.folder / "gi_irradiance.ktx2").read_bytes(), "VOXELS"), (None, "2 × 1 × 2 voxels"))
+        context.window_manager.event_timer_remove.assert_called_once_with("timer")
+        self.assertEqual(addon.operator._bakes, {})
+        self.assertFalse(scratch.exists())
+
+    def test_cancelled_background_bakes_clean_up(self):
+        _room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
+        context = self._context()
+        operator = self._start(context)
+        scratch = Path(operator._directory.name)
+        bpy.ops.bevy_components.cancel_bake()
+        self.assertEqual(_wait_for(operator, context), {"CANCELLED"})
+        self.assertEqual(operator.reports, [("INFO", "Cancelled baking lighting")])
+        self.assertEqual(reflection.probe_file, "")
+        self.assertFalse(scratch.exists())
+        operator = self._start(context)
+        scratch = Path(operator._directory.name)
+        operator.cancel(context)
+        self.assertEqual(addon.operator._bakes, {})
+        self.assertFalse(scratch.exists())
+
+    def test_background_failures_are_reported(self):
+        self._probe("room", "REFLECTION_PROBE", bake_resolution="64")
+        (Path(self.directory.name) / "taken").write_text("not a folder", encoding="utf-8")
+        self.settings.folder = "//taken/baked"
+        context = self._context()
+        operator = self._start(context)
+        self.assertEqual(_wait_for(operator, context), {"CANCELLED"})
+        self.assertEqual([level for level, message in operator.reports], ["ERROR"])
+        self.assertRegex(operator.reports[0][1], "^Baking lighting failed: .*taken")
+
+
+class TestBackgroundBake(unittest.TestCase):
+    def _run(self, script, total, **options):
+        task = addon.bake.BackgroundBake([sys.executable, "-c", script], total, **options)
+        self.assertTrue(task.wait(60))
+        self.assertFalse(task.running)
+        return task
+
+    def test_progress_comes_from_the_output(self):
+        task = self._run("print('BEVY_BAKE_SAMPLES 8 32'); print('BEVY_BAKE_PROGRESS 1'); print('BEVY_BAKE_SAMPLES 16 32'); print('BEVY_BAKE_PROGRESS 2')", 2)
+        self.assertEqual((task.done, task.fraction, task.error, task.cancelled), (2, 0.0, None, False))
+        task = self._run("print('BEVY_BAKE_PROGRESS 1'); print('BEVY_BAKE_SAMPLES 8 32')", 2)
+        self.assertEqual((task.done, task.fraction, task.error), (1, 0.25, "Blender stopped after 1 of 2 probes: no output"))
+
+    def test_failures_are_reported(self):
+        cases = (
+            ("print('BEVY_BAKE_ERROR No space left on device'); raise SystemExit(1)", "No space left on device"),
+            ("print('Segmentation fault'); raise SystemExit(139)", "Blender stopped with exit code 139: Segmentation fault"),
+            ("print('BEVY_BAKE_PROGRESS 1'); print('Blender quit')", "Blender stopped after 1 of 2 probes: Blender quit"),
+        )
+        for script, error in cases:
+            self.assertEqual(self._run(script, 2).error, error, script)
+
+    def test_cancel_stops_blender(self):
+        task = addon.bake.BackgroundBake([sys.executable, "-c", "import time; print('BEVY_BAKE_PROGRESS 1', flush=True); time.sleep(60)"], 3)
+        deadline = time.monotonic() + 30
+        while task.done < 1 and time.monotonic() < deadline:
+            time.sleep(0.05)
+        task.cancel()
+        self.assertTrue(task.wait(30))
+        self.assertEqual((task.done, task.cancelled, task.error), (1, True, None))
+
+    def test_temporary_files_stay_in_the_scratch_folder(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = self._run("import tempfile; print('BEVY_BAKE_ERROR ' + tempfile.gettempdir())", 1, scratch=directory)
+        self.assertEqual(task.error, directory)
+
+    def test_blender_runs_the_bake_module_from_the_add_on(self):
+        command = addon.bake.bake_command("blender", "level.blend", "bake.json")
+        self.assertEqual(command[:6], ["blender", "--background", "level.blend", "--python-exit-code", "1", "--python-expr"])
+        self.assertIn(repr(str(Path(addon.bake.__file__).parent)), command[6])
+        self.assertIn(".run('bake.json')", command[6])
 
 
 def _image_state():

@@ -438,6 +438,7 @@ class glTF2ExportUserExtension:
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
         _remove_extra(gltf2_scene, "bevy_component_definitions")
+        _remove_extra(gltf2_scene, "bevy_bake_settings")
         world = getattr(blender_scene, "world", None)
         if world is not None and hasattr(world, "bevy_ambient_light") and world.bevy_ambient_light.enabled:
             color, brightness = ambient_light(world)

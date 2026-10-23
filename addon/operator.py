@@ -7,6 +7,7 @@ import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
+from .bake import BackgroundBake, bake_command, bake_jobs, probe_jobs
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .metadata import infer_fields
@@ -14,7 +15,7 @@ from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, LAYER_COUNT
 from .system import accepts, apply_definitions, asset_path, components_for, copy_component, copy_to_object, custom_components, default_clip, field_slot, find_definition, image_to_png, new_identifier, redraw_status_bars, redraw_viewports, reset_fields, sync_object, unlink_component, write_field
-from .validation import body_kind, check_objects, count, describe, draw_issues, issue_summary
+from .validation import body_kind, check_objects, count, describe, draw_issues, draw_message, issue_summary
 
 TEXTURE_COMPRESSION = [
     ("DISABLED", "Disabled", "Export ordinary embedded textures"),
@@ -30,10 +31,15 @@ IDENTITY_PROPERTIES = {
 }
 
 _exports = {}
+_bakes = {}
 
 
 def running_export():
     return next(iter(_exports), None)
+
+
+def running_bake():
+    return next(iter(_bakes), None)
 
 
 def stop_exports():
@@ -43,6 +49,15 @@ def stop_exports():
         bpy.context.window_manager.event_timer_remove(timer)
         directory.cleanup()
     _exports.clear()
+
+
+def stop_bakes():
+    for task, (timer, directory) in _bakes.items():
+        task.cancel()
+        task.wait()
+        bpy.context.window_manager.event_timer_remove(timer)
+        directory.cleanup()
+    _bakes.clear()
 
 
 def _editable(context):
@@ -845,4 +860,185 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper):
         else:
             self.report({"INFO"}, f"Exported Bevy level: {self.filepath}")
         self._report_warnings()
+        return {"FINISHED"}
+
+
+class BEVY_OT_cancel_bake(bpy.types.Operator):
+    bl_idname = "bevy_components.cancel_bake"
+    bl_label = "Cancel Bake"
+    bl_description = "Stop baking lighting. Probes that already finished keep their new files"
+
+    @classmethod
+    def poll(cls, context):
+        return running_bake() is not None
+
+    def execute(self, context):
+        for task in _bakes:
+            task.cancel()
+        redraw_status_bars()
+        return {"FINISHED"}
+
+
+class BEVY_OT_bake_lighting(bpy.types.Operator):
+    bl_idname = "bevy_components.bake_lighting"
+    bl_label = "Bake Lighting"
+    bl_description = "Render every enabled Reflection Probe and Irradiance Volume in the scene with Cycles and save them as KTX2 files, in the background while you keep working"
+    bl_options = {"REGISTER", "UNDO"}
+
+    object_name: StringProperty(name="Object", options={"HIDDEN", "SKIP_SAVE"})
+    index: IntProperty(name="Index", default=-1, options={"HIDDEN", "SKIP_SAVE"})
+
+    _interactive = False
+    _directory = None
+    _task = None
+    _jobs = ()
+    _folder = ""
+    _shown = None
+
+    @classmethod
+    def poll(cls, context):
+        if running_bake() is not None:
+            cls.poll_message_set("Bevy lighting is still baking")
+            return False
+        if context.mode != "OBJECT":
+            cls.poll_message_set("Switch to Object Mode to bake lighting")
+            return False
+        return context.scene is not None
+
+    @classmethod
+    def description(cls, context, properties):
+        if properties.object_name:
+            return "Render this probe with Cycles and save it as a KTX2 file, in the background while you keep working. Samples and folder are set in Bake Lighting"
+        return cls.bl_description
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        settings = context.scene.bevy_bake_settings
+        layout.prop(settings, "samples")
+        layout.prop(settings, "folder")
+        layout.prop(settings, "lamp_direct")
+        width = context.region.width if context.region else 300
+        jobs = self._find_jobs(context)
+        if not jobs:
+            draw_message(layout, "No enabled Reflection Probes or Irradiance Volumes in this scene", icon="ERROR", width=width)
+            return
+        if settings.folder.startswith("//") and not bpy.data.filepath:
+            draw_message(layout, "Save the .blend file first, or pick a folder that does not start with //", icon="ERROR", width=width)
+        volumes = sum(1 for job in jobs if job["kind"] == "VOXELS")
+        row = layout.row()
+        row.active = False
+        row.label(text=f"Bakes {' and '.join(count(number, word) for number, word in ((len(jobs) - volumes, 'reflection probe'), (volumes, 'irradiance volume')) if number)}", icon="INFO")
+        world = context.scene.world
+        if volumes and world is not None and world.bevy_ambient_light.enabled:
+            draw_message(layout, "Bevy Ambient Light adds to the sky light baked into irradiance volumes. Turn it off in World properties unless the level needs it outside the volumes", icon="INFO", width=width)
+
+    def invoke(self, context, event):
+        self._interactive = True
+        if self.object_name:
+            return self.execute(context)
+        return context.window_manager.invoke_props_dialog(self, width=400, title="Bake Lighting", confirm_text="Bake")
+
+    def execute(self, context):
+        settings = context.scene.bevy_bake_settings
+        if not settings.folder.strip():
+            self.report({"ERROR"}, "Pick a folder for the baked lighting files")
+            return {"CANCELLED"}
+        if settings.folder.startswith("//") and not bpy.data.filepath:
+            self.report({"ERROR"}, "Save the .blend file first, or pick a bake folder that does not start with //")
+            return {"CANCELLED"}
+        context.view_layer.update()
+        self._jobs = self._find_jobs(context)
+        self._folder = settings.folder
+        if not self._jobs:
+            self.report({"ERROR"}, "No enabled Reflection Probes or Irradiance Volumes to bake")
+            return {"CANCELLED"}
+        if self._interactive and context.window is not None and bpy.app.binary_path:
+            return self._start(context, settings, bpy.app.binary_path)
+        window_manager = context.window_manager
+        window_manager.progress_begin(0, len(self._jobs))
+        done = 0
+        try:
+            for done, _job in enumerate(bake_jobs(context.scene, context.view_layer, self._jobs, settings.samples, settings.lamp_direct), start=1):
+                window_manager.progress_update(done)
+        except (RuntimeError, OSError) as error:
+            return self._failed(error, self._store_files(done))
+        finally:
+            window_manager.progress_end()
+        return self._finish(self._store_files(done))
+
+    def modal(self, context, event):
+        if self._task.running:
+            if self._task.done != self._shown:
+                self._shown = self._task.done
+                redraw_status_bars()
+            return {"PASS_THROUGH"}
+        self._stop_background(context)
+        stored = self._store_files(self._task.done)
+        if self._task.cancelled:
+            self.report({"INFO"}, f"Cancelled baking lighting after {count(stored, 'probe')}" if stored else "Cancelled baking lighting")
+            result = {"FINISHED"} if stored else {"CANCELLED"}
+        elif self._task.error is not None:
+            result = self._failed(self._task.error, stored)
+        else:
+            result = self._finish(stored)
+        self._release()
+        return result
+
+    def cancel(self, context):
+        self._task.cancel()
+        self._task.wait()
+        self._stop_background(context)
+        self._release()
+
+    def _find_jobs(self, context):
+        settings = context.scene.bevy_bake_settings
+        return probe_jobs(context.scene.objects, settings.folder, only=(self.object_name, self.index) if self.object_name else None)
+
+    def _start(self, context, settings, binary):
+        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_bake_")
+        blend = Path(self._directory.name) / "level.blend"
+        job_path = Path(self._directory.name) / "bake.json"
+        try:
+            bpy.ops.wm.save_as_mainfile(filepath=str(blend), copy=True, check_existing=False)
+            job_path.write_text(json.dumps({"scene": context.scene.name, "view_layer": context.view_layer.name, "samples": settings.samples, "lamp_direct": settings.lamp_direct, "jobs": self._jobs}), encoding="utf-8")
+            self._task = BackgroundBake(bake_command(binary, blend, job_path), len(self._jobs), scratch=self._directory.name)
+        except (RuntimeError, OSError) as error:
+            self._release()
+            self.report({"ERROR"}, f"Could not start baking: {error}")
+            return {"CANCELLED"}
+        window_manager = context.window_manager
+        _bakes[self._task] = (window_manager.event_timer_add(PROGRESS_INTERVAL, window=context.window), self._directory)
+        window_manager.modal_handler_add(self)
+        redraw_status_bars()
+        return {"RUNNING_MODAL"}
+
+    def _stop_background(self, context):
+        if self._task in _bakes:
+            timer, _directory = _bakes.pop(self._task)
+            context.window_manager.event_timer_remove(timer)
+        redraw_status_bars()
+
+    def _release(self):
+        self._directory.cleanup()
+        self._directory = None
+        self._task = None
+
+    def _store_files(self, done):
+        stored = 0
+        for job in self._jobs[:done]:
+            obj = bpy.data.objects.get(job["object"])
+            items = obj.bevy_component_data.components if obj is not None and obj.library is None else ()
+            if job["index"] < len(items) and FILE_KINDS.get(items[job["index"]].component_type) == job["kind"]:
+                items[job["index"]].probe_file = job["file"]
+                stored += 1
+        return stored
+
+    def _failed(self, error, stored):
+        self.report({"ERROR"}, f"Baking lighting failed after {count(stored, 'probe')}: {error}" if stored else f"Baking lighting failed: {error}")
+        return {"FINISHED"} if stored else {"CANCELLED"}
+
+    def _finish(self, stored):
+        self.report({"INFO"}, f"Baked {count(stored, 'probe')} into {self._folder}")
         return {"FINISHED"}

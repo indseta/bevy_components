@@ -2,7 +2,7 @@ import json
 import struct
 from pathlib import Path
 
-from .compression import KTX2_MIME_TYPE, ktx2_info
+from .compression import KTX2_IDENTIFIER, KTX2_MIME_TYPE, ktx2_info
 from .metadata import EXTRAS_KEY
 
 FILE_KINDS = {
@@ -23,6 +23,12 @@ MAX_CUBEMAP_SIZE = 8192
 LINEAR_FILTER = 9729
 CLAMP_TO_EDGE = 33071
 ALIGNMENT = 16
+RGBA16F = 97
+HALF_FLOAT_CHANNELS = (0, 1, 2, 15)
+FLOAT_SAMPLE = 0xC0
+SAMPLE_LOWER = 0xBF800000
+SAMPLE_UPPER = 0x3F800000
+WRITER = b"KTXwriter\0Bevy Components\0"
 
 
 def check_texture(data, kind):
@@ -48,6 +54,23 @@ def check_texture(data, kind):
     if FIRST_BLOCK_FORMAT <= info["format"] <= LAST_BLOCK_FORMAT or info["format"] >= FIRST_EXTENSION_FORMAT:
         return "WARNING", f"{summary} in a block-compressed format, so the level fails to load on GPUs without it"
     return None, summary
+
+
+def ktx2_rgba16f(width, height, data, depth=0, faces=1):
+    samples = b"".join(struct.pack("<HBB4xII", index * 16, 15, channel | FLOAT_SAMPLE, SAMPLE_LOWER, SAMPLE_UPPER) for index, channel in enumerate(HALF_FLOAT_CHANNELS))
+    block = struct.pack("<IHH4B4x8B", 0, 2, 24 + len(samples), 1, 1, 1, 0, 8, 0, 0, 0, 0, 0, 0, 0) + samples
+    dfd = struct.pack("<I", 4 + len(block)) + block
+    kvd = struct.pack("<I", len(WRITER)) + WRITER
+    kvd += b"\0" * (-len(kvd) % 4)
+    dfd_offset = 80 + 24
+    kvd_offset = dfd_offset + len(dfd)
+    data_offset = kvd_offset + len(kvd)
+    data_offset += -data_offset % 8
+    header = KTX2_IDENTIFIER + struct.pack("<9I", RGBA16F, 2, width, height, depth, 0, faces, 1, 0)
+    header += struct.pack("<IIIIQQ", dfd_offset, len(dfd), kvd_offset, len(kvd), 0, 0)
+    header += struct.pack("<QQQ", data_offset, len(data), len(data))
+    body = header + dfd + kvd
+    return body + b"\0" * (data_offset - len(body)) + bytes(data)
 
 
 def voxel_counts(data):
