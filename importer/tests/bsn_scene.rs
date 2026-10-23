@@ -230,8 +230,8 @@ fn describe(world: &World, entity: Entity) -> Vec<String> {
             })*
         };
     }
-    present!(NavigationWalkable, NavigationObstacle, NotShadowCaster, NotShadowReceiver, Sensor, RigidBody, Mass, NoAutoMass, SweptCcd, PointLight, SpotLight, DirectionalLight, RectLight, CascadeShadowConfig, VolumetricLight, PlaybackSettings, FogVolume, LightProbe, JointDamping, JointCollisionDisabled, AnimationTargetId);
-    changed!(Friction, Restitution, CollisionLayers, LockedAxes, GravityScale, LinearDamping, AngularDamping, LinearVelocity, AngularVelocity);
+    present!(NavigationWalkable, NavigationObstacle, NotShadowCaster, NotShadowReceiver, Sensor, CollisionEventsEnabled, RigidBody, Mass, NoAutoMass, SweptCcd, PointLight, SpotLight, DirectionalLight, RectLight, CascadeShadowConfig, VolumetricLight, PlaybackSettings, FogVolume, LightProbe, JointDamping, JointCollisionDisabled, AnimationTargetId);
+    changed!(Visibility, Friction, Restitution, CollisionLayers, LockedAxes, GravityScale, LinearDamping, AngularDamping, LinearVelocity, AngularVelocity);
     if let Some(range) = target.get::<VisibilityRange>() {
         found.push(format!("VisibilityRange {} {} {}", debug(&range.start_margin), debug(&range.end_margin), range.use_aabb));
     }

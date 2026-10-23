@@ -12,11 +12,12 @@ from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, lightin
 from .bsn import BsnError, asset_root, default_assets_folder, digest, drop_scenes, inside, load_path, module_crate, node_components, remove_stale, scene_source, snake_case, strip_components, write_if_changed
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
-from .metadata import infer_fields
+from .geometry import fit_shape
+from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
-from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
-from .system import accepts, apply_definitions, apply_game_types, asset_path, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sync_object, unlink_component, write_field
+from .property import AUDIO_FORMATS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, ExportOptions, LAYER_COUNT
+from .system import accepts, apply_definitions, apply_game_types, asset_path, children_map, component_of, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, find_definition, game_schema, game_types, image_to_png, mesh_points, new_identifier, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sync_object, unlink_component, write_field
 from .validation import body_kind, check_bsn, check_objects, check_rust_file, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
@@ -262,6 +263,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
         for field in item.bl_rna.properties:
             if field.identifier not in kept and field.type != "COLLECTION" and not field.is_readonly:
                 item.property_unset(field.identifier)
+        item.pop(EVENTS_KEY, None)
         if typed:
             reset_fields(item, find_definition(context.scene, item.custom_type))
         sync_object(context.object)
@@ -358,6 +360,34 @@ class BEVY_OT_set_collision_layers(bpy.types.Operator):
         if items is None or items[self.index].component_type != "COLLIDER":
             return {"CANCELLED"}
         setattr(items[self.index], f"collider_{self.layers.lower()}", (self.enable,) * LAYER_COUNT)
+        sync_object(context.object)
+        redraw_viewports()
+        return {"FINISHED"}
+
+
+class BEVY_OT_fit_collider(bpy.types.Operator):
+    bl_idname = "bevy_components.fit_collider"
+    bl_label = "Fit to Mesh"
+    bl_description = "Set the collider's size and offset from the bounds of the meshes on and under the object"
+    bl_options = {"REGISTER", "UNDO"}
+
+    index: IntProperty(name="Index")
+
+    @classmethod
+    def poll(cls, context):
+        return _editable(context)
+
+    def execute(self, context):
+        items = _components(context, self.index)
+        if items is None or items[self.index].component_type != "COLLIDER" or items[self.index].collider_shape not in PRIMITIVE_SHAPES:
+            return {"CANCELLED"}
+        item = items[self.index]
+        points = mesh_points(context.object, children_map(context.scene.objects), context.evaluated_depsgraph_get())
+        if not points:
+            self.report({"WARNING"}, "No mesh on this object or under it to fit")
+            return {"CANCELLED"}
+        for key, value in fit_shape(item.collider_shape, points).items():
+            setattr(item, f"collider_{key}", value)
         sync_object(context.object)
         redraw_viewports()
         return {"FINISHED"}

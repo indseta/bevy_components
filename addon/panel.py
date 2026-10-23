@@ -3,11 +3,11 @@ import json
 import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
-from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
+from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_sound, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_set_collision_layers, BEVY_OT_unwrap_lightmap
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .schema import short_name
-from .system import ambient_light, export_settings, exported_objects, game_schema, game_types, lightmap_uv_map, panel_body_drawn, panel_header_drawn, world_background, world_color
+from .system import ambient_light, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, world_background, world_color
 from .validation import check_object, draw_message, texture_check
 
 
@@ -57,15 +57,21 @@ def _draw_size(layout, item, prop):
 
 def _draw_collider(layout, obj, index, item):
     layout.prop(item, "collider_shape")
-    if item.collider_shape == "CUBOID":
-        _draw_size(layout, item, "collider_size")
-    elif item.collider_shape == "SPHERE":
-        layout.prop(item, "collider_radius")
-    elif item.collider_shape == "CAPSULE":
-        column = layout.column(align=True)
-        column.prop(item, "collider_radius")
-        column.prop(item, "collider_height")
-    layout.prop(item, "collider_sensor")
+    if item.collider_shape in PRIMITIVE_SHAPES:
+        if item.collider_shape == "CUBOID":
+            _draw_size(layout, item, "collider_size")
+        elif item.collider_shape == "SPHERE":
+            layout.prop(item, "collider_radius")
+        else:
+            column = layout.column(align=True)
+            column.prop(item, "collider_radius")
+            column.prop(item, "collider_height")
+        _draw_vector(layout, item, "collider_offset", "Offset", (False, False, False))
+        layout.operator(BEVY_OT_fit_collider.bl_idname, icon="SHADING_BBOX").index = index
+    column = layout.column(align=True)
+    column.prop(item, "collider_sensor")
+    column.prop(item, "collider_events")
+    column.prop(item, "collider_collision_only")
     column = layout.column(align=True)
     column.active = not item.collider_sensor
     column.prop(item, "collider_friction")
@@ -74,6 +80,9 @@ def _draw_collider(layout, obj, index, item):
     header.label(text="Collision Layers")
     if body is None:
         return
+    names = layer_names(bpy.context.scene)
+    named = [layer for layer in range(LAYER_COUNT) if names[layer]]
+    unnamed = [layer for layer in range(LAYER_COUNT) if not names[layer]]
     for layers, prop, text in (("MEMBERSHIPS", "collider_memberships", "Belongs To"), ("FILTERS", "collider_filters", "Collides With")):
         buttons = _labeled_row(body, text)
         for enable, label in ((True, "All"), (False, "None")):
@@ -81,10 +90,14 @@ def _draw_collider(layout, obj, index, item):
             button.index = index
             button.layers = layers
             button.enable = enable
-        grid = body.grid_flow(row_major=True, columns=8, even_columns=True, even_rows=True, align=True)
-        grid.use_property_split = False
-        for layer in range(LAYER_COUNT):
-            grid.prop(item, prop, index=layer, text=str(layer), toggle=True)
+        column = body.column(align=True)
+        for shown, columns in ((named, 2), (unnamed, 8)):
+            if not shown:
+                continue
+            grid = column.grid_flow(row_major=True, columns=columns, even_columns=True, even_rows=True, align=True)
+            grid.use_property_split = False
+            for layer in shown:
+                grid.prop(item, prop, index=layer, text=f"{layer} {names[layer]}" if names[layer] else str(layer), toggle=True)
     if not any(item.collider_memberships) or not any(item.collider_filters):
         body.label(text="Collides with nothing", icon="INFO")
 
@@ -569,6 +582,29 @@ def _draw_game_status(layout):
     else:
         row.label(text=f"{len(schema['types'])} components from your game", icon="CHECKMARK")
     row.operator(BEVY_OT_reload_schema.bl_idname, text="", icon="FILE_REFRESH")
+
+
+class BEVY_PT_scene_collision_layers(bpy.types.Panel):
+    bl_label = "Bevy Collision Layers"
+    bl_idname = "BEVY_PT_scene_collision_layers"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "scene"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row()
+        row.active = False
+        row.label(text="Names for the Collision Layers of Colliders")
+        layers = context.scene.bevy_collision_layers
+        grid = layout.grid_flow(row_major=False, columns=2, even_columns=True, align=True)
+        for layer in range(LAYER_COUNT):
+            grid.prop(layers, f"layer_{layer}", text=str(layer))
 
 
 class BEVY_PT_world_ambient_light(bpy.types.Panel):

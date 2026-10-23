@@ -194,6 +194,10 @@ fn colliders_match_exported_shapes() {
     assert_eq!(node_collider(world, "cart_handle").shape().as_ball().expect("cart_handle is a sphere").radius, 0.25);
     assert_eq!(node_collider(world, "bouncy_ball").shape().as_ball().expect("bouncy_ball is a sphere").radius, 0.3);
     assert_eq!(node_collider(world, "ramp").shape().as_cuboid().expect("ramp is a cuboid").half_extents, Vec3::new(3.0, 0.1, 1.0));
+    let signpost = node_collider(world, "signpost").aabb(Vec3::ZERO, Quat::IDENTITY, 0.0);
+    assert!(signpost.min.abs_diff_eq(Vec3::new(-0.15, 0.0, -0.15), 1e-5) && signpost.max.abs_diff_eq(Vec3::new(0.15, 1.5, 0.15), 1e-5), "signpost spans {signpost:?}");
+    assert!(node_collider(world, "signpost").shape().as_compound().is_some());
+    assert_eq!(node_collider(world, "invisible_wall").shape().as_cuboid().expect("invisible_wall is a cuboid").half_extents, Vec3::new(0.1, 1.0, 2.0));
     for name in ["ghost", "ice_block", "rubber_block"] {
         assert!(node_collider(world, name).shape().as_cuboid().is_some(), "{name}");
     }
@@ -206,7 +210,7 @@ fn colliders_match_exported_shapes() {
 fn primitive_colliders_are_added_once_per_object() {
     let mut app = load_scene(SCENE);
     let world = app.world_mut();
-    for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone", "cart_shape", "cart_handle", "bouncy_ball", "ghost", "ramp", "ice_block", "rubber_block"] {
+    for name in ["crate", "crate_copy", "ball", "pillar", "trigger_zone", "pickup_zone", "cart_shape", "cart_handle", "bouncy_ball", "ghost", "signpost", "invisible_wall", "ramp", "ice_block", "rubber_block"] {
         let node = node(world, name);
         assert_eq!(colliders(world, name), vec![node], "{name}");
     }
@@ -232,7 +236,7 @@ fn sensors_are_marked() {
 fn rigid_bodies_own_their_colliders() {
     let mut app = load_scene(SCENE);
     let world = app.world_mut();
-    let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house"), ("cart_shape", RigidBody::Dynamic, "cart"), ("cart_handle", RigidBody::Dynamic, "cart"), ("bouncy_ball", RigidBody::Dynamic, "bouncy_ball"), ("ghost", RigidBody::Dynamic, "ghost"), ("ramp", RigidBody::Static, "ramp"), ("ice_block", RigidBody::Dynamic, "ice_block"), ("rubber_block", RigidBody::Dynamic, "rubber_block")];
+    let expected = [("ground", RigidBody::Static, "ground"), ("crate", RigidBody::Dynamic, "crate"), ("crate_copy", RigidBody::Dynamic, "crate_copy"), ("ball", RigidBody::Kinematic, "ball"), ("pillar", RigidBody::Static, "pillar"), ("rock", RigidBody::Dynamic, "rock"), ("trigger_zone", RigidBody::Static, "trigger_zone"), ("pickup_zone", RigidBody::Static, "pickup_zone"), ("house", RigidBody::Static, "house"), ("chimney", RigidBody::Static, "house"), ("cart_shape", RigidBody::Dynamic, "cart"), ("cart_handle", RigidBody::Dynamic, "cart"), ("bouncy_ball", RigidBody::Dynamic, "bouncy_ball"), ("ghost", RigidBody::Dynamic, "ghost"), ("signpost", RigidBody::Dynamic, "signpost"), ("invisible_wall", RigidBody::Static, "invisible_wall"), ("ramp", RigidBody::Static, "ramp"), ("ice_block", RigidBody::Dynamic, "ice_block"), ("rubber_block", RigidBody::Dynamic, "rubber_block")];
     for (name, kind, owner) in expected {
         let owner = node(world, owner);
         assert_eq!(world.get::<RigidBody>(owner), Some(&kind), "{name}");
@@ -359,7 +363,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 57);
+    assert_eq!(count, 59);
 }
 
 #[test]
@@ -490,7 +494,7 @@ fn dynamic_bodies_rest_on_the_ground() {
     }
     let world = app.world_mut();
     assert!(world.resource::<Time<Physics>>().elapsed_secs() > 1.5);
-    for (name, start) in [("crate", Vec3::new(3.0, 1.0, 2.0)), ("crate_copy", Vec3::new(6.0, 1.0, 2.0)), ("ball", Vec3::new(-3.0, 0.5, 0.0)), ("cart", Vec3::new(-8.0, 0.5, 2.0))] {
+    for (name, start) in [("crate", Vec3::new(3.0, 1.0, 2.0)), ("crate_copy", Vec3::new(6.0, 1.0, 2.0)), ("ball", Vec3::new(-3.0, 0.5, 0.0)), ("cart", Vec3::new(-8.0, 0.5, 2.0)), ("signpost", Vec3::new(-5.0, 0.0, 2.0))] {
         let node = node(world, name);
         let translation = world.get::<Transform>(node).map(|transform| transform.translation).unwrap_or_else(|| panic!("{name} has no transform"));
         assert!(translation.distance(start) < 0.05, "{name} moved from {start} to {translation}");
@@ -501,7 +505,7 @@ fn dynamic_bodies_rest_on_the_ground() {
 fn colliders_keep_surface_and_layer_settings() {
     let mut app = load_scene(SCENE);
     let world = app.world_mut();
-    let expected = [("ground", 0.5, 0.0, CollisionLayers::DEFAULT), ("crate", 0.8, 0.1, CollisionLayers::DEFAULT), ("crate_copy", 0.8, 0.1, CollisionLayers::DEFAULT), ("rock", 0.5, 0.0, CollisionLayers::DEFAULT), ("house", 0.5, 0.0, CollisionLayers::DEFAULT), ("chimney", 0.5, 0.0, CollisionLayers::DEFAULT), ("trigger_zone", 0.5, 0.0, CollisionLayers::from_bits(0b100, 0b010)), ("cart_shape", 0.5, 0.0, CollisionLayers::DEFAULT), ("bouncy_ball", 0.5, 1.0, CollisionLayers::DEFAULT), ("ghost", 0.5, 0.0, CollisionLayers::from_bits(0b10, 0b10)), ("ice_block", 0.0, 0.0, CollisionLayers::DEFAULT), ("rubber_block", 1.0, 0.0, CollisionLayers::DEFAULT)];
+    let expected = [("ground", 0.5, 0.0, CollisionLayers::DEFAULT), ("crate", 0.8, 0.1, CollisionLayers::DEFAULT), ("crate_copy", 0.8, 0.1, CollisionLayers::DEFAULT), ("rock", 0.5, 0.0, CollisionLayers::DEFAULT), ("house", 0.5, 0.0, CollisionLayers::DEFAULT), ("chimney", 0.5, 0.0, CollisionLayers::DEFAULT), ("trigger_zone", 0.5, 0.0, CollisionLayers::from_bits(0b100, 0b010)), ("cart_shape", 0.5, 0.0, CollisionLayers::DEFAULT), ("bouncy_ball", 0.5, 1.0, CollisionLayers::DEFAULT), ("ghost", 0.5, 0.0, CollisionLayers::from_bits(0b10, 0b10)), ("signpost", 0.5, 0.0, CollisionLayers::DEFAULT), ("invisible_wall", 0.5, 0.0, CollisionLayers::DEFAULT), ("ice_block", 0.0, 0.0, CollisionLayers::DEFAULT), ("rubber_block", 1.0, 0.0, CollisionLayers::DEFAULT)];
     for (name, friction, restitution, layers) in expected {
         let entities = colliders(world, name);
         assert!(!entities.is_empty(), "{name}");
@@ -511,6 +515,104 @@ fn colliders_keep_surface_and_layer_settings() {
             assert_eq!(world.get::<CollisionLayers>(collider), Some(&layers), "{name}");
         }
     }
+}
+
+#[derive(Resource, Default)]
+struct CollisionStarts {
+    read: Vec<(Entity, Entity)>,
+    observed: Vec<(Entity, Entity)>,
+}
+
+fn read_collision_starts(mut messages: MessageReader<CollisionStart>, mut starts: ResMut<CollisionStarts>) {
+    starts.read.extend(messages.read().map(|start| (start.collider1, start.collider2)));
+}
+
+fn spawn_components(world: &mut World, name: &str, translation: Vec3, components: Value) -> Entity {
+    return world.spawn((Name::new(name.to_string()), Transform::from_translation(translation), component_extras(components))).id();
+}
+
+fn spawn_mesh(world: &mut World, mesh: &Handle<Mesh>, parent: Entity) -> Entity {
+    return world.spawn((Mesh3d(mesh.clone()), Transform::default(), ChildOf(parent))).id();
+}
+
+fn box_collider(shape: &str, sensor: bool, events: Option<bool>, collision_only: bool) -> Value {
+    return json!({"type": "collider", "shape": shape, "size": [2.0, 2.0, 2.0], "radius": 0.25, "height": 1.0, "sensor": sensor, "events": events, "collision_only": collision_only});
+}
+
+#[test]
+fn collision_events_are_enabled_where_exported() {
+    let mut app = load_scene(SCENE);
+    let world = app.world_mut();
+    for name in ["trigger_zone", "pickup_zone", "bouncy_ball"] {
+        let node = node(world, name);
+        assert!(world.get::<CollisionEventsEnabled>(node).is_some(), "{name}");
+    }
+    let mut enabled = world.query_filtered::<Entity, With<CollisionEventsEnabled>>();
+    assert_eq!(enabled.iter(world).count(), 3);
+}
+
+#[test]
+fn collision_events_reach_readers_and_observers() {
+    let mut app = SceneApp::default().build();
+    app.init_resource::<CollisionStarts>();
+    app.add_systems(Update, read_collision_starts);
+    app.add_observer(|start: On<CollisionStart>, mut starts: ResMut<CollisionStarts>| starts.observed.push((start.collider1, start.collider2)));
+    let world = app.world_mut();
+    let cube = world.resource_mut::<Assets<Mesh>>().add(Mesh::from(Cuboid::new(2.0, 2.0, 2.0)));
+    let listening = spawn_components(world, "listening", Vec3::ZERO, json!([box_collider("cuboid", true, Some(true), false)]));
+    let silent = spawn_components(world, "silent", Vec3::new(10.0, 0.0, 0.0), json!([box_collider("cuboid", true, Some(false), false)]));
+    let older = spawn_components(world, "older", Vec3::new(20.0, 0.0, 0.0), json!([box_collider("cuboid", true, None, false)]));
+    let shaped = spawn_components(world, "shaped", Vec3::new(30.0, 0.0, 0.0), json!([box_collider("trimesh", true, Some(true), false)]));
+    let shaped_mesh = spawn_mesh(world, &cube, shaped);
+    let balls = [0.0, 10.0, 20.0, 30.0].map(|x| spawn_components(world, "ball", Vec3::new(x, 2.0, 0.0), json!([box_collider("sphere", false, None, false), {"type": "rigid_body", "kind": "dynamic"}])));
+    for _ in 0..60 {
+        app.update();
+    }
+    let world = app.world();
+    assert_eq!([listening, silent, older, shaped, shaped_mesh].map(|entity| world.get::<CollisionEventsEnabled>(entity).is_some()), [true, false, false, false, true]);
+    assert!(balls.iter().all(|ball| world.get::<Transform>(*ball).is_some_and(|transform| transform.translation.y < -1.0)), "the balls did not fall through the sensors");
+    let starts = world.resource::<CollisionStarts>();
+    let mut read: Vec<(Entity, Entity)> = starts.read.iter().map(|&(first, second)| if balls.contains(&first) { (second, first) } else { (first, second) }).collect();
+    read.sort();
+    read.dedup();
+    let mut observed = starts.observed.clone();
+    observed.sort();
+    observed.dedup();
+    let mut expected = vec![(listening, balls[0]), (shaped_mesh, balls[3])];
+    expected.sort();
+    assert_eq!((read, observed), (expected.clone(), expected));
+}
+
+#[test]
+fn collision_only_hides_meshes_but_keeps_colliders() {
+    let mut app = load_scene(SCENE);
+    let world = app.world_mut();
+    let wall = node(world, "invisible_wall");
+    let meshes = meshes(world, "invisible_wall");
+    assert!(!meshes.is_empty());
+    assert!(meshes.iter().all(|mesh| world.get::<Visibility>(*mesh) == Some(&Visibility::Hidden)));
+    assert_ne!(world.get::<Visibility>(wall), Some(&Visibility::Hidden));
+    assert!(world.get::<Collider>(wall).is_some());
+    let mut hidden = world.query_filtered::<&Visibility, With<Mesh3d>>();
+    assert_eq!(hidden.iter(world).filter(|visibility| **visibility == Visibility::Hidden).count(), meshes.len());
+
+    let mut app = SceneApp::default().build();
+    let world = app.world_mut();
+    let cube = world.resource_mut::<Assets<Mesh>>().add(Mesh::from(Cuboid::new(2.0, 2.0, 2.0)));
+    let hull = spawn_components(world, "hull", Vec3::ZERO, json!([box_collider("convex", false, None, true)]));
+    let hull_mesh = spawn_mesh(world, &cube, hull);
+    let plain_part = world.spawn((Transform::default(), ChildOf(hull))).id();
+    let plain_mesh = spawn_mesh(world, &cube, plain_part);
+    let solid_part = spawn_components(world, "solid_part", Vec3::ZERO, json!([box_collider("trimesh", false, None, false)]));
+    world.entity_mut(solid_part).insert(ChildOf(hull));
+    let solid_mesh = spawn_mesh(world, &cube, solid_part);
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    assert_eq!([hull_mesh, plain_mesh, solid_mesh].map(|mesh| world.get::<Visibility>(mesh) == Some(&Visibility::Hidden)), [true, true, false]);
+    assert!([hull_mesh, plain_mesh, solid_mesh].iter().all(|mesh| world.get::<Collider>(*mesh).is_some()));
+    assert_ne!(world.get::<Visibility>(hull), Some(&Visibility::Hidden));
 }
 
 #[test]

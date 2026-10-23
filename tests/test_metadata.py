@@ -19,6 +19,11 @@ def body(**kwargs):
     return item(**{**values, **kwargs})
 
 
+def collider(**kwargs):
+    values = {"component_type": "COLLIDER", "collider_shape": "CUBOID", "collider_size": (1, 1, 1), "collider_radius": 0.5, "collider_height": 1.0, "collider_offset": (0.0, 0.0, 0.0), "collider_sensor": False, "collider_events": False, "collider_collision_only": False, "collider_friction": 0.5, "collider_restitution": 0.0, "collider_memberships": [True] + [False] * 31, "collider_filters": [True] * 32}
+    return item(**{**values, **kwargs})
+
+
 def joint(**kwargs):
     values = {"component_type": "JOINT", "joint_kind": "REVOLUTE", "joint_body1": None, "joint_body2": None, "joint_axis": "Y", "joint_use_limits": False, "joint_angle_min": -1.0, "joint_angle_max": 1.0, "joint_distance_min": -2.0, "joint_distance_max": 2.0, "joint_use_swing": False, "joint_swing": 0.5, "joint_linear_damping": 0.0, "joint_angular_damping": 0.0, "joint_collide": False}
     return item(**{**values, **kwargs})
@@ -43,12 +48,18 @@ class TestMetadata(unittest.TestCase):
         self.assertTrue(metadata.validate_items([component]))
 
     def test_collider(self):
-        component = item(component_type="COLLIDER", collider_shape="CONVEX", collider_size=(1, 2, 3), collider_radius=0.5, collider_height=1.0, collider_sensor=True, collider_friction=0.25, collider_restitution=0.75, collider_memberships=[index in {0, 3} for index in range(32)], collider_filters=[index != 1 for index in range(32)])
+        component = collider(collider_shape="CONVEX", collider_size=(1, 2, 3), collider_offset=(1.0, 2.0, 3.0), collider_sensor=True, collider_events=True, collider_collision_only=True, collider_friction=0.25, collider_restitution=0.75, collider_memberships=[index in {0, 3} for index in range(32)], collider_filters=[index != 1 for index in range(32)])
         result = json.loads(metadata.serialize_items([component]))
-        self.assertEqual(result["components"][0], {"type": "collider", "shape": "convex", "size": [1, 2, 3], "radius": 0.5, "height": 1.0, "sensor": True, "friction": 0.25, "restitution": 0.75, "memberships": 0b1001, "filters": 0xFFFFFFFD})
+        self.assertEqual(result["components"][0], {"type": "collider", "shape": "convex", "size": [1, 2, 3], "radius": 0.5, "height": 1.0, "offset": None, "sensor": True, "events": True, "collision_only": True, "friction": 0.25, "restitution": 0.75, "memberships": 0b1001, "filters": 0xFFFFFFFD})
+
+    def test_primitive_collider_offset(self):
+        for shape in ("CUBOID", "SPHERE", "CAPSULE"):
+            component = collider(collider_shape=shape, collider_offset=(0.1, -0.25, 3.0))
+            result = json.loads(metadata.serialize_items([component]))["components"][0]
+            self.assertEqual((result["offset"], result["events"], result["collision_only"]), ([0.1, -0.25, 3.0], False, False), shape)
 
     def test_collider_layer_extremes(self):
-        component = item(component_type="COLLIDER", collider_shape="CUBOID", collider_size=(1, 1, 1), collider_radius=0.5, collider_height=1.0, collider_sensor=False, collider_friction=0.5, collider_restitution=0.0, collider_memberships=[False] * 32, collider_filters=[True] * 32)
+        component = collider(collider_memberships=[False] * 32, collider_filters=[True] * 32)
         result = json.loads(metadata.serialize_items([component]))["components"][0]
         self.assertEqual((result["memberships"], result["filters"]), (0, 2**32 - 1))
 

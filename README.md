@@ -57,7 +57,9 @@ The export holds the active scene. Under **Include**, **Limit to** can leave out
 
 **Scene Reference** (under Scene) spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. **Animation** (under Animation) plays an action when the scene loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
 
-Collider sizes are in Bevy coordinates (Y up). Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Dynamic Rigid Bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded, and resize handles show on the selected object. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
+Collider sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider. **Collision Events** adds Avian's `CollisionEventsEnabled`, so the collider sends `CollisionStart` and `CollisionEnd`; it is on by default for sensors. **Collision Only** hides the meshes on and under the object in the game with `Visibility::Hidden` and keeps their colliders, for invisible walls.
+
+Dynamic Rigid Bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded. Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
 
 ## Hot reload
 
@@ -73,7 +75,7 @@ A BSN export rewrites its `.rs` file on save as well, but the game only picks th
 
 **Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a number its field's Rust type cannot hold, a joint limit whose Min is above its Max, shadow cascade distances out of order, or a light probe file that is missing or that Bevy cannot use, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
 
-- a Triangle Mesh or Convex Hull collider, or a Visibility Range, with no mesh on or under its object
+- a Triangle Mesh, Convex Hull or Collision Only collider, or a Visibility Range, with no mesh on or under its object
 - a Dynamic Rigid Body with no collider, a Rigid Body inside a moving one, and Triangle Mesh colliders on Dynamic bodies
 - a collider rotated inside an unevenly scaled parent, which Avian sizes wrong
 - a Dynamic body with every axis locked
@@ -157,7 +159,7 @@ glTF already carries a light's color, power, spot cone and Custom Distance range
 - **Volumetric** for light shafts through Fog Volumes, and **Baked** to bake the light into lightmaps, so it only adds reflections on lightmapped meshes
 - an **Intensity** in Bevy's lumens or lux, in place of Blender's watts at 683 lm/W
 
-Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` feature and cast no shadows. Contact shadows need `ContactShadows` and a depth prepass on the camera. The viewport draws how far each light reaches, 20 m unless Custom Distance is on.
+Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` feature and cast no shadows. Contact shadows need `ContactShadows` and a depth prepass on the camera. The viewport draws how far each light reaches, 20 m unless Custom Distance is on, and dragging its arrow sets Custom Distance.
 
 **Properties > World > Bevy Ambient Light** sets the scene's ambient light, from the World color or a color and brightness of its own.
 

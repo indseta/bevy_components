@@ -11,7 +11,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
 from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
-from .metadata import EXTRAS_KEY, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
+from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .system import changes_mesh, children_map, component_of, components_for, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports
@@ -24,6 +24,7 @@ MESH_PREVIEW_LIMIT = 1024
 
 COLLIDER_COLOR = (0.22, 0.96, 0.55, 0.90)
 SENSOR_COLOR = (0.96, 0.60, 0.20, 0.90)
+COLLISION_ONLY_COLOR = (0.30, 0.86, 0.94, 0.90)
 LOD_IN_COLOR = (0.20, 0.72, 1.0, 0.55)
 LOD_OUT_COLOR = (1.0, 0.62, 0.25, 0.55)
 AUDIO_COLOR = (0.95, 0.80, 0.25, 0.70)
@@ -148,15 +149,25 @@ def velocity_batches(obj, item):
     return [(Matrix.Identity(4), lines, VELOCITY_COLOR, 2.0)] if lines else []
 
 
+def collider_matrix(obj, item):
+    return obj.matrix_world @ Matrix.Translation(bevy_to_blender(item.collider_offset))
+
+
 def collider_lines(obj, item, limit, children):
     kind = item.collider_shape
     if kind == "CUBOID":
-        return [(obj.matrix_world, cuboid_lines(item.collider_size))]
+        return [(collider_matrix(obj, item), cuboid_lines(item.collider_size))]
     if kind == "SPHERE":
-        return [(obj.matrix_world, sphere_lines(item.collider_radius))]
+        return [(collider_matrix(obj, item), sphere_lines(item.collider_radius))]
     if kind == "CAPSULE":
-        return [(obj.matrix_world, capsule_lines(item.collider_radius, item.collider_height))]
+        return [(collider_matrix(obj, item), capsule_lines(item.collider_radius, item.collider_height))]
     return [(matrix, mesh_lines(source, kind, limit)) for source, matrix in mesh_sources(obj, children, "COLLIDER")]
+
+
+def collider_color(item):
+    if item.collider_sensor:
+        return SENSOR_COLOR
+    return COLLISION_ONLY_COLOR if item.collider_collision_only else COLLIDER_COLOR
 
 
 def volume_lines(obj, item):
@@ -362,8 +373,7 @@ def preview_batches(context, settings):
     for obj in objects:
         collider = component_of(obj, "COLLIDER")
         if collider and settings.colliders:
-            color = SENSOR_COLOR if collider.collider_sensor else COLLIDER_COLOR
-            batches.extend((matrix, lines, color, 2.0) for matrix, lines in collider_lines(obj, collider, settings.max_mesh_edges, children))
+            batches.extend((matrix, lines, collider_color(collider), 2.0) for matrix, lines in collider_lines(obj, collider, settings.max_mesh_edges, children))
 
         visibility = component_of(obj, "VISIBILITY_RANGE")
         if visibility and settings.visibility_ranges:
@@ -446,7 +456,14 @@ def _label_lines(obj, settings, children):
                 details = "AABB preview (mesh edge limit)"
             else:
                 details = "mesh edges"
-        descriptions.append(f"Collider · {kind} · {details}")
+        parts = ["Collider", kind, details]
+        if collider.collider_shape in PRIMITIVE_SHAPES and any(abs(value) > 1e-6 for value in collider.collider_offset):
+            parts.append(f"offset {', '.join(f'{round(value, 3):g}' for value in collider.collider_offset)}")
+        if collider.collider_events:
+            parts.append("events")
+        if collider.collider_collision_only:
+            parts.append("collision only")
+        descriptions.append(" · ".join(parts))
     body = component_of(obj, "RIGID_BODY")
     if body and settings.velocities and body.rigid_body_kind != "STATIC":
         linear, angular = (Vector(vector).length for vector in initial_velocities(body))

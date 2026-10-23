@@ -14,6 +14,7 @@ from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS
 from .schema import GameField, SchemaError, find_schema, parse_schema
 
 MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
+LAYER_COUNT = 32
 PANEL_EXPANDED = True
 PANEL_DRAWN_EXPANDED = True
 SCHEMA_CHECK_INTERVAL = 1.0
@@ -156,6 +157,27 @@ def exported_objects(context, options, selected=None):
 
 def changes_mesh(obj):
     return any(modifier.type != "ARMATURE" and modifier.show_viewport for modifier in obj.modifiers)
+
+
+def mesh_points(obj, children, depsgraph):
+    inverse = obj.matrix_world.inverted_safe()
+    points = []
+    for source, matrix in mesh_sources(obj, children, "COLLIDER"):
+        evaluated = source.evaluated_get(depsgraph)
+        mesh = evaluated.to_mesh()
+        if mesh is None:
+            continue
+        try:
+            local = inverse @ matrix
+            points.extend(tuple(local @ vertex.co) for vertex in mesh.vertices)
+        finally:
+            evaluated.to_mesh_clear()
+    return points
+
+
+def layer_names(scene):
+    layers = getattr(scene, "bevy_collision_layers", None)
+    return [getattr(layers, f"layer_{layer}").strip() if layers is not None else "" for layer in range(LAYER_COUNT)]
 
 
 def blend_directory():
@@ -587,6 +609,7 @@ class glTF2ExportUserExtension:
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
         _remove_extra(gltf2_scene, "bevy_component_definitions")
+        _remove_extra(gltf2_scene, "bevy_collision_layers")
         _remove_extra(gltf2_scene, "bevy_bake_settings")
         _remove_extra(gltf2_scene, "bevy_glb_export")
         _remove_extra(gltf2_scene, "bevy_bsn_export")

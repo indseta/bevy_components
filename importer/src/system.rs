@@ -1,4 +1,4 @@
-use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionLayers, Friction, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
+use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionEventsEnabled, CollisionLayers, Friction, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
 use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, ecs::reflect::ReflectCommandExt, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 use std::iter;
@@ -31,10 +31,11 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         warn!("Invalid visibility range on {:?}", name);
                     }
                 }
-                ExportedComponent::Collider { shape, size, radius, height, sensor, friction, restitution, memberships, filters } => {
+                ExportedComponent::Collider { shape, size, radius, height, offset, sensor, events, collision_only, friction, restitution, memberships, filters } => {
                     if let Some(shape) = ColliderShape::from_str(&shape) {
                         let layers = (memberships.is_some() || filters.is_some()).then(|| CollisionLayers::from_bits(memberships.unwrap_or(LayerMask::DEFAULT.0), filters.unwrap_or(LayerMask::ALL.0)));
-                        components.collider = Some(ColliderSpec { shape, size, radius, height, sensor, friction, restitution, layers });
+                        let offset = offset.map_or(Vec3::ZERO, Vec3::from_array);
+                        components.collider = Some(ColliderSpec { shape, size, radius, height, offset, sensor, events: events.unwrap_or_default(), collision_only: collision_only.unwrap_or_default(), friction, restitution, layers });
                     } else {
                         warn!("Unsupported collider shape on {:?}", name);
                     }
@@ -372,8 +373,13 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
         if let Some(range) = visibility {
             target.insert(range);
         }
-        if let Some(spec) = collider && spec.shape.is_mesh() {
-            target.insert(PendingMeshCollider(spec));
+        if let Some(spec) = collider {
+            if spec.collision_only {
+                target.insert(Visibility::Hidden);
+            }
+            if spec.shape.is_mesh() {
+                target.insert(PendingMeshCollider(spec));
+            }
         }
         if let Some(shadows) = shadows {
             if !shadows.cast {
@@ -421,6 +427,9 @@ pub fn apply_navigation(mut commands: Commands, meshes: Query<Entity, Added<Mesh
 }
 
 fn insert_collider(target: &mut EntityCommands, collider: Collider, spec: &ColliderSpec) {
+    if spec.events {
+        target.insert(CollisionEventsEnabled);
+    }
     target.insert(collider);
     if spec.sensor {
         target.insert(Sensor);
@@ -478,10 +487,14 @@ fn texture_handle(textures: Option<&GltfTextures>, index: Option<usize>) -> Opti
 }
 
 fn primitive_collider(spec: &ColliderSpec) -> Option<Collider> {
-    return match spec.shape {
-        ColliderShape::Cuboid => Some(Collider::cuboid(spec.size[0], spec.size[1], spec.size[2])),
-        ColliderShape::Sphere => Some(Collider::sphere(spec.radius)),
-        ColliderShape::Capsule => Some(Collider::capsule(spec.radius, spec.height)),
-        ColliderShape::Trimesh | ColliderShape::Convex => None,
+    let collider = match spec.shape {
+        ColliderShape::Cuboid => Collider::cuboid(spec.size[0], spec.size[1], spec.size[2]),
+        ColliderShape::Sphere => Collider::sphere(spec.radius),
+        ColliderShape::Capsule => Collider::capsule(spec.radius, spec.height),
+        ColliderShape::Trimesh | ColliderShape::Convex => return None,
     };
+    if spec.offset == Vec3::ZERO {
+        return Some(collider);
+    }
+    return Some(Collider::compound(vec![(spec.offset, Quat::IDENTITY, collider)]));
 }

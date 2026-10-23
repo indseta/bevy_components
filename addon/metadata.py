@@ -27,6 +27,7 @@ FIELD_ZEROS = {
     "ENUM": "",
 }
 COLOR_CHANNELS = ("red", "green", "blue", "alpha")
+PRIMITIVE_SHAPES = {"CUBOID", "SPHERE", "CAPSULE"}
 INT_LIMIT = 2 ** 31
 INT_RANGES = {
     "i8": (-2 ** 7, 2 ** 7 - 1),
@@ -203,7 +204,10 @@ def serialize_component(item, locate=_portable):
             "size": [float(value) for value in item.collider_size],
             "radius": float(item.collider_radius),
             "height": float(item.collider_height),
+            "offset": _floats(item.collider_offset) if item.collider_shape in PRIMITIVE_SHAPES else None,
             "sensor": bool(item.collider_sensor),
+            "events": bool(item.collider_events),
+            "collision_only": bool(item.collider_collision_only),
             "friction": float(item.collider_friction),
             "restitution": float(item.collider_restitution),
             "memberships": _layer_bits(item.collider_memberships),

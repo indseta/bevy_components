@@ -3,7 +3,7 @@ from math import radians
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, IntVectorProperty, PointerProperty, StringProperty
 
-from .system import component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, redraw_viewports, set_variant, sync_changed, type_path_suggestions, variant_index, variant_items
+from .system import LAYER_COUNT, component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, redraw_viewports, set_variant, sync_changed, type_path_suggestions, variant_index, variant_items
 
 COMPONENT_TYPES = [
     ("VISIBILITY_RANGE", "Visibility Range", "Fade the object in and out by camera distance, for levels of detail", "HIDE_OFF", 0),
@@ -24,7 +24,7 @@ COMPONENT_TYPES = [
 ]
 
 COMPONENT_LABELS = {identifier: (name, icon) for identifier, name, _description, icon, _number in COMPONENT_TYPES}
-LAYER_COUNT = 32
+EVENTS_KEY = "collider_events_value"
 AUDIO_FORMATS = (".ogg", ".oga", ".spx", ".wav", ".mp3", ".flac")
 PATH_OPTIONS = {"PATH_SUPPORTS_BLEND_RELATIVE"} if "is_path_supports_blend_relative" in bpy.types.Property.bl_rna.properties else set()
 TEXTURE_COMPRESSION = [
@@ -69,6 +69,14 @@ def _is_body(_self, obj):
     return component_of(obj, "RIGID_BODY") is not None or component_of(obj, "COLLIDER") is not None
 
 
+def _get_collision_events(self):
+    return bool(self.get(EVENTS_KEY, self.collider_sensor))
+
+
+def _set_collision_events(self, value):
+    self[EVENTS_KEY] = bool(value)
+
+
 class BEVY_PG_field(bpy.types.PropertyGroup):
     name: StringProperty(name="Name", description="Field name, as written in the Rust struct", update=field_changed)
     identifier: StringProperty(name="Identifier", description="Links the field to its definition when it is renamed")
@@ -106,7 +114,10 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     collider_size: FloatVectorProperty(name="Size", description="Box dimensions along Bevy's local X, Y (up) and Z axes", size=3, subtype="XYZ", default=(1.0, 1.0, 1.0), min=0.001, unit="LENGTH", update=sync_changed)
     collider_radius: FloatProperty(name="Radius", description="Radius of the sphere or capsule", default=0.5, min=0.001, unit="LENGTH", update=sync_changed)
     collider_height: FloatProperty(name="Height", description="Length of the capsule's cylinder, without the caps", default=1.0, min=0.0, unit="LENGTH", update=sync_changed)
+    collider_offset: FloatVectorProperty(name="Offset", description="Moves the shape away from the object's origin, along Bevy's local X, Y (up) and Z axes", size=3, subtype="XYZ", unit="LENGTH", update=sync_changed)
     collider_sensor: BoolProperty(name="Sensor", description="Detect overlaps without producing collision forces", default=False, update=sync_changed)
+    collider_events: BoolProperty(name="Collision Events", description="Send Avian's CollisionStart and CollisionEnd events when this collider starts or stops touching another. On by default for sensors", get=_get_collision_events, set=_set_collision_events, update=sync_changed)
+    collider_collision_only: BoolProperty(name="Collision Only", description="Hide the meshes on and under the object in the game, while their colliders still work. Meshes under a child with its own Collider stay visible", default=False, update=sync_changed)
     collider_friction: FloatProperty(name="Friction", description="How strongly the collider resists sliding, from 0 (ice) to 1 (rubber), averaged with the surface it touches", default=0.5, min=0.0, soft_max=1.0, update=sync_changed)
     collider_restitution: FloatProperty(name="Restitution", description="How much speed the collider keeps when it bounces, from 0 (no bounce) to 1 (full bounce), averaged with the surface it touches", default=0.0, min=0.0, soft_max=1.0, update=sync_changed)
     collider_memberships: BoolVectorProperty(name="Belongs To", description="Collision layers the collider is on", size=LAYER_COUNT, default=(True,) + (False,) * (LAYER_COUNT - 1), update=sync_changed)
@@ -214,6 +225,10 @@ class BEVY_PG_object_data(bpy.types.PropertyGroup):
     components: CollectionProperty(type=BEVY_PG_component)
 
 
+class BEVY_PG_collision_layers(bpy.types.PropertyGroup):
+    __annotations__ = {f"layer_{layer}": StringProperty(name=f"Layer {layer}", description="Name shown for this layer in the Collision Layers of every Collider in the scene", update=redraw_viewports) for layer in range(LAYER_COUNT)}
+
+
 class BEVY_PG_definition(bpy.types.PropertyGroup):
     name: StringProperty(name="Type Path", description="Rust type path of the component, such as my_game::Health", update=definition_renamed)
     linked_name: StringProperty(name="Linked Type Path", description="Type path that components on objects use, followed when the definition is renamed")
@@ -287,5 +302,5 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     navigation: BoolProperty(name="Navigation", description="Draw the faces of walkable ground that slope less than 45°, and the bounds of obstacles", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
-    edit_handles: BoolProperty(name="Resize Handles", description="Drag arrow gizmos on the selected active object to resize box, sphere and capsule colliders, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)
+    edit_handles: BoolProperty(name="Resize Handles", description="Drag gizmos on the selected active object to resize and move box, sphere and capsule colliders, and to resize visibility ranges, light ranges, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)
     max_mesh_edges: IntProperty(name="Max Mesh Edges", description="Draw triangle mesh colliders with more edges than this as bounding boxes", default=2000, min=64, max=20000, update=redraw_viewports)

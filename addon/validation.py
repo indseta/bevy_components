@@ -280,6 +280,8 @@ def _collider_warnings(obj, item, children):
             if bodies:
                 warnings.append("Triangle meshes collide poorly on Dynamic bodies, use Convex Hull" if bodies[0] == obj else f"Triangle meshes collide poorly on Dynamic bodies such as {bodies[0].name}, use Convex Hull")
         targets = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER", instances=False)]
+    elif item.collider_collision_only and not mesh_sources(obj, children, "COLLIDER"):
+        warnings.append("Collision Only finds no mesh on this object or under it to hide")
     for target in targets:
         ancestor = _uneven_scale_ancestor(target)
         if ancestor is not None:

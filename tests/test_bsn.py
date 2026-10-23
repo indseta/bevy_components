@@ -212,6 +212,19 @@ class TestScene(unittest.TestCase):
         self.assertIn("dependencies.register::<Gltf>(self.0.into());", text)
         self.assertNotIn("avian3d", text)
 
+    def test_collider_offsets_events_and_collision_only(self):
+        wall = [{"type": "collider", "shape": "cuboid", "size": [4, 2, 0.5], "offset": [0, 1, 0], "events": True, "collision_only": True}]
+        zone = [{"type": "collider", "shape": "trimesh", "offset": None, "sensor": True, "events": True, "collision_only": True}]
+        text, warnings = source(scene(node("wall", wall, mesh=0), node("zone", zone, mesh=0, children=[2]), node("zone_part", mesh=0), node("plain", BODY, mesh=0)))
+        self.assertEqual(warnings, [])
+        self.assertIn("#wall\n            Transform\n            Visibility\n            Collider::compound(vec![(Vec3::new(0.0, 1.0, 0.0), Quat::IDENTITY, Collider::cuboid(4.0, 2.0, 0.5))])\n            CollisionEventsEnabled\n            RigidBody::Static\n            Children [\n                Transform\n                Mesh3d(", text)
+        self.assertEqual(text.count("Visibility::Hidden"), 3)
+        self.assertEqual(text.count("CollisionEventsEnabled"), 3)
+        plain = text[text.index("#plain"):]
+        self.assertIn("Collider::cuboid(1.0, 1.0, 1.0)", plain)
+        self.assertNotIn("Hidden", plain)
+        self.assertNotIn("CollisionEventsEnabled", plain)
+
     def test_physics_imports_avian(self):
         self.assertTrue(body(scene(node("rock", BODY, mesh=0))).startswith("use avian3d::prelude::*;\nuse bevy::"))
 

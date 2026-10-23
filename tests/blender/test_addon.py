@@ -25,7 +25,8 @@ from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
 CHILD_LAYOUTS = {"row", "column", "box", "split", "grid_flow", "column_flow"}
-DEFAULT_COLLIDER = {"size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "sensor": False, "friction": 0.5, "restitution": 0.0, "memberships": 1, "filters": 4294967295}
+DEFAULT_COLLIDER = {"size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 1.0, "offset": [0.0, 0.0, 0.0], "sensor": False, "events": False, "collision_only": False, "friction": 0.5, "restitution": 0.0, "memberships": 1, "filters": 4294967295}
+MESH_COLLIDER = {**DEFAULT_COLLIDER, "offset": None}
 STATIC_BODY = {"type": "rigid_body", "kind": "static", "mass": None, "gravity_scale": None, "linear_damping": None, "angular_damping": None, "lock_translation": None, "lock_rotation": None, "ccd": None, "linear_velocity": None, "angular_velocity": None}
 KINEMATIC_BODY = {**STATIC_BODY, "kind": "kinematic", "linear_velocity": [0.0, 0.0, 0.0], "angular_velocity": [0.0, 0.0, 0.0]}
 DYNAMIC_BODY = {**KINEMATIC_BODY, "kind": "dynamic", "gravity_scale": 1.0, "linear_damping": 0.0, "angular_damping": 0.0, "lock_translation": [False, False, False], "lock_rotation": [False, False, False], "ccd": "default"}
@@ -36,7 +37,7 @@ OBSTACLE = {"type": "navigation", "kind": "obstacle", "cost": None}
 DEFAULT_LIGHT = {"type": "light", "intensity": None, "radius": None, "range": None, "color": None, "size": None, "shadows": True, "contact_shadows": False, "volumetric": False, "baked": False, "depth_bias": None, "normal_bias": None, "near_clip": None, "cascades": None}
 EXPECTED_COMPONENTS = {
     "ground": [
-        {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
+        {"type": "collider", "shape": "trimesh", **MESH_COLLIDER},
         STATIC_BODY,
         {"type": "lightmap", "bicubic": True, "texture": "ground_lightmap"},
         {"type": "navigation", "kind": "walkable", "cost": 1.0},
@@ -61,14 +62,14 @@ EXPECTED_COMPONENTS = {
         {"type": "collider", "shape": "capsule", **{**DEFAULT_COLLIDER, "radius": 0.4, "height": 1.2}},
     ],
     "rock": [
-        {"type": "collider", "shape": "convex", **DEFAULT_COLLIDER},
+        {"type": "collider", "shape": "convex", **MESH_COLLIDER},
         {**DYNAMIC_BODY, "mass": 25.0},
     ],
     "trigger_zone": [
-        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [1.0, 2.0, 3.0], "sensor": True, "memberships": 4, "filters": 2}},
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [1.0, 2.0, 3.0], "sensor": True, "events": True, "memberships": 4, "filters": 2}},
     ],
     "pickup_zone": [
-        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 1.5, "sensor": True}},
+        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 1.5, "sensor": True, "events": True}},
         {"type": "custom", "type_path": "my_game::Pickup", "data": {"item": "coin", "amount": 5, "respawn": True, "weight": 0.1, "spin": [0.0, 1.5, 0.0], "glow": {"Srgba": {"red": 1.0, "green": 0.8, "blue": 0.2, "alpha": 1.0}}}},
     ],
     "player_spawn": [
@@ -86,7 +87,7 @@ EXPECTED_COMPONENTS = {
     ],
     "house": [
         {"type": "visibility_range", "start": [80.0, 85.0], "end": [250.0, 260.0], "use_aabb": True},
-        {"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER},
+        {"type": "collider", "shape": "trimesh", **MESH_COLLIDER},
         OBSTACLE,
     ],
     "tree_lod0": [
@@ -106,12 +107,19 @@ EXPECTED_COMPONENTS = {
         {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.25}},
     ],
     "bouncy_ball": [
-        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.3, "restitution": 1.0}},
+        {"type": "collider", "shape": "sphere", **{**DEFAULT_COLLIDER, "radius": 0.3, "restitution": 1.0, "events": True}},
         DYNAMIC_BODY,
     ],
     "ghost": [
         {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "memberships": 2, "filters": 2}},
         DYNAMIC_BODY,
+    ],
+    "signpost": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.3, 1.5, 0.3], "offset": [0.0, 0.75, 0.0]}},
+        DYNAMIC_BODY,
+    ],
+    "invisible_wall": [
+        {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [0.2, 2.0, 4.0], "collision_only": True}},
     ],
     "ramp": [
         {"type": "collider", "shape": "cuboid", **{**DEFAULT_COLLIDER, "size": [6.0, 0.2, 2.0]}},
@@ -440,6 +448,12 @@ def _extents(lines):
     return tuple(round(max(abs(point[axis]) for line in lines for point in line), 5) for axis in range(3))
 
 
+class RemovedGizmo:
+    @property
+    def is_modal(self):
+        raise ReferenceError("StructRNA of type Gizmo has been removed")
+
+
 class FakePanel:
     def __init__(self, test):
         self.layout = FakeLayout(test)
@@ -506,11 +520,12 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bake_settings"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_glb_export"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bsn_export"))
-        for idname in ("bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"):
+        self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_export", "BEVY_PT_scene_definitions", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_audio", "BEVY_MT_component_add_animation", "BEVY_MT_component_add_scene", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_export", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
-        for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_audio_handles"):
+        for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Components", "object"))
@@ -669,13 +684,72 @@ class TestOperators(unittest.TestCase):
         self.assertIsNone(_stored(self.obj)["components"][0]["mass"])
 
     def test_reset_restores_physics_defaults(self):
-        collider = add_component(self.obj, "COLLIDER", collider_friction=0.1, collider_restitution=0.9, collider_memberships=layers(5), collider_filters=layers(5), show_layers=True)
+        collider = add_component(self.obj, "COLLIDER", collider_friction=0.1, collider_restitution=0.9, collider_memberships=layers(5), collider_filters=layers(5), collider_offset=(1, 2, 3), collider_events=True, collider_collision_only=True, show_layers=True)
         body = add_component(self.obj, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=3)
         bpy.ops.bevy_components.reset(index=0)
         bpy.ops.bevy_components.reset(index=1)
         self.assertEqual((collider.collider_friction, collider.collider_restitution, list(collider.collider_memberships), list(collider.collider_filters), collider.show_layers), (0.5, 0.0, layers(0), [True] * 32, True))
+        self.assertEqual((tuple(collider.collider_offset), collider.collider_events, collider.collider_collision_only), ((0.0, 0.0, 0.0), False, False))
         self.assertEqual((body.rigid_body_kind, body.rigid_body_use_mass, body.rigid_body_mass), ("STATIC", False, 1.0))
-        self.assertEqual(_stored(self.obj)["components"], [{"type": "collider", "shape": "trimesh", **DEFAULT_COLLIDER}, STATIC_BODY])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "collider", "shape": "trimesh", **MESH_COLLIDER}, STATIC_BODY])
+        collider.collider_sensor = True
+        self.assertTrue(collider.collider_events)
+
+    def test_collision_events_follow_the_sensor_until_set(self):
+        collider = add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
+        self.assertFalse(collider.collider_events)
+        collider.collider_sensor = True
+        self.assertEqual((collider.collider_events, _stored(self.obj)["components"][0]["events"]), (True, True))
+        collider.collider_events = False
+        collider.collider_sensor = False
+        collider.collider_sensor = True
+        self.assertEqual((collider.collider_events, _stored(self.obj)["components"][0]["events"]), (False, False))
+        solid = add_mesh(bpy.ops.mesh.primitive_cube_add, "solid")
+        item = add_component(solid, "COLLIDER", collider_events=True)
+        self.assertEqual(_stored(solid)["components"][0]["events"], True)
+        select(solid, self.obj)
+        self.assertEqual(bpy.ops.bevy_components.copy_component_to_selected(index=0), {"FINISHED"})
+        self.assertTrue(self.obj.bevy_component_data.components[0].collider_events)
+        self.assertFalse(self.obj.bevy_component_data.components[0].collider_sensor)
+        item.collider_events = False
+        self.assertEqual(_stored(solid)["components"][0]["events"], False)
+
+    def test_fit_to_mesh_sets_size_and_offset_on_bevy_axes(self):
+        self.obj.data.transform(Matrix.Translation((1, 0, 0.75)) @ Matrix.Diagonal((0.25, 0.15, 0.75, 1)))
+        self.obj.scale = (2, 2, 2)
+        collider = add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
+        self.assertEqual(bpy.ops.bevy_components.fit_collider(index=0), {"FINISHED"})
+        self.assertEqual(_rounded(tuple(collider.collider_size)), (0.5, 1.5, 0.3))
+        self.assertEqual(_rounded(tuple(collider.collider_offset)), (1.0, 0.75, 0.0))
+        self.assertEqual(_rounded(_stored(self.obj)["components"][0]["offset"]), [1.0, 0.75, 0.0])
+        collider.collider_shape = "CAPSULE"
+        self.assertEqual(bpy.ops.bevy_components.fit_collider(index=0), {"FINISHED"})
+        self.assertEqual(_rounded((collider.collider_radius, collider.collider_height)), _rounded((math.hypot(0.25, 0.15), 1.5 - 2 * math.hypot(0.25, 0.15))))
+        collider.collider_shape = "SPHERE"
+        self.assertEqual(bpy.ops.bevy_components.fit_collider(index=0), {"FINISHED"})
+        self.assertAlmostEqual(collider.collider_radius, math.sqrt(0.25 ** 2 + 0.75 ** 2 + 0.15 ** 2), places=5)
+        collider.collider_shape = "CONVEX"
+        self.assertEqual(bpy.ops.bevy_components.fit_collider(index=0), {"CANCELLED"})
+        self.assertEqual(_stored(self.obj)["components"][0]["offset"], None)
+
+    def test_fit_to_mesh_reads_child_meshes_and_modifiers(self):
+        holder = add_empty("holder", (5, 0, 0))
+        add_component(holder, "COLLIDER", collider_shape="CUBOID")
+        select(holder)
+        self.assertEqual(bpy.ops.bevy_components.fit_collider(index=0), {"CANCELLED"})
+        self.obj.parent = holder
+        self.obj.location = (0, 2, 0)
+        self.obj.modifiers.new("Array", "ARRAY").count = 3
+        bystander = add_mesh(bpy.ops.mesh.primitive_cube_add, "bystander", location=(5, 0, 10))
+        add_component(bystander, "COLLIDER")
+        bystander.parent = holder
+        bystander.matrix_parent_inverse = holder.matrix_world.inverted()
+        bpy.context.view_layer.update()
+        select(holder)
+        self.assertEqual(bpy.ops.bevy_components.fit_collider(index=0), {"FINISHED"})
+        collider = holder.bevy_component_data.components[0]
+        self.assertEqual(_rounded(tuple(collider.collider_size)), (6.0, 2.0, 2.0))
+        self.assertEqual(_rounded(tuple(collider.collider_offset)), (2.0, 0.0, -2.0))
 
     def test_body_tuning_is_stored_for_moving_bodies(self):
         body = add_component(self.obj, "RIGID_BODY", rigid_body_gravity_scale=0.5, rigid_body_linear_damping=1, rigid_body_lock_rotation=(True, False, True), rigid_body_ccd="ALL", rigid_body_linear_velocity=(1, 2, 3), rigid_body_angular_velocity=(0, 4, 0))
@@ -1129,7 +1203,8 @@ class TestPanels(unittest.TestCase):
         collider = add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props()[-3:], ["collider_sensor", "collider_friction", "collider_restitution"])
+        self.assertEqual(panel.layout.props()[-8:], ["collider_offset"] * 3 + ["collider_sensor", "collider_events", "collider_collision_only", "collider_friction", "collider_restitution"])
+        self.assertIn("bevy_components.fit_collider", panel.layout.operators())
         self.assertIn("Collision Layers", panel.layout.texts())
         self.assertNotIn("collider_memberships", panel.layout.props())
         self.assertTrue(_prop_layout(panel.layout, "collider_friction").active)
@@ -1149,6 +1224,32 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
         self.assertIn("Collides with nothing", panel.layout.texts())
+        collider.collider_shape = "TRIMESH"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertNotIn("collider_offset", panel.layout.props())
+        self.assertNotIn("bevy_components.fit_collider", panel.layout.operators())
+
+    def test_named_collision_layers_show_in_the_collider_card(self):
+        names = bpy.context.scene.bevy_collision_layers
+        names.layer_1 = "Player"
+        names.layer_4 = " Enemies "
+        try:
+            add_component(self.obj, "COLLIDER", show_layers=True)
+            panel = FakePanel(self)
+            addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+            toggles = [(bound["index"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop" and bound["property"] == "collider_memberships"]
+            self.assertEqual(toggles[:2], [(1, "1 Player"), (4, "4 Enemies")])
+            self.assertEqual(toggles[2:], [(index, str(index)) for index in range(32) if index not in {1, 4}])
+            grids = [bound["columns"] for name, bound, layout in panel.layout.calls if name == "grid_flow"]
+            self.assertEqual(grids, [2, 8, 2, 8])
+            panel = FakePanel(self)
+            addon.panel.BEVY_PT_scene_collision_layers.draw(panel, bpy.context)
+            self.assertEqual(panel.layout.props(), [f"layer_{index}" for index in range(32)])
+            self.assertEqual(addon.system.layer_names(bpy.context.scene)[:5], ["", "Player", "", "", "Enemies"])
+        finally:
+            names.layer_1 = ""
+            names.layer_4 = ""
 
     def test_rigid_body_card_shows_mass_for_dynamic_bodies(self):
         body = add_component(self.obj, "RIGID_BODY")
@@ -2094,6 +2195,91 @@ class TestViewport(unittest.TestCase):
         addon.gizmo._set_handle_value(0, -1)
         self.assertAlmostEqual(collider.collider_radius, 0.001)
 
+    def test_collider_offset_moves_the_preview_and_handles(self):
+        self.obj.location = (1, 2, 3)
+        self.obj.scale = (2, 2, 2)
+        bpy.context.view_layer.update()
+        collider = add_component(self.obj, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_offset=(0.5, 1, -0.25))
+        (matrix, _lines), = addon.overlay.collider_lines(self.obj, collider, 2000, {})
+        self.assertEqual(_rounded(tuple(matrix.translation)), (2.0, 2.5, 5.0))
+        self.assertEqual(_rounded(addon.gizmo._get_offset()), (1.0, 0.5, 2.0))
+        addon.gizmo._set_offset((2.0, -1.0, 0.0))
+        self.assertEqual(_rounded(tuple(collider.collider_offset)), (1.0, 0.0, 0.5))
+        self.assertEqual(_rounded(_stored(self.obj)["components"][0]["offset"]), [1.0, 0.0, 0.5])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Collider · Cuboid · 2 × 2 × 2 · offset 1, 0, 0.5"])
+        collider.collider_shape = "TRIMESH"
+        self.assertEqual(_rounded(tuple(addon.overlay.collider_lines(self.obj, collider, 2000, {})[0][0].translation)), (1.0, 2.0, 3.0))
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Collider · Trimesh · mesh edges"])
+
+    def test_collision_only_colliders_preview_in_their_own_color(self):
+        collider = add_component(self.obj, "COLLIDER", collider_shape="SPHERE", collider_collision_only=True, collider_events=True)
+        select(self.obj)
+        self.assertEqual({color for _matrix, _lines, color, _width in addon.overlay.preview_batches(bpy.context, self.settings)}, {addon.overlay.COLLISION_ONLY_COLOR})
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Collider · Sphere · r=0.5m · events · collision only"])
+        collider.collider_sensor = True
+        self.assertEqual({color for _matrix, _lines, color, _width in addon.overlay.preview_batches(bpy.context, self.settings)}, {addon.overlay.SENSOR_COLOR})
+
+    def test_visibility_range_handles_keep_the_fades_in_order(self):
+        gizmo = addon.gizmo.BEVY_GGT_range_handles
+        self.assertFalse(gizmo.poll(bpy.context))
+        item = add_component(self.obj, "VISIBILITY_RANGE")
+        self.assertTrue(gizmo.poll(bpy.context))
+        self.assertEqual([addon.gizmo._get_range(index) for index in range(4)], [0.0, 0.0, 20.0, 25.0])
+        for index, value, expected in ((2, 30, [0.0, 0.0, 30.0, 30.0]), (1, (5,), [0.0, 5.0, 30.0, 30.0]), (3, 3, [0.0, 3.0, 3.0, 3.0]), (0, -2, [0.0, 3.0, 3.0, 3.0])):
+            addon.gizmo._set_range(index, value)
+            self.assertEqual([item.fade_in_start, item.fade_in_end, item.fade_out_start, item.fade_out_end], expected, (index, value))
+        self.assertEqual(_stored(self.obj)["components"][0]["end"], [3.0, 3.0])
+        for setting in ("visibility_ranges", "edit_handles", "enabled"):
+            setattr(self.settings, setting, False)
+            self.assertFalse(gizmo.poll(bpy.context), setting)
+            setattr(self.settings, setting, True)
+
+    def test_light_range_handle_sets_a_custom_distance(self):
+        gizmo = addon.gizmo.BEVY_GGT_light_handles
+        self.assertFalse(gizmo.poll(bpy.context))
+        lamp = add_light("lamp", "POINT", (0, 0, 0))
+        select(lamp)
+        self.assertFalse(gizmo.poll(bpy.context))
+        add_component(lamp, "LIGHT")
+        self.assertTrue(gizmo.poll(bpy.context))
+        self.assertEqual(addon.gizmo._get_light_range(), 20.0)
+        addon.gizmo._set_light_range((7.5,))
+        self.assertEqual((lamp.data.use_custom_distance, lamp.data.cutoff_distance), (True, 7.5))
+        self.assertEqual(addon.gizmo._get_light_range(), 7.5)
+        self.settings.lights = False
+        try:
+            self.assertFalse(gizmo.poll(bpy.context))
+        finally:
+            self.settings.lights = True
+        sun = add_light("sun", "SUN", (0, 0, 5))
+        add_component(sun, "LIGHT")
+        select(sun)
+        self.assertFalse(gizmo.poll(bpy.context))
+
+    def test_handle_drags_push_one_undo_step(self):
+        add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
+        drag = SimpleNamespace(is_modal=True)
+        try:
+            with mock.patch.object(addon.gizmo, "push_undo") as push:
+                addon.gizmo.watch_drag(drag, "Resize Collider")
+                self.assertTrue(bpy.app.timers.is_registered(addon.gizmo._finish_drag))
+                self.assertEqual(addon.gizmo._finish_drag(), addon.gizmo.DRAG_INTERVAL)
+                addon.gizmo._set_handle_value(0, 2)
+                drag.is_modal = False
+                self.assertIsNone(addon.gizmo._finish_drag())
+                push.assert_called_once_with("Resize Collider")
+                addon.gizmo.watch_drag(drag, "Resize Collider")
+                self.assertIsNone(addon.gizmo._finish_drag())
+                push.assert_called_once()
+                addon.gizmo.watch_drag(RemovedGizmo(), "Move Collider")
+                addon.gizmo._set_offset((1.0, 0.0, 0.0))
+                self.assertIsNone(addon.gizmo._finish_drag())
+                push.assert_called_with("Move Collider")
+        finally:
+            addon.gizmo.stop_drag_tracking()
+        self.assertFalse(bpy.app.timers.is_registered(addon.gizmo._finish_drag))
+        addon.gizmo.push_undo("Resize Collider")
+
     def test_audio_handle_poll(self):
         gizmo = addon.gizmo.BEVY_GGT_audio_handles
         self.assertFalse(gizmo.poll(bpy.context))
@@ -2572,6 +2758,14 @@ class TestValidation(unittest.TestCase):
         curve = bpy.data.objects.new("rail", bpy.data.curves.new("rail", "CURVE"))
         bpy.context.scene.collection.objects.link(curve)
         curve.parent = holder
+        self.assertEqual(self._messages(), [])
+
+    def test_collision_only_needs_a_mesh_to_hide(self):
+        holder = add_empty("holder", (0, 0, 0))
+        add_component(holder, "COLLIDER", collider_shape="CUBOID", collider_collision_only=True)
+        self.assertEqual(self._messages(), ["holder: Collision Only finds no mesh on this object or under it to hide"])
+        child = add_mesh(bpy.ops.mesh.primitive_cube_add, "child")
+        child.parent = holder
         self.assertEqual(self._messages(), [])
 
     def test_visibility_ranges_need_a_mesh(self):

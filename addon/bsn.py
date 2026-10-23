@@ -920,7 +920,7 @@ class _Generator:
         shareable = index not in self.joints and not animated and _first(components, "animation") is None
         mesh_entries = self._mesh_entries(index)
         primitives = self._primitives(index)
-        if len(primitives) == 1:
+        if len(primitives) == 1 and "Visibility::Hidden" not in mesh_entries:
             mesh.extend(primitives[0] + mesh_entries)
         else:
             mesh_parts.extend(_part([], "Transform", primitive + mesh_entries) for primitive in primitives)
@@ -1030,6 +1030,8 @@ class _Generator:
             else:
                 self.warnings.append(f"{self.names[index]}: invalid visibility range")
         collider = self._inherited(index, "collider")
+        if collider is not None and collider.get("collision_only"):
+            entries.append("Visibility::Hidden")
         if collider is not None and collider.get("shape") in MESH_SHAPES:
             entries.extend(self._collider_settings(collider, True))
         shadows = self._inherited(index, "shadows")
@@ -1071,9 +1073,15 @@ class _Generator:
     def _collider_settings(self, collider, mesh):
         self.physics = True
         size = [_float(value) for value in collider.get("size", [1.0, 1.0, 1.0])]
-        entries = [COLLIDER_SHAPES[collider["shape"]].format(*size, _float(collider.get("radius", 0.5)), _float(collider.get("height", 1.0)))]
+        shape = COLLIDER_SHAPES[collider["shape"]].format(*size, _float(collider.get("radius", 0.5)), _float(collider.get("height", 1.0)))
+        offset = collider.get("offset") or [0.0, 0.0, 0.0]
+        if not mesh and any(_single(value) != 0.0 for value in offset):
+            shape = f"Collider::compound(vec![({_vector(offset)}, Quat::IDENTITY, {shape})])"
+        entries = [shape]
         if collider.get("sensor"):
             entries.append("Sensor")
+        if collider.get("events"):
+            entries.append("CollisionEventsEnabled")
         friction = collider.get("friction")
         if friction is not None and _single(friction) != DEFAULT_FRICTION:
             entries.append(f"Friction::new({_float(friction)})")

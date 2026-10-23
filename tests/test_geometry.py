@@ -101,6 +101,21 @@ class TestGeometry(unittest.TestCase):
         self.assertTrue(all(abs(point[2] - 1) < 1e-6 and abs(math.dist((1, 1, 1), point) - 0.5) < 1e-6 for line in arc for point in line))
         self.assertTrue(all(line[0] == arc[-1][1] for line in lines[-4:]))
 
+    def test_fit_shapes_to_points_on_bevy_axes(self):
+        corners = [(x, y, z) for x in (-1, 3) for y in (-0.5, 0.5) for z in (0, 2)]
+        fit = geometry.fit_shape("CUBOID", corners)
+        self.assertEqual(fit, {"size": (4, 2, 1), "offset": (1, 1, 0)})
+        sphere = geometry.fit_shape("SPHERE", corners)
+        self.assertEqual(sphere["offset"], (1, 1, 0))
+        self.assertAlmostEqual(sphere["radius"], math.sqrt(4 + 1 + 0.25), places=5)
+        ring = [(math.cos(angle) * 0.4, math.sin(angle) * 0.4, height) for angle in (0, math.pi / 2, math.pi, 3 * math.pi / 2) for height in (0, 2)]
+        capsule = geometry.fit_shape("CAPSULE", ring)
+        self.assertAlmostEqual(capsule["radius"], 0.4)
+        self.assertAlmostEqual(capsule["height"], 1.2)
+        self.assertEqual(capsule["offset"], (0, 1, 0))
+        self.assertEqual(geometry.fit_shape("CAPSULE", [(-1, -1, 0), (1, 1, 0.5)])["height"], 0.0)
+        self.assertEqual(geometry.fit_shape("CUBOID", [(-0.5, -0.5 + 1e-9, -0.5), (0.5, 0.5, 0.5 + 1e-9)])["offset"], (0.0, 0.0, 0.0))
+
 
 if __name__ == "__main__":
     unittest.main()

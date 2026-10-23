@@ -92,6 +92,8 @@ def clear_scene():
             collection.remove(block)
     if hasattr(bpy.context.scene, "bevy_component_definitions"):
         bpy.context.scene.bevy_component_definitions.definitions.clear()
+    if hasattr(bpy.context.scene, "bevy_collision_layers"):
+        bpy.context.scene.property_unset("bevy_collision_layers")
     if bpy.context.scene.world is None:
         bpy.context.scene.world = bpy.data.worlds.new("World")
     if hasattr(bpy.context.scene.world, "bevy_ambient_light"):
@@ -296,6 +298,13 @@ def add_textured_materials(crate, crate_copy, ground, ball, pillar, rock, lamp):
     lamp.data.materials.append(glow)
 
 
+def fit_collider(obj):
+    select(obj)
+    result = bpy.ops.bevy_components.fit_collider(index=len(obj.bevy_component_data.components) - 1)
+    if "FINISHED" not in result:
+        raise RuntimeError(f"Fit to Mesh failed on {obj.name}: {result}")
+
+
 def add_box(name, location, size):
     obj = add_mesh(bpy.ops.mesh.primitive_cube_add, name, size=1, location=location)
     obj.data.transform(Matrix.Diagonal((size[0], size[2], size[1], 1)))
@@ -491,12 +500,25 @@ def build_sample_scene(directory=FIXTURE.parent):
         child.parent = cart
 
     bouncy_ball = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "bouncy_ball", radius=0.3, segments=16, ring_count=8, location=(8, -8, 4))
-    add_component(bouncy_ball, "COLLIDER", collider_shape="SPHERE", collider_radius=0.3, collider_restitution=1)
+    add_component(bouncy_ball, "COLLIDER", collider_shape="SPHERE", collider_radius=0.3, collider_restitution=1, collider_events=True)
     add_component(bouncy_ball, "RIGID_BODY", rigid_body_kind="DYNAMIC")
 
     ghost = add_mesh(bpy.ops.mesh.primitive_cube_add, "ghost", size=1, location=(8, 0, 0.5))
     add_component(ghost, "COLLIDER", collider_shape="CUBOID", collider_memberships=layers(1), collider_filters=layers(1))
     add_component(ghost, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+
+    signpost = add_mesh(bpy.ops.mesh.primitive_cube_add, "signpost", size=1, location=(-5, -2, 0))
+    signpost.data.transform(Matrix.Translation((0, 0, 0.75)) @ Matrix.Diagonal((0.3, 0.3, 1.5, 1)))
+    add_component(signpost, "COLLIDER", collider_shape="CUBOID")
+    fit_collider(signpost)
+    add_component(signpost, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+    invisible_wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "invisible_wall", size=1, location=(9, -5, 1))
+    invisible_wall.data.transform(Matrix.Diagonal((0.2, 4, 2, 1)))
+    add_component(invisible_wall, "COLLIDER", collider_shape="CUBOID", collider_collision_only=True)
+    fit_collider(invisible_wall)
+    names = bpy.context.scene.bevy_collision_layers
+    names.layer_1 = "ghosts"
+    names.layer_2 = "triggers"
 
     slope = math.radians(RAMP_ANGLE)
     ramp = add_mesh(bpy.ops.mesh.primitive_cube_add, "ramp", size=1, location=RAMP_CENTER, rotation=(0, slope, 0))

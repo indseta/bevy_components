@@ -1,4 +1,6 @@
-from math import ceil, cos, pi, sin, sqrt
+from math import ceil, cos, dist, hypot, pi, sin, sqrt
+
+FIT_DIGITS = 6
 
 
 def lines_from_points(points, closed=False):
@@ -186,3 +188,20 @@ def cone_lines(length, angle, segments=48):
     for plane in ("XZ", "YZ"):
         lines.extend(circle_lines(length, plane, arc_segments, (0, 0, 0), 3 * pi / 2 - angle, 3 * pi / 2 + angle))
     return lines
+
+
+def fit_shape(shape, points):
+    points = [(x, z, -y) for x, y, z in points]
+    minimum = [min(point[axis] for point in points) for axis in range(3)]
+    maximum = [max(point[axis] for point in points) for axis in range(3)]
+    center = _snapped((low + high) / 2 for low, high in zip(minimum, maximum))
+    if shape == "SPHERE":
+        return {"radius": round(max(dist(center, point) for point in points), FIT_DIGITS), "offset": center}
+    if shape == "CAPSULE":
+        radius = round(max(hypot(point[0] - center[0], point[2] - center[2]) for point in points), FIT_DIGITS)
+        return {"radius": radius, "height": round(max(0.0, maximum[1] - minimum[1] - 2 * radius), FIT_DIGITS), "offset": center}
+    return {"size": _snapped(high - low for low, high in zip(minimum, maximum)), "offset": center}
+
+
+def _snapped(values):
+    return tuple(round(value, FIT_DIGITS) + 0.0 for value in values)
