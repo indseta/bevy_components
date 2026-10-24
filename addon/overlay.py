@@ -10,14 +10,13 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
-from .collection import from_collection
+from .changes import change_count, revision
 from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cone_shape_lines, cuboid_lines, cylinder_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
-from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit, serialize_items
-from .native import is_native
+from .metadata import PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .schema import short_name
-from .system import changes_mesh, children_map, collider_sources, component_of, components_for, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports
+from .system import changes_mesh, children_map, collider_sources, component_kinds as object_kinds, component_of, components_for, custom_types, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports, resolving
 from .validation import texture_check
 
 DRAW_3D = None
@@ -26,7 +25,9 @@ MESH_PREVIEWS = {}
 MESH_PREVIEW_LIMIT = 1024
 PREVIEW_CACHE = {}
 PREVIEW_LIMIT = 4096
+LABEL_CACHE = {}
 MESH_SHAPES = {"TRIMESH", "CONVEX"}
+FILE_KINDS = {"SCENE_REFERENCE", "IRRADIANCE_VOLUME"}
 IDENTITY = Matrix.Identity(4)
 
 COLLIDER_COLOR = (0.22, 0.96, 0.55, 0.90)
@@ -54,7 +55,6 @@ JOINT_SIZE = 0.5
 JOINT_SIZES = (0.25, 5.0)
 VELOCITY_SECONDS = 0.25
 VELOCITY_LENGTHS = (0.3, 5.0)
-JOINT_TAG = '"type":"joint"'
 SCENE_COLOR = (1.0, 0.42, 0.70, 0.85)
 VOLUME_COLORS = {
     "FOG_VOLUME": (0.72, 0.80, 0.92, 0.80),
@@ -99,17 +99,17 @@ def preview_objects(context, settings):
     if not context.scene or not context.view_layer:
         return []
     objects = context.selected_objects if settings.scope == "SELECTED" else context.scene.objects
-    return [obj for obj in objects if obj.visible_get(view_layer=context.view_layer) and len(components_for(obj))]
+    return [obj for obj in objects if object_kinds(obj) and obj.visible_get(view_layer=context.view_layer)]
 
 
 def joint_objects(context, settings, objects):
-    found = [obj for obj in objects if component_of(obj, "JOINT") is not None]
+    found = [obj for obj in objects if "JOINT" in object_kinds(obj)]
     if settings.scope == "ALL" or not context.selected_objects:
         return found
     selected = set(context.selected_objects)
     listed = set(found)
     for obj in context.scene.objects:
-        if obj in listed or JOINT_TAG not in str(obj.get(EXTRAS_KEY, "")) and getattr(obj, "rigid_body_constraint", None) is None or not obj.visible_get(view_layer=context.view_layer):
+        if obj in listed or "JOINT" not in object_kinds(obj) or not obj.visible_get(view_layer=context.view_layer):
             continue
         joint = component_of(obj, "JOINT")
         if joint is not None and (joint.joint_body1 in selected or joint.joint_body2 in selected):
@@ -365,8 +365,7 @@ def _previews_shown(context):
 
 
 def _hierarchy(context, objects):
-    colliders = [component_of(obj, "COLLIDER") for obj in objects]
-    meshes = any(collider is not None and collider.collider_shape in MESH_SHAPES for collider in colliders) or any(component_of(obj, "NAVIGATION") is not None for obj in objects)
+    meshes = any("NAVIGATION" in kinds or "COLLIDER" in kinds and getattr(component_of(obj, "COLLIDER"), "collider_shape", None) in MESH_SHAPES for obj, kinds in ((obj, object_kinds(obj)) for obj in objects))
     return children_map(context.scene.objects) if meshes else {}
 
 
@@ -417,78 +416,76 @@ def _matrix_key(matrix):
 
 
 def _settings_key(settings):
-    return (settings.colliders, settings.joints, settings.velocities, settings.visibility_ranges, settings.audio_ranges, settings.scene_references, settings.volumes, settings.lights, settings.navigation, settings.max_mesh_edges)
+    return (settings.colliders, settings.joints, settings.velocities, settings.visibility_ranges, settings.audio_ranges, settings.scene_references, settings.volumes, settings.lights, settings.navigation, settings.max_mesh_edges, _applies_modifiers())
 
 
-def _native_key(obj):
-    inferred = [item for item in components_for(obj) if is_native(item) or from_collection(item)]
-    if not inferred:
+def _sources_key(sources):
+    return tuple((source.session_uid, revision(source), _matrix_key(matrix)) for source, matrix in sources)
+
+
+def _file_key(obj, settings):
+    kinds = object_kinds(obj)
+    if not kinds & FILE_KINDS:
         return None
-    try:
-        return serialize_items(inferred)
-    except ValueError as error:
-        return str(error)
-
-
-def _stored_key(obj):
-    stored = obj.get(EXTRAS_KEY)
-    native = _native_key(obj)
-    if not isinstance(stored, str) and native is None:
-        return None
-    return (stored if isinstance(stored, str) else None, native)
-
-
-def _object_key(obj, settings, shown, children):
-    stored = _stored_key(obj)
-    if stored is None:
-        return None
-    key = [shown, _matrix_key(obj.matrix_world), stored]
+    key = []
     for item in components_for(obj):
-        kind = item.component_type
-        if kind == "COLLIDER" and settings.colliders and item.collider_shape in MESH_SHAPES:
-            key.append(tuple((_matrix_key(matrix), lines) for matrix, lines in collider_lines(obj, item, settings.max_mesh_edges, children)))
-        elif kind == "NAVIGATION" and settings.navigation:
-            key.append(tuple((_matrix_key(matrix), lines) for matrix, lines in navigation_lines(obj, item, settings.max_mesh_edges, children)))
-        elif kind == "VISIBILITY_RANGE" and settings.visibility_ranges and item.use_aabb:
-            key.append(tuple(tuple(corner) for corner in obj.bound_box))
-        elif kind == "RIGID_BODY" and settings.velocities:
-            key.append(tuple(obj.dimensions))
-        elif kind == "LIGHT" and settings.lights:
-            light = light_of(obj)
-            key.append((light.type, light_range(light), getattr(light, "spot_size", None)) if light is not None else None)
-        elif kind == "SCENE_REFERENCE" and settings.scene_references:
+        if item.component_type == "SCENE_REFERENCE" and settings.scene_references:
             key.append(scene_bounds(item))
-        elif kind == "IRRADIANCE_VOLUME" and settings.volumes:
+        elif item.component_type == "IRRADIANCE_VOLUME" and settings.volumes:
             key.append(texture_check(obj, item).voxels)
     return tuple(key)
 
 
+def _object_key(obj, settings, children):
+    kinds = object_kinds(obj)
+    key = [revision(obj), _matrix_key(obj.matrix_world)]
+    if settings.colliders and "COLLIDER" in kinds or settings.navigation and "NAVIGATION" in kinds:
+        for item in components_for(obj):
+            kind = item.component_type
+            if kind == "COLLIDER" and settings.colliders and item.collider_shape in MESH_SHAPES:
+                key.append(_sources_key(collider_sources(obj, children(), item)))
+            elif kind == "NAVIGATION" and settings.navigation:
+                key.append(_sources_key(mesh_sources(obj, children(), "NAVIGATION")))
+    return tuple(key)
+
+
 def _joint_key(obj):
-    stored = _stored_key(obj)
-    if stored is None:
-        return None
     joint = component_of(obj, "JOINT")
-    bodies = tuple((body.as_pointer(), tuple(body.matrix_world.translation)) if body is not None else None for body in (joint.joint_body1, joint.joint_body2))
-    return (_matrix_key(obj.matrix_world), stored, bodies)
+    bodies = tuple((body.session_uid, revision(body), tuple(body.matrix_world.translation)) if body is not None else None for body in (joint.joint_body1, joint.joint_body2))
+    return (revision(obj), _matrix_key(obj.matrix_world), bodies)
 
 
-def _cached_entry(key, signature, build):
+def _cached_entry(key, state, signature, build):
     entry = PREVIEW_CACHE.pop(key, None)
-    if entry is None or signature is None or entry["signature"] != signature:
-        entry = {"signature": signature, "batches": build(), "drawables": None}
+    if entry is None or entry["state"] != state:
+        found = (state[1:], signature())
+        if entry is None or entry["signature"] != found:
+            batches = build()
+            entry = {"signature": found, "batches": batches, "drawables": entry["drawables"] if entry is not None and entry["batches"] == batches else None}
+        entry["state"] = state
     if len(PREVIEW_CACHE) >= PREVIEW_LIMIT:
         PREVIEW_CACHE.pop(next(iter(PREVIEW_CACHE)))
     PREVIEW_CACHE[key] = entry
     return entry
 
 
+def _lazy(function):
+    found = []
+    def get():
+        if not found:
+            found.append(function())
+        return found[0]
+    return get
+
+
 def preview_entries(context, settings):
     objects = preview_objects(context, settings)
-    children = _hierarchy(context, objects)
+    children = _lazy(lambda: _hierarchy(context, objects))
     shown = _settings_key(settings)
-    entries = [_cached_entry(("OBJECT", obj.as_pointer()), _object_key(obj, settings, shown, children), lambda obj=obj: object_batches(obj, settings, children)) for obj in objects]
+    changes = change_count()
+    entries = [_cached_entry(("OBJECT", obj.session_uid), (changes, shown, _file_key(obj, settings)), lambda obj=obj: _object_key(obj, settings, children), lambda obj=obj: object_batches(obj, settings, children())) for obj in objects]
     if settings.joints:
-        entries.extend(_cached_entry(("JOINT", obj.as_pointer()), _joint_key(obj), lambda obj=obj: joint_batches(obj, component_of(obj, "JOINT"))) for obj in joint_objects(context, settings, objects))
+        entries.extend(_cached_entry(("JOINT", obj.session_uid), (changes, shown), lambda obj=obj: _joint_key(obj), lambda obj=obj: joint_batches(obj, component_of(obj, "JOINT"))) for obj in joint_objects(context, settings, objects))
     return entries
 
 
@@ -529,7 +526,9 @@ def _draw_geometry():
     gpu.state.blend_set("ALPHA")
     gpu.state.depth_test_set("NONE" if settings.xray else "LESS_EQUAL")
     try:
-        draw_entries(gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR"), preview_entries(context, settings))
+        with resolving():
+            entries = preview_entries(context, settings)
+        draw_entries(gpu.shader.from_builtin("POLYLINE_UNIFORM_COLOR"), entries)
     finally:
         gpu.state.depth_test_set("NONE")
         gpu.state.blend_set("NONE")
@@ -644,12 +643,22 @@ def _volume_label(obj, item):
 
 
 def _custom_names(obj):
-    return [short_name(item.custom_type) for item in components_for(obj) if item.component_type == "CUSTOM" and item.custom_type.strip()]
+    return [short_name(type_path) for type_path in custom_types(obj)]
+
+
+def _cached_label(obj, settings, state, children):
+    found = LABEL_CACHE.get(obj.session_uid)
+    if found is None or found[0] != state:
+        if len(LABEL_CACHE) >= PREVIEW_LIMIT:
+            LABEL_CACHE.clear()
+        found = LABEL_CACHE[obj.session_uid] = (state, _label_lines(obj, settings, children()))
+    return list(found[1])
 
 
 def label_rows(context, settings):
     objects = preview_objects(context, settings)
-    children = _hierarchy(context, objects)
+    children = _lazy(lambda: _hierarchy(context, objects))
+    state = (change_count(), _settings_key(settings))
     selected = set(context.selected_objects)
     listed = set(objects)
     rows = []
@@ -657,7 +666,7 @@ def label_rows(context, settings):
         if obj not in selected:
             rows.append((obj, [" · ".join([obj.name, *_custom_names(obj)])], False))
             continue
-        details = _label_lines(obj, settings, children)
+        details = _cached_label(obj, settings, (*state, _file_key(obj, settings)), children)
         if details:
             rows.append((obj, [obj.name, *details], True))
     if settings.joints:
@@ -682,7 +691,9 @@ def _draw_labels():
     font_id = 0
     blf.size(font_id, LABEL_SIZE * scale)
     taken = []
-    for obj, lines, details in label_rows(context, settings):
+    with resolving():
+        rows = label_rows(context, settings)
+    for obj, lines, details in rows:
         point = view3d_utils.location_3d_to_region_2d(region, context.region_data, obj.matrix_world.translation)
         if point is None:
             continue

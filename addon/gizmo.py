@@ -1,9 +1,9 @@
 import bpy
 from mathutils import Matrix, Vector
 
-from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, light_of, light_range
+from .metadata import PRIMITIVE_SHAPES, light_of, light_range
 from .native import is_native
-from .system import component_of, components_for, panel_expanded, redraw_viewports, sync_object
+from .system import component_of, components_for, object_components, panel_expanded, redraw_viewports, touch_object
 
 VOLUME_TYPES = {"FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME"}
 VOLUME_NAMES = {
@@ -43,7 +43,7 @@ def _pointing(direction):
 
 def _handle_state(obj):
     light = light_of(obj)
-    return obj.get(EXTRAS_KEY), (light.use_custom_distance, light.cutoff_distance) if light is not None else None
+    return object_components(obj), (light.use_custom_distance, light.cutoff_distance) if light is not None else None
 
 
 def push_undo(message):
@@ -318,7 +318,7 @@ def _set_light_range(value):
         return
     light.use_custom_distance = True
     light.cutoff_distance = max(0.01, _amount(value))
-    sync_object(obj)
+    touch_object(obj)
     redraw_viewports()
 
 

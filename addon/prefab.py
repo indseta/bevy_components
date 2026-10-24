@@ -358,6 +358,10 @@ def _layer_collection(layer_collection, collection):
     return None
 
 
+def export_directory():
+    return _active.directory if _active is not None else None
+
+
 def filter_tree(vtree):
     if _active is None:
         return

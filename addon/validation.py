@@ -12,7 +12,7 @@ from .files import inside
 from .collection import COLLECTION_KINDS, collection_entries, collections_changed, from_collection, left_out
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
-from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, visibility_range_problems
+from .metadata import component_errors, light_of, light_size, visibility_range_problems
 from .native import MESH_TYPES, PRINCIPLED_VOLUME, UNSUPPORTED_JOINTS, asset_path, bounds, fog_source, is_native, sound_file
 from .property import AUDIO_FORMATS, COMPONENT_LABELS
 from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_order
@@ -20,7 +20,7 @@ from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
 from .schema import short_name
-from .system import children_map, collider_sources, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
+from .system import children_map, collider_sources, component_kinds, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -152,6 +152,7 @@ def draw_problem_count(layout, scene):
         row.operator("bevy_components.validate", text=str(warnings), icon="ERROR")
 
 
+@resolved
 def check_objects(objects, destination=None, animations=True, modifiers=True):
     objects = list(objects)
     collections_changed()
@@ -214,6 +215,7 @@ def _item_issues(item, custom_types):
     return issues
 
 
+@resolved
 def check_object(obj, objects, modifiers=True):
     objects = list(objects)
     issues = _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers, assets=game_assets(bpy.context)) + _visibility_range_issues(objects, obj)
@@ -288,6 +290,7 @@ def _prefab_location(collection, path, obj, referrers):
     return issues
 
 
+@resolved
 def check_game_paths(objects, destination, assets):
     if assets is None:
         return []
@@ -413,6 +416,7 @@ def check_world(world):
     return issues
 
 
+@resolved
 def check_scene(objects):
     return check_world(bpy.context.scene.world) + stale_bakes(objects)
 
@@ -716,7 +720,7 @@ def _visibility_range_issues(objects, only=None):
         return []
     groups = {}
     for obj in objects:
-        if only is not None and "visibility_range" not in str(obj.get(EXTRAS_KEY, "")) and obj != only:
+        if only is not None and obj != only and "VISIBILITY_RANGE" not in component_kinds(obj):
             continue
         item = component_of(obj, "VISIBILITY_RANGE")
         if item is not None and not component_errors(item):
