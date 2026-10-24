@@ -828,6 +828,23 @@ fn colliders_from_blender_physics_leave_child_meshes_alone() {
 }
 
 #[test]
+fn shadows_from_blender_visibility_leave_child_meshes_alone() {
+    let mut app = SceneApp::default().build();
+    let world = app.world_mut();
+    let cube = world.resource_mut::<Assets<Mesh>>().add(Mesh::from(Cuboid::new(2.0, 2.0, 2.0)));
+    let room = spawn_components(world, "room", Vec3::ZERO, json!([{"type": "shadows", "cast": true, "receive": false}]));
+    let chest = world.spawn((Name::new("chest"), Transform::default(), ChildOf(room), component_extras(json!([{"type": "shadows", "cast": false, "receive": true, "own_mesh": true}])))).id();
+    let chest_mesh = spawn_mesh(world, &cube, chest);
+    let lid = world.spawn((Transform::default(), ChildOf(chest))).id();
+    let lid_mesh = spawn_mesh(world, &cube, lid);
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    assert_eq!([chest_mesh, lid_mesh].map(|mesh| (world.get::<NotShadowCaster>(mesh).is_some(), world.get::<NotShadowReceiver>(mesh).is_some())), [(true, false), (false, true)]);
+}
+
+#[test]
 fn cylinders_and_cones_stand_on_the_y_axis() {
     let mut app = SceneApp::default().build();
     let world = app.world_mut();
@@ -1381,6 +1398,20 @@ fn audio_players_load_sounds_from_the_assets_folder() {
     let world = app.world_mut();
     let mut players = world.query::<&AudioPlayer>();
     assert_eq!(players.iter(world).count(), 2);
+}
+
+#[test]
+fn audio_players_take_the_speaker_pitch_as_speed() {
+    let mut app = SceneApp { audio: true, ..default() }.build();
+    let world = app.world_mut();
+    let sound = json!({"type": "audio_player", "path": "sounds/chime.ogg", "volume": 1.0, "loop": false, "autoplay": true, "spatial": false, "distance": 1.0});
+    let mut faster = sound.clone();
+    faster["speed"] = json!(1.5);
+    let plain = spawn_components(world, "plain", Vec3::ZERO, json!([sound]));
+    let fast = spawn_components(world, "fast", Vec3::ZERO, json!([faster]));
+    app.update();
+    let world = app.world();
+    assert_eq!([plain, fast].map(|entity| world.get::<PlaybackSettings>(entity).map(|settings| settings.speed)), [Some(1.0), Some(1.5)]);
 }
 
 #[test]

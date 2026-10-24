@@ -4,9 +4,9 @@ from fnmatch import fnmatchcase
 import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
-from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
+from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, cascades_invalid, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
 from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
-from .native import JOINTS, UNSUPPORTED_JOINTS, compound_parent, is_native, rigid_body_kind
+from .native import JOINTS, MESH_TYPES, NATIVE_SOURCES, PRINCIPLED_VOLUME, PROBE_KINDS, UNSUPPORTED_JOINTS, active_action, asset_path, compound_parent, is_native, native_components, rigid_body_kind, sound_file, volume_shader
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
 from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
 from .project import game_folder, play_target
@@ -356,7 +356,7 @@ def _draw_light(layout, obj, index, item):
     body.prop(item, "light_use_cascades")
     if item.light_use_cascades:
         column = body.column(align=True)
-        column.alert = bool(validate_items([item]))
+        column.alert = cascades_invalid(item)
         column.prop(item, "light_cascade_count")
         column.prop(item, "light_cascade_near")
         column.prop(item, "light_cascade_first")
@@ -486,25 +486,48 @@ def draw_components(layout, context, obj):
     owner = prefab_owner(obj)
     if owner is not None:
         draw_message(layout, f"Part of prefab {owner.name}, so it exports to the prefab's GLB file and not with the scene", icon="INFO", width=width)
+    _draw_autoplay(layout, obj, issues, width)
     _draw_native(layout, context, obj, issues, width)
     for index, item in enumerate(obj.bevy_component_data.components):
         _draw_component(layout, context, obj, index, item, issues)
 
 
+def _native_issues(issues, kind):
+    return [issue for issue in issues if is_native(issue.item) and issue.item.component_type == kind]
+
+
+def _draw_autoplay(layout, obj, issues, width):
+    action = active_action(obj)
+    if action is None or not hasattr(obj, "bevy_object") or _card_of(obj, "ANIMATION") is not None:
+        return
+    settings = obj.bevy_object
+    column = layout.column(align=True)
+    found = _native_issues(issues, "ANIMATION")
+    column.prop(settings, "autoplay", text=f"Autoplay {action.name}", icon="ERROR" if found else "ACTION")
+    if not settings.autoplay:
+        return
+    row = column.row(align=True)
+    row.prop(action, "use_cyclic", text="Loop", toggle=True)
+    row.prop(settings, "speed")
+    for issue in found:
+        draw_message(column, issue.message, icon="BLANK1", width=width)
+
+
 def _draw_native(layout, context, obj, issues, width):
-    natives = [item for item in components_for(obj) if is_native(item)]
+    natives = [item for item in components_for(obj) if is_native(item) and item.component_type != "ANIMATION"]
     if not natives:
         return
     column = layout.column(align=True)
     for item in natives:
         text, icon = COMPONENT_LABELS[item.component_type]
-        found = [issue for issue in issues if is_native(issue.item) and issue.item.component_type == item.component_type]
+        source, tab, tab_icon = NATIVE_SOURCES[item.component_type]
+        found = _native_issues(issues, item.component_type)
         row = column.row(align=True)
-        row.label(text=f"{text} from Physics", icon=("CANCEL" if any(issue.level == "ERROR" for issue in found) else "ERROR") if found else icon)
-        if context.space_data is not None and context.space_data.type == "PROPERTIES":
-            button = row.operator("wm.context_set_enum", text="", icon="PHYSICS", emboss=False)
+        row.label(text=f"{text} from {source}", icon=("CANCEL" if any(issue.level == "ERROR" for issue in found) else "ERROR") if found else icon)
+        if tab is not None and context.space_data is not None and context.space_data.type == "PROPERTIES":
+            button = row.operator("wm.context_set_enum", text="", icon=tab_icon, emboss=False)
             button.data_path = "space_data.context"
-            button.value = "PHYSICS"
+            button.value = tab
         for issue in found:
             draw_message(column, issue.message, icon="BLANK1", width=width)
 
@@ -645,6 +668,155 @@ class BEVY_PT_physics_joint(bpy.types.Panel):
             column = layout.column(align=True)
             column.prop(physics, "joint_linear_damping")
             column.prop(physics, "joint_angular_damping")
+
+
+def _native_item(obj, kind):
+    return next((item for item in native_components(obj) if item.component_type == kind), None)
+
+
+def draw_visibility(self, context):
+    obj = context.object
+    if obj is None or obj.type not in MESH_TYPES or not hasattr(obj, "bevy_object"):
+        return
+    column = self.layout.column(heading="Bevy")
+    column.active = _card_of(obj, "SHADOWS") is None
+    column.prop(obj.bevy_object, "receive_shadows")
+
+
+class BEVY_PT_light(bpy.types.Panel):
+    bl_label = "Bevy"
+    bl_idname = "BEVY_PT_light"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "data"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return light_of(context.object) is not None and hasattr(context.object.data, "bevy_light")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        obj = context.object
+        if not _draw_native_checks(layout, context, obj, "LIGHT"):
+            return
+        _draw_light(layout, obj, -1, obj.data.bevy_light)
+
+
+class BEVY_PT_speaker(bpy.types.Panel):
+    bl_label = "Bevy"
+    bl_idname = "BEVY_PT_speaker"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "data"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.speaker is not None and context.object is not None and hasattr(context.speaker, "bevy_speaker")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        obj = context.object
+        speaker = context.speaker
+        width = context.region.width if context.region else 300
+        if speaker.muted:
+            draw_message(layout, "Muted, so the game leaves the sound out", icon="INFO", width=width)
+            return
+        if not _draw_native_checks(layout, context, obj, "AUDIO_PLAYER"):
+            return
+        path = sound_file(speaker.sound)
+        if path is not None:
+            row = _labeled_row(layout, "Asset Path")
+            row.label(text=asset_path(path)[0])
+        settings = speaker.bevy_speaker
+        column = layout.column(heading="Playback", align=True)
+        column.prop(settings, "audio_loop")
+        column.prop(settings, "audio_autoplay")
+        layout.prop(settings, "audio_spatial")
+
+
+class BEVY_PT_light_probe(bpy.types.Panel):
+    bl_label = "Bevy"
+    bl_idname = "BEVY_PT_light_probe"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "data"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.lightprobe is not None and context.object is not None and hasattr(context.lightprobe, "bevy_probe")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        obj = context.object
+        probe = context.lightprobe
+        width = context.region.width if context.region else 300
+        if probe.type not in PROBE_KINDS:
+            draw_message(layout, "Bevy has no planar reflections, so the game leaves this Light Probe out", width=width)
+            return
+        kind = PROBE_KINDS[probe.type]
+        if not _draw_native_checks(layout, context, obj, kind):
+            return
+        settings = probe.bevy_probe
+        if probe.type == "SPHERE":
+            if probe.influence_type != "BOX":
+                draw_message(layout, "Bevy's reflection probes are boxes, so this one reflects in the box around its sphere", icon="INFO", width=width)
+            layout.prop(settings, "intensity")
+            layout.prop(settings, "parallax")
+        else:
+            layout.prop(probe, "intensity")
+            layout.prop(settings, "falloff")
+        item = _native_item(obj, kind)
+        if item is not None:
+            _draw_file(layout, texture_check(obj, item), obj.bevy_object, "probe_file", "Cubemap" if probe.type == "SPHERE" else "Voxels")
+        if probe.type == "SPHERE":
+            layout.prop(settings, "bake_resolution")
+        else:
+            column = layout.column(align=True)
+            column.prop(probe, "resolution_x", text="Bake Voxels X")
+            column.prop(probe, "resolution_y", text="Y")
+            column.prop(probe, "resolution_z", text="Z")
+        _draw_bake_button(layout, obj, -1)
+
+
+class BEVY_PT_material_fog(bpy.types.Panel):
+    bl_label = "Bevy"
+    bl_idname = "BEVY_PT_material_fog"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "material"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        material = context.material
+        return material is not None and hasattr(material, "bevy_fog") and volume_shader(material) is not None
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        obj = context.object
+        material = context.material
+        width = context.region.width if context.region else 300
+        if volume_shader(material).bl_idname != PRINCIPLED_VOLUME:
+            draw_message(layout, "Bevy fog reads only the Principled Volume shader, so the game leaves this volume out", width=width)
+            return
+        if obj is not None and not _draw_native_checks(layout, context, obj, "FOG_VOLUME"):
+            return
+        layout.label(text="Fog volume in Bevy, the size of the mesh's bounds")
+        settings = material.bevy_fog
+        column = layout.column(align=True)
+        column.prop(settings, "fog_light_tint")
+        column.prop(settings, "fog_light_intensity")
 
 
 class BEVY_PT_object_properties(bpy.types.Panel):

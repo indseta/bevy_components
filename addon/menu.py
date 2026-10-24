@@ -193,7 +193,7 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
         layout.operator(BEVY_OT_paste_components.bl_idname, text="Paste Components", icon="PASTEDOWN")
         layout.separator()
         layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
-        layout.operator(BEVY_OT_convert_to_native.bl_idname, text="Convert Physics to Blender", icon="PHYSICS")
+        layout.operator(BEVY_OT_convert_to_native.bl_idname, text="Convert Components to Blender", icon="BLENDER")
         layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake Lighting...", icon="RENDER_STILL")
         layout.operator(BEVY_OT_export_glb.bl_idname, text="Export Bevy Scene (.glb)...", icon="EXPORT")
         layout.operator(BEVY_OT_export_bsn.bl_idname, text="Export Bevy Scene (BSN)...", icon="EXPORT")
@@ -213,7 +213,7 @@ class BEVY_MT_object_menu(bpy.types.Menu):
         layout.operator(BEVY_OT_paste_components.bl_idname, text="Paste Components", icon="PASTEDOWN")
         layout.separator()
         layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
-        layout.operator(BEVY_OT_convert_to_native.bl_idname, text="Convert Physics to Blender", icon="PHYSICS")
+        layout.operator(BEVY_OT_convert_to_native.bl_idname, text="Convert Components to Blender", icon="BLENDER")
         draw_export_again(layout, context.scene, placeholder=True)
         draw_export_all(layout)
 

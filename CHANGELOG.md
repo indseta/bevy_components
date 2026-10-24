@@ -5,14 +5,17 @@
 ### Added
 
 - **Blender physics**: the export reads Blender's own **Rigid Body**, **Rigid Body Constraint** and scene gravity into Avian bodies, colliders, joints and `Gravity`. A **Bevy** subpanel under each Physics panel holds what Blender lacks, such as sensors, Avian's 32 collision layers and a starting velocity. See [Physics](docs/components.md#physics).
-- **Convert Physics to Blender** replaces Collider, Rigid Body and Joint components with Blender's physics wherever the game gets the same result, and lists what it kept.
+- **Blender lighting and audio**: every light exports its Bevy settings from **Properties > Light > Bevy**, Speakers become Audio Players (Pitch is the playback speed), Sphere and Volume Light Probes become Reflection Probes and Irradiance Volumes that bake from their Bevy panel, and meshes whose material is only a Principled Volume become fog volumes. Ray Visibility's **Shadow** and a new **Receive Shadows** setting under Visibility control mesh shadows, and **Autoplay** plays an object's active action, looping when the action is Cyclic. See [Lighting](docs/lighting.md) and [Components](docs/components.md#audio-animation-and-scenes).
+- **Convert Components to Blender** replaces Collider, Rigid Body, Joint, Light, Shadows and Animation components with Blender's own settings, and Audio Player, Fog Volume and probe components with Speaker, fog box and Light Probe child objects, wherever the game gets the same result, and lists what it kept.
 - Cylinder and Cone colliders, for Collider components and Blender's shapes.
-- New checks: Blender shapes on meshes that are not centered on their origin, and constraint types Avian has no joint for.
+- New checks: Blender shapes on meshes that are not centered on their origin, constraint types Avian has no joint for, speakers without a sound or with a packed one, Plane light probes, and fog boxes that use another shader, textures or emission, or are off center.
 
 ### Changed
 
 - The export writes rigid bodies where the simulation starts, also when the timeline is on a later frame.
 - Importer: colliders from Blender's shapes cover only their own mesh, and scenes with custom gravity set Avian's `Gravity` when they load.
+- Lights without a Light component now follow their Bevy settings too, so area lights export as `RectLight` without one, and a light's shadows follow its **Shadow** checkbox.
+- Importer: shadow settings from Blender's Visibility apply only to the object's own mesh, and Audio Players read an optional playback speed.
 
 ## 0.5.0 (2026-10-24)
 

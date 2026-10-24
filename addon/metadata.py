@@ -258,6 +258,7 @@ def serialize_component(item, locate=_portable):
             "type": "shadows",
             "cast": bool(item.shadows_cast),
             "receive": bool(item.shadows_receive),
+            **({"own_mesh": True} if getattr(item, "shadows_own_mesh", False) else {}),
         }
     if kind == "AUDIO_PLAYER":
         return {
@@ -268,6 +269,7 @@ def serialize_component(item, locate=_portable):
             "autoplay": bool(item.audio_autoplay),
             "spatial": bool(item.audio_spatial),
             "distance": _float32(item.audio_distance),
+            **({"speed": _float32(speed)} if (speed := getattr(item, "audio_speed", 1.0)) != 1.0 else {}),
         }
     if kind == "FOG_VOLUME":
         return {
@@ -476,9 +478,8 @@ def component_errors(item):
                 errors.append("invalid JSON in Custom Component")
     elif item.component_type == "LIGHT":
         light = light_of(getattr(item, "id_data", None))
-        if light is not None and light.type == "SUN" and item.light_use_cascades:
-            if not item.light_cascade_near < item.light_cascade_far or (item.light_cascade_count > 1 and not item.light_cascade_near < item.light_cascade_first < item.light_cascade_far):
-                errors.append("Shadow cascades must satisfy near < first cascade < max distance")
+        if light is not None and light.type == "SUN" and item.light_use_cascades and cascades_invalid(item):
+            errors.append("Shadow cascades must satisfy near < first cascade < max distance")
     elif item.component_type == "COLLIDER":
         if item.collider_shape == "CUBOID" and any(value <= 0 for value in item.collider_size):
             errors.append("collider cuboid dimensions must be positive")
@@ -492,6 +493,10 @@ def component_errors(item):
         if not item.scene_file.strip():
             errors.append("Scene Reference needs a glTF file")
     return errors
+
+
+def cascades_invalid(item):
+    return not item.light_cascade_near < item.light_cascade_far or (item.light_cascade_count > 1 and not item.light_cascade_near < item.light_cascade_first < item.light_cascade_far)
 
 
 def field_errors(fields):

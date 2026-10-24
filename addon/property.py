@@ -3,6 +3,7 @@ from math import radians
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, IntVectorProperty, PointerProperty, StringProperty
 
+from .native import FOG_SETTINGS, LIGHT_SETTINGS, SPEAKER_SETTINGS
 from .prefab import prefab_toggled
 from .system import LAYER_COUNT, component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, overview_index, redraw_viewports, select_overview_object, set_variant, sync_changed, type_path_suggestions, variant_index, variant_items
 
@@ -256,6 +257,33 @@ class BEVY_PG_physics(bpy.types.PropertyGroup):
     joint_swing: FloatProperty(name="Swing Limit", description="Largest angle between the bodies' Z axes, the half angle of the cone", default=radians(45), min=0.0, max=radians(180), subtype="ANGLE", update=sync_changed)
     joint_linear_damping: FloatProperty(name="Damping", description="Slows how fast the bodies move relative to each other", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
     joint_angular_damping: FloatProperty(name="Turn Damping", description="Slows how fast the bodies turn relative to each other, so a door or pendulum settles", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
+
+
+class BEVY_PG_object(bpy.types.PropertyGroup):
+    receive_shadows: BoolProperty(name="Receive Shadows", description="Show shadows cast by other objects on this object in Bevy. Off adds Bevy's NotShadowReceiver to its mesh", default=True, update=sync_changed)
+    autoplay: BoolProperty(name="Autoplay", description="Play the object's active action when the scene loads. The export needs Include Animations", default=False, update=sync_changed)
+    speed: FloatProperty(name="Speed", description="Playback speed, where 1 matches the timing in Blender", default=1.0, min=0.0, soft_max=4.0, update=sync_changed)
+    probe_file: StringProperty(name="File", description="KTX2 file that Bake renders for this light probe and the export embeds in the scene: a cubemap for a sphere, a 3D texture for a volume. A path starting with // is relative to the .blend file", subtype="FILE_PATH", options=PATH_OPTIONS, update=sync_changed)
+    bake_fingerprint: StringProperty(name="Bake Fingerprint", description="What the meshes, lamps and World looked like when Bake rendered the file, so the export checks can tell when it is out of date", options={"HIDDEN"})
+
+
+class BEVY_PG_light(bpy.types.PropertyGroup):
+    __annotations__ = {name: BEVY_PG_component.__annotations__[name] for name in (*LIGHT_SETTINGS, "show_shadows")}
+
+
+class BEVY_PG_speaker(bpy.types.PropertyGroup):
+    __annotations__ = {name: BEVY_PG_component.__annotations__[name] for name in SPEAKER_SETTINGS}
+
+
+class BEVY_PG_fog(bpy.types.PropertyGroup):
+    __annotations__ = {name: BEVY_PG_component.__annotations__[name] for name in FOG_SETTINGS}
+
+
+class BEVY_PG_probe(bpy.types.PropertyGroup):
+    intensity: FloatProperty(name="Intensity", description="Brightness of the reflections. 1 converts Blender's light units at 683 lumens per watt, like the glTF export converts lamps", default=1.0, min=0.0, soft_max=10.0, update=sync_changed)
+    parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the walls of the probe's box, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=sync_changed)
+    falloff: FloatProperty(name="Falloff", description="Share of the volume, from its walls inward, over which its light fades out, so that neighbouring volumes blend", default=0.0, min=0.0, max=1.0, subtype="FACTOR", update=sync_changed)
+    bake_resolution: BEVY_PG_component.__annotations__["bake_resolution"]
 
 
 class BEVY_PG_collision_layers(bpy.types.PropertyGroup):

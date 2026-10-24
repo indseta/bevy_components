@@ -61,12 +61,13 @@ Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the run
 | Component | In Bevy |
 | --- | --- |
 | Blender's Rigid Body and Rigid Body Constraint | Avian bodies, colliders and joints, with a Bevy subpanel in Properties > Physics for sensors, layers and starting velocity |
+| Blender's lights, speakers, light probes, volume boxes and active actions | Bevy lights, `AudioPlayer`, reflection probes, irradiance volumes, `FogVolume` and autoplaying animations, with Bevy settings in each Properties tab |
 | Collider | Avian cuboid, sphere, capsule, cylinder, cone, convex hull or triangle mesh collider, with friction, restitution, collision layers and events |
 | Rigid Body | Avian static, dynamic or kinematic body with mass, damping, locked axes and a starting velocity |
 | Joint | Avian fixed, hinge, slider or ball joint between two bodies |
 | Visibility Range | `VisibilityRange` for levels of detail |
 | Shadows | `NotShadowCaster` and `NotShadowReceiver` |
-| Light | Shadow, volumetric and baked settings for glTF lights, and `RectLight` for area lights |
+| Light | Per-light Bevy settings in place of the light data's |
 | Lightmap, Reflection Probe, Irradiance Volume | Baked lighting, rendered by Cycles in the background |
 | Fog Volume | `FogVolume` |
 | Audio Player | `AudioPlayer` with `PlaybackSettings` |

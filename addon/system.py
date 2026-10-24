@@ -12,12 +12,11 @@ from bpy.app.handlers import persistent
 from mathutils import Matrix
 
 from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
-from .native import NATIVE_KINDS, native_components, physics_components, with_native
+from .native import MESH_TYPES, NATIVE_KINDS, fog_source, native_components, physics_components, with_native
 from .prefab import filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
 from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
 
-MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 LAYER_COUNT = 32
 BEVY_AXES = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
 CLIPBOARD_TYPE = "bevy_components"
@@ -175,8 +174,13 @@ def has_faces(obj):
     return obj.type in MESH_TYPES and (obj.type != "MESH" or len(obj.data.polygons) > 0)
 
 
+def owns_mesh(obj, kind):
+    return getattr(component_of(obj, kind), "shadows_own_mesh", False)
+
+
 def mesh_sources(obj, children, kind, instances=True):
-    return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
+    found = subtree(obj, children, lambda child: component_of(child, kind) is not None and not owns_mesh(child, kind), instances)
+    return [(source, matrix) for source, matrix in found if has_faces(source) and (source == obj or not owns_mesh(source, kind))]
 
 
 def collider_sources(obj, children, item, instances=True):
@@ -456,23 +460,35 @@ def copy_to_object(source, destination, obj):
             setattr(destination, prop, obj)
 
 
+def data_users(data):
+    if isinstance(data, bpy.types.Material):
+        return [obj for obj in bpy.data.objects if any(slot.material == data for slot in obj.material_slots)]
+    return [obj for obj in bpy.data.objects if data is not None and obj.data == data]
+
+
 def sync_changed(self, context):
-    obj = getattr(self, "id_data", None)
-    if isinstance(obj, bpy.types.Object):
+    owner = getattr(self, "id_data", None)
+    for obj in [owner] if isinstance(owner, bpy.types.Object) else data_users(owner):
         sync_object(obj)
-        redraw_viewports()
+    redraw_viewports()
+
+
+def _light_owner(self):
+    owner = getattr(self, "id_data", None)
+    if isinstance(owner, bpy.types.Light):
+        return owner, next(iter(data_users(owner)), None)
+    return light_of(owner), owner
 
 
 def light_intensity_toggled(self, context):
-    obj = getattr(self, "id_data", None)
-    light = light_of(obj)
+    light, obj = _light_owner(self)
     if self.light_use_intensity and light is not None and not self.is_property_set("light_intensity"):
         self.light_intensity = light_intensity(light, obj)
     sync_changed(self, context)
 
 
 def light_bias_toggled(self, context):
-    light = light_of(getattr(self, "id_data", None))
+    light = _light_owner(self)[0]
     if self.light_use_bias and light is not None and light.type in SHADOW_DEFAULTS and not self.is_property_set("light_depth_bias"):
         depth, normal, near = SHADOW_DEFAULTS[light.type]
         self.light_depth_bias = depth
@@ -847,15 +863,6 @@ def save_sync(_scene):
         sync_object(obj)
 
 
-def asset_path(path):
-    path = Path(path)
-    folders = [parent for parent in path.parents if parent.name.lower() == "assets"]
-    if not folders:
-        return path.name, None
-    root = next((folder for folder in folders if (folder.parent / "Cargo.toml").is_file()), folders[0])
-    return path.relative_to(root).as_posix(), root
-
-
 def bevy_view(view_matrix):
     location, rotation, _scale = (BEVY_AXES @ view_matrix.inverted()).decompose()
     return ",".join(f"{value:.6g}" for value in (*location, rotation.x, rotation.y, rotation.z, rotation.w))
@@ -894,9 +901,16 @@ class glTF2ExportUserExtension:
     def gather_node_hook(self, gltf2_node, blender_object, _export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
         _remove_extra(gltf2_node, "bevy_physics")
+        _remove_extra(gltf2_node, "bevy_object")
         _remove_extra(gltf2_node, "bevy_prefab")
+        _light_extras(gltf2_node)
         _native_extras(gltf2_node, blender_object)
         instance_node(gltf2_node, blender_object)
+        if fog_source(blender_object) is not None:
+            gltf2_node.mesh = None
+
+    def gather_material_hook(self, gltf2_material, _blender_material, _export_settings):
+        _remove_extra(gltf2_material, "bevy_fog")
 
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
@@ -934,6 +948,17 @@ def _native_extras(gltf2_node, obj):
         gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)}
     else:
         _remove_extra(gltf2_node, EXTRAS_KEY)
+
+
+def _light_extras(gltf2_node):
+    extension = gltf2_node.extensions.get("KHR_lights_punctual") if isinstance(gltf2_node.extensions, dict) else None
+    light = getattr(extension, "extension", {}).get("light") if extension is not None else None
+    data = getattr(light, "extension", None)
+    extras = data.get("extras") if isinstance(data, dict) else None
+    if isinstance(extras, dict):
+        extras.pop("bevy_light", None)
+        if not extras:
+            data.pop("extras")
 
 
 def _remove_extra(gltf2_element, key):

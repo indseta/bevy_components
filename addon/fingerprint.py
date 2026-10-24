@@ -5,7 +5,8 @@ import bpy
 import numpy
 from mathutils import Vector
 
-from .bake import box_matrix
+from .bake import box_matrix, job_item
+from .native import fog_source
 from .system import component_of, lightmap_uv_map
 
 GEOMETRY_TYPES = {"MESH", "CURVE", "SURFACE", "META", "FONT", "CURVES", "POINTCLOUD", "VOLUME"}
@@ -29,14 +30,14 @@ def bake_record(scene, view_layer, depsgraph, job, cache):
         parts = bake_parts(scene, view_layer, depsgraph, cache, world=bpy.data.worlds.get(job["world"]))
     else:
         obj = scene.objects[job["object"]]
-        parts = bake_parts(scene, view_layer, depsgraph, cache, obj, obj.bevy_component_data.components[job["index"]])
+        parts = bake_parts(scene, view_layer, depsgraph, cache, obj, job_item(obj, job))
     return json.dumps({"file": job["file"], **parts}, separators=(",", ":"))
 
 
 def bake_parts(scene, view_layer, depsgraph, cache, obj=None, item=None, world=None):
     if obj is None:
         return {"world": _id_digest(world, cache)}
-    geometry = [other for other in scene.objects if other.type in GEOMETRY_TYPES and _rendered(other, view_layer)]
+    geometry = [other for other in scene.objects if other.type in GEOMETRY_TYPES and _rendered(other, view_layer) and fog_source(other) is None]
     if item.component_type == "LIGHTMAP":
         bounds, digest = _geometry(obj, depsgraph, cache)
         uv_map = lightmap_uv_map(obj)

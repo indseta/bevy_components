@@ -16,7 +16,8 @@ from mathutils import Matrix
 
 from .metadata import WATTS_TO_LUMENS
 from .probe import FILE_KINDS, ktx2_rgb9e5, ktx2_rgba16f
-from .system import component_of, lightmap_uv_map
+from .native import fog_source, is_native, native_components
+from .system import component_of, components_for, lightmap_uv_map
 
 PACKAGE = "bevy_components_bake"
 PROGRESS_PREFIX = "BEVY_BAKE_PROGRESS"
@@ -47,6 +48,12 @@ RUNNER = "import importlib, sys, types; package = types.ModuleType({package!r});
 def box_matrix(obj, item):
     size_x, size_y, size_z = item.volume_size
     return obj.matrix_world @ Matrix(((size_x, 0, 0, 0), (0, 0, -size_z, 0), (0, size_y, 0, 0), (0, 0, 0, 1)))
+
+
+def job_item(obj, job):
+    if job["index"] >= 0:
+        return obj.bevy_component_data.components[job["index"]]
+    return next(item for item in native_components(obj) if FILE_KINDS.get(item.component_type) == job["kind"])
 
 
 def _file_name(obj, kind, taken):
@@ -86,7 +93,9 @@ def lighting_jobs(objects, folder, only=None, world=None):
     for obj in sorted(objects, key=lambda obj: obj.name):
         if obj.library or not hasattr(obj, "bevy_component_data"):
             continue
-        for index, item in enumerate(obj.bevy_component_data.components):
+        cards = list(enumerate(obj.bevy_component_data.components))
+        natives = [(-1, item) for item in components_for(obj) if is_native(item) and item.component_type in FILE_KINDS]
+        for index, item in cards + natives:
             if not item.enabled or item.component_type not in FILE_KINDS or (item.component_type == "LIGHTMAP" and obj.type != "MESH"):
                 continue
             kind = FILE_KINDS[item.component_type]
@@ -409,7 +418,8 @@ def _render_changes(scene, camera, size, path):
 
 
 def bake_jobs(scene, view_layer, jobs, samples, lamp_direct):
-    with _changed((scene.render, "engine", "CYCLES"), (scene.cycles, "samples", samples)):
+    fog = [(obj, "hide_render", True) for obj in scene.objects if not obj.hide_render and fog_source(obj) is not None]
+    with _changed((scene.render, "engine", "CYCLES"), (scene.cycles, "samples", samples), *fog):
         for job in jobs:
             if job["kind"] == "SKY":
                 data = bake_sky(scene, job)

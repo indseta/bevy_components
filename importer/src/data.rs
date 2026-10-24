@@ -62,6 +62,7 @@ pub enum ExportedComponent {
     Shadows {
         cast: bool,
         receive: bool,
+        own_mesh: Option<bool>,
     },
     AudioPlayer {
         path: String,
@@ -71,6 +72,7 @@ pub enum ExportedComponent {
         autoplay: bool,
         spatial: bool,
         distance: f32,
+        speed: Option<f32>,
     },
     Light(ExportedLight),
     AmbientLight(ExportedAmbientLight),
