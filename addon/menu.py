@@ -1,7 +1,8 @@
 import bpy
 
+from .export import running_export
 from .gltf import CLASSES as GLTF_CLASSES
-from .operator import BEVY_OT_add_component, BEVY_OT_add_constraint, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_convert_to_native, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_physics, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_export, running_game
+from .operator import BEVY_OT_add_component, BEVY_OT_add_constraint, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_convert_to_native, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_physics, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_game
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
 from .schema import short_name
 from .system import TEXT_COMPONENT, accepts, component_index, components_for, game_types, preset_folder, presets, scene_definition

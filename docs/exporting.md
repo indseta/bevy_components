@@ -13,7 +13,13 @@ The export holds the active scene. Under **Include**, **Limit to** can leave out
 
 ## Export Again
 
-After the first export, **Export Again** in **File > Export**, the dropdown next to **Add Component** and **3D Viewport > N > Bevy > Export** writes the same file with the same settings, without the file dialog. `bpy.ops.export_scene.bevy_components_glb(again=True)` does the same from a script. With more than one scene in the file, **Export All Scenes (.glb)** exports every scene that was exported before to its own GLB, with that scene's settings.
+After the first export, **Export Again** in **File > Export**, the dropdown next to **Add Component** and **3D Viewport > N > Bevy > Export** writes the same file with the same settings, without the file dialog. `bpy.ops.export_scene.bevy_components_glb(again=True)` does the same from a script, also from the command line with prefabs and texture compression, as long as the add-on is enabled there:
+
+```sh
+blender -b level.blend --addons bl_ext.user_default.bevy_components --python-expr "import bpy; bpy.ops.export_scene.bevy_components_glb(again=True)"
+```
+
+`user_default` is the repository the add-on was installed into. With more than one scene in the file, **Export All Scenes (.glb)** exports every scene that was exported before to its own GLB, with that scene's settings.
 
 ## Hot reload
 
