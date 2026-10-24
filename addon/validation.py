@@ -13,10 +13,11 @@ from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
 from .property import AUDIO_FORMATS
+from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_order
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, children_map, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
+from .system import MESH_TYPES, asset_path, children_map, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -90,9 +91,10 @@ def problem_count(scene):
 def count_problems(scenes):
     version, _changed = problem_changes()
     changed = False
+    members = prefab_members()
     for scene in scenes:
         settings = export_settings(scene)
-        objects = [obj for obj in scene.objects if exported(obj, settings)]
+        objects = [obj for obj in scene.objects if exported(obj, settings) and obj not in members]
         issues = check_objects(objects, modifiers=settings.apply_modifiers) + (check_scene(objects) if scene == bpy.context.scene else check_world(scene.world))
         errors = sum(1 for issue in issues if issue.level == "ERROR")
         counted = (version, (errors, len(issues) - errors))
@@ -136,8 +138,12 @@ def draw_problem_count(layout, scene):
         row.operator("bevy_components.validate", text=str(warnings), icon="ERROR")
 
 
-def check_objects(objects, destination=None, animations=True, modifiers=True):
+def check_objects(objects, destination=None, animations=True, modifiers=True, prefab_files=True):
     objects = list(objects)
+    return _check_list(objects, destination, animations, modifiers) + _prefab_issues(objects, destination, animations, modifiers, prefab_files)
+
+
+def _check_list(objects, destination, animations, modifiers):
     children = children_map(objects)
     exported = set(objects)
     materials = set()
@@ -149,10 +155,78 @@ def check_objects(objects, destination=None, animations=True, modifiers=True):
     return issues
 
 
-def check_object(obj, objects, modifiers=True):
+def check_object(obj, objects, modifiers=True, prefab_files=True):
     objects = list(objects)
-    return _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers, assets=game_assets(bpy.context)) + _visibility_range_issues(objects, obj)
+    issues = _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers, assets=game_assets(bpy.context)) + _visibility_range_issues(objects, obj)
+    collection = prefab_of(obj)
+    if collection is None:
+        return issues
+    _order, cycles = prefab_order([obj])
+    issues.extend(_cycle_issue(obj, chain) for _instance, chain in cycles[:1])
+    issues.extend(_instance_issues(obj, collection))
+    issues.extend(_prefab_problems(collection, obj, prefab_files))
+    return issues
 
+
+def _cycle_issue(obj, chain):
+    return Issue("ERROR", obj, None, f"Prefab {chain[-1].name} ends up inside itself through {' > '.join(collection.name for collection in chain)}, so it cannot export")
+
+
+def _instance_issues(obj, collection):
+    reference = component_of(obj, "SCENE_REFERENCE")
+    if reference is None:
+        return []
+    return [Issue("ERROR", obj, reference, f"Spawns prefab {collection.name}, so it cannot also spawn a Scene Reference. Move the Scene Reference to a child object")]
+
+
+def _prefab_problems(collection, obj, files):
+    issues = []
+    if not len(collection.all_objects):
+        issues.append(Issue("WARNING", obj, None, f"Prefab {collection.name} has no objects, so its instances spawn nothing"))
+    if files and prefab_file(collection) is None:
+        issues.append(Issue("ERROR", obj, None, f"Prefab {collection.name} has no GLB file. Set one in Properties > Collection > Bevy Prefab"))
+    return issues
+
+
+def _prefab_issues(objects, destination, animations, modifiers, files):
+    order, cycles = prefab_order(objects)
+    issues = [_cycle_issue(instance, chain) for instance, chain in cycles]
+    users = {collection: [(obj, destination) for obj in found] for collection, found in instances(objects).items()}
+    for parent in order:
+        for collection, found in instances(parent.all_objects).items():
+            users.setdefault(collection, []).extend((obj, prefab_file(parent) if files else destination) for obj in found)
+    targets = {}
+    level = Path(os.path.abspath(destination)) if destination is not None else None
+    for collection in order:
+        found = users.get(collection, [])
+        first = found[0][0] if found else None
+        for obj, _referrer in found:
+            issues.extend(_instance_issues(obj, collection))
+        issues.extend(_prefab_problems(collection, first, files))
+        path = prefab_file(collection) if files else None
+        if path is not None and path == level:
+            issues.append(Issue("ERROR", first, None, f"Prefab {collection.name} exports to {path.name}, the scene's own file"))
+        elif path is not None and path in targets:
+            issues.append(Issue("ERROR", first, None, f"Prefabs {targets[path].name} and {collection.name} both export to {path.name}"))
+        elif path is not None:
+            targets[path] = collection
+            issues.extend(_prefab_location(collection, path, first, {referrer for _obj, referrer in found if referrer is not None}))
+        issues.extend(_check_list(list(collection.all_objects), path if files else destination, animations, modifiers))
+    return issues
+
+
+def _prefab_location(collection, path, obj, referrers):
+    issues = []
+    for referrer in sorted(referrers, key=str):
+        try:
+            scene_path(str(path), Path(referrer).parent)
+        except ValueError:
+            return [Issue("ERROR", obj, None, f"Prefab {collection.name} exports to another drive than {Path(referrer).name}, so the game cannot load it")]
+        _relative, root = asset_path(Path(os.path.abspath(referrer)))
+        if root is not None and not inside(path, root):
+            issues.append(Issue("WARNING", obj, None, f"Prefab {collection.name} exports outside the assets folder of {Path(referrer).name}, so the game cannot load it"))
+            break
+    return issues
 
 
 def check_game_paths(objects, destination, assets):

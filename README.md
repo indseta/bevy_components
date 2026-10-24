@@ -73,6 +73,12 @@ Collider sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** s
 
 Dynamic Rigid Bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded. Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
 
+## Prefabs
+
+Tick **Properties > Collection > Bevy Prefab** on a collection and pick its GLB file. Its collection instances then export as a Scene Reference to that file instead of copies of its objects, while the viewport keeps showing the collection. Each scene export writes the prefab's GLB first, but only when the collection's objects, components or transforms or the export settings changed since its last export. The collection's **Instance Offset** is the prefab's origin, and prefabs can hold instances of other prefabs. Keep the prefab collections in another scene or in a collection excluded from the view layer; scene exports leave their objects out either way. An instance's **Components** panel shows the same checkbox and file, since an excluded collection has no Collection tab.
+
+**Export Prefab** in that panel writes just the prefab. Any collection can also export on its own from **Properties > Collection > Exporters > Add > Bevy Scene (.glb)**, which writes the prefabs inside it as well. The BSN export writes each prefab as a `prefab_<name>()` function below `setup()`, with its GLB in the assets folder, and calls it at every instance.
+
 ## Hot reload
 
 Turn on **Export on Save** in the export dialog or under **3D Viewport > N > Bevy > Export**, and every save of the .blend file exports the scene again with the same settings. When that export fails, a message says why and the previous file stays. Enable Bevy's `file_watcher` feature in your game, and it reloads the scene while it runs, with the components rebuilt once:
@@ -85,7 +91,7 @@ A BSN export rewrites its `.rs` file on save as well, but the game only picks th
 
 ## Checks
 
-**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a number its field's Rust type cannot hold, a joint limit whose Min is above its Max, shadow cascade distances out of order, or a light probe file that is missing or that Bevy cannot use, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
+**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a number its field's Rust type cannot hold, a joint limit whose Min is above its Max, shadow cascade distances out of order, or a light probe file that is missing or that Bevy cannot use, or a prefab with no GLB file or one that ends up inside itself, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
 
 - a Triangle Mesh, Convex Hull or Collision Only collider, or a Visibility Range, with no mesh on or under its object
 - a Dynamic Rigid Body with no collider, a Rigid Body inside a moving one, and Triangle Mesh colliders on Dynamic bodies
@@ -97,6 +103,7 @@ A BSN export rewrites its `.rs` file on save as well, but the game only picks th
 - Shadows with no mesh on or under its object, and Navigation with no mesh or collider on or under its object
 - an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
 - a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported scene itself (a file on another drive than the exported scene is an error)
+- a prefab with no objects or a GLB file outside the `assets` folder (two prefabs with one file, a prefab writing the exported scene's own file, or a Scene Reference on a prefab instance is an error)
 - an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
 - a Fog Volume with a density of 0, and a Reflection Probe, Irradiance Volume or Bevy Sky with no file
 - Bevy Ambient Light from the World color next to the Bevy Sky's Environment Light, which light the scene twice
@@ -295,7 +302,7 @@ pip install bpy==4.2.23
 python tests/blender/run.py
 ```
 
-The importer tests load `importer/tests/assets/sample_scene.glb` and its compressed copies `sample_scene_etc1s.glb`, `sample_scene_uastc.glb` and `sample_scene_automatic.glb`, plus the `props/windmill.glb` prop that the sample scene references, and the BSN export of the same scene in `importer/tests/bsn/sample_scene.rs` and `importer/tests/assets/bsn/`, plus a small unanimated BSN scene in `importer/tests/bsn/static_scene.rs` and `importer/tests/assets/bsn_static/`, which `python tests/blender/sample_scene.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The sample scene takes two of its components from `importer/tests/assets/bevy_components_schema.json`, which `BEVY_COMPONENTS_WRITE_SCHEMA=1 cargo test --manifest-path importer/Cargo.toml --test schema` writes from the test crate's types. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
+The importer tests load `importer/tests/assets/sample_scene.glb` and its compressed copies `sample_scene_etc1s.glb`, `sample_scene_uastc.glb` and `sample_scene_automatic.glb`, plus the `props/windmill.glb` prop that the sample scene references and the `props/lamp_post.glb` and `props/lantern.glb` prefabs it writes, and the BSN export of the same scene in `importer/tests/bsn/sample_scene.rs` and `importer/tests/assets/bsn/`, plus a small unanimated BSN scene in `importer/tests/bsn/static_scene.rs` and `importer/tests/assets/bsn_static/`, which `python tests/blender/sample_scene.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The sample scene takes two of its components from `importer/tests/assets/bevy_components_schema.json`, which `BEVY_COMPONENTS_WRITE_SCHEMA=1 cargo test --manifest-path importer/Cargo.toml --test schema` writes from the test crate's types. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
 
 The rendering tests compare compressed and uncompressed scenes on a real GPU and check that light probes and fog show up. They are skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
 

@@ -21,6 +21,8 @@ STATIC_FIXTURE = BSN_FIXTURE.with_name("static_scene.rs")
 STATIC_ASSETS = FIXTURE.parent / "bsn_static"
 STATIC_ROCKS = 260
 PROP = Path("props") / "windmill.glb"
+LAMP_POST = Path("props") / "lamp_post.glb"
+LANTERN = Path("props") / "lantern.glb"
 REPOSITORY = "bevy_components_test"
 RAMP_CENTER = (0, 8, 2)
 RAMP_ANGLE = 30
@@ -87,7 +89,7 @@ def use_game_schema(path=SCHEMA):
 
 def clear_scene():
     use_game_schema(None)
-    for collection in (bpy.data.objects, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups, bpy.data.actions):
+    for collection in (bpy.data.objects, bpy.data.collections, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups, bpy.data.actions):
         for block in list(collection):
             collection.remove(block)
     if hasattr(bpy.context.scene, "bevy_component_definitions"):
@@ -132,6 +134,29 @@ def add_light(name, kind, location, rotation=(0, 0, 0), **values):
     for key, value in values.items():
         setattr(obj.data, key, value)
     return obj
+
+
+def move_to(obj, collection):
+    for owner in list(obj.users_collection):
+        owner.objects.unlink(obj)
+    collection.objects.link(obj)
+    return obj
+
+
+def add_prefab(name, parent, path):
+    collection = bpy.data.collections.new(name)
+    parent.children.link(collection)
+    collection.bevy_prefab.enabled = True
+    collection.bevy_prefab.filepath = str(path)
+    return collection
+
+
+def add_instance(name, collection, location, angle=0):
+    instance = add_empty(name, location)
+    instance.rotation_euler = (0, 0, math.radians(angle))
+    instance.instance_type = "COLLECTION"
+    instance.instance_collection = collection
+    return instance
 
 
 def add_component(obj, kind, type_path="", **values):
@@ -588,6 +613,21 @@ def build_sample_scene(directory=FIXTURE.parent):
         windmill.rotation_euler = (0, 0, math.radians(angle))
         windmill.scale = (scale, scale, scale)
         add_component(windmill, "SCENE_REFERENCE", scene_file=str(Path(directory) / PROP))
+
+    prefabs = bpy.data.collections.new("prefabs")
+    bpy.context.scene.collection.children.link(prefabs)
+    lantern = add_prefab("lantern", prefabs, Path(directory) / LANTERN)
+    glass = move_to(add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "lantern_glass", subdivisions=1, radius=0.25), lantern)
+    add_component(glass, "COLLIDER", collider_shape="SPHERE", collider_radius=0.25, collider_sensor=True)
+    lamp_post = add_prefab("lamp_post", prefabs, Path(directory) / LAMP_POST)
+    lamp_post.instance_offset = (0, 30, 0)
+    pole = move_to(add_mesh(bpy.ops.mesh.primitive_cylinder_add, "lamp_pole", vertices=8, radius=0.08, depth=2.5, location=(0, 30, 1.25)), lamp_post)
+    add_component(pole, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.08, collider_height=2.34)
+    add_component(pole, "RIGID_BODY", rigid_body_kind="STATIC")
+    move_to(add_instance("lamp_head", lantern, (0.3, 30, 2.6)), lamp_post)
+    bpy.context.view_layer.layer_collection.children["prefabs"].exclude = True
+    add_instance("lamp_post_a", lamp_post, (-3, 8, 0))
+    add_instance("lamp_post_b", lamp_post, (3, 8, 0), 90)
 
     fog_bank = add_empty("fog_bank", (-6, 6, 1))
     add_component(fog_bank, "FOG_VOLUME", volume_size=(6, 2, 6), fog_color=(0.8, 0.85, 1.0), fog_density=0.2, fog_anisotropy=0.6, fog_light_intensity=1.5)

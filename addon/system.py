@@ -11,6 +11,7 @@ from bpy.app.handlers import persistent
 from mathutils import Matrix
 
 from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
+from .prefab import filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
 from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
 
@@ -190,7 +191,8 @@ def exported(obj, options):
 
 def exported_objects(context, options, selected=None):
     objects = context.selected_objects if (options.selected_only if selected is None else selected) else context.scene.objects
-    return [obj for obj in objects if exported(obj, options)]
+    members = prefab_members()
+    return [obj for obj in objects if exported(obj, options) and obj not in members]
 
 
 def changes_mesh(obj):
@@ -867,8 +869,13 @@ def image_to_png(data, mime_type):
 
 
 class glTF2ExportUserExtension:
-    def gather_node_hook(self, gltf2_node, _blender_object, _export_settings):
+    def gather_tree_filter_tag_hook(self, vtree, _export_settings):
+        filter_tree(vtree)
+
+    def gather_node_hook(self, gltf2_node, blender_object, _export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
+        _remove_extra(gltf2_node, "bevy_prefab")
+        instance_node(gltf2_node, blender_object)
 
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
@@ -879,6 +886,7 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_bsn_export")
         _remove_extra(gltf2_scene, "bevy_component_overview")
         _remove_extra(gltf2_scene, "bevy_game")
+        prefab_scene(gltf2_scene, blender_scene)
         world = getattr(blender_scene, "world", None)
         components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
         gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}

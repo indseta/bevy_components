@@ -622,13 +622,15 @@ def _first(components, kind):
 
 
 class _Generator:
-    def __init__(self, gltf, glb, name, prefabs, files, crate):
+    def __init__(self, gltf, glb, name, prefabs, files, crate, calls=None, shared=None):
         self.gltf = gltf
         self.glb = glb
         self.name = name
         self.prefabs = prefabs
         self.files = files or {}
         self.crate = crate
+        self.calls = calls or {}
+        shared = shared if shared is not None else {"taken": set(), "chunks": []}
         self.nodes = gltf.get("nodes", [])
         self.meshes = gltf.get("meshes", [])
         self.lights = gltf.get("extensions", {}).get(LIGHTS_EXTENSION, {}).get("lights", [])
@@ -641,7 +643,8 @@ class _Generator:
         self.labels = False
         self.camera_found = False
         self.custom_names = {}
-        self.chunks = []
+        self.taken = shared["taken"]
+        self.chunks = shared["chunks"]
         scenes = gltf.get("scenes", [])
         scene = scenes[gltf.get("scene", 0)] if scenes else {}
         self.scene = scene
@@ -777,7 +780,7 @@ class _Generator:
         self.labels = True
         return f"{self.glb}#{kind}{index}"
 
-    def build(self):
+    def build(self, signature="pub fn setup() -> impl Scene"):
         root_body = ["Transform", "Visibility"]
         scene_components = _decode(self.scene.get("extras"))
         ambient = _first(scene_components, "ambient_light")
@@ -798,23 +801,11 @@ class _Generator:
             root_body.append(f"@preload({_string(self.glb)})")
         setup = [f"#{self.root_ident}", *root_body]
         setup.extend(self._children_lines(children, prefabs))
-        functions = [_function("pub fn setup() -> impl Scene", setup)]
+        functions = [_function(signature, setup)]
         for name, entity, _position, shared in sorted(prefabs.values(), key=lambda value: value[2]):
             lines = [entity.body[0], *(entity.mesh if shared else _settings(entity.mesh)), *entity.body[1:]]
             functions.append(_function(f"pub fn {name}() -> impl Scene", lines + self._children_lines((entity.mesh_parts if shared else []) + entity.parts)))
-        for name, lines in self.chunks:
-            functions.append(_list_function(f"fn {name}() -> impl SceneList", lines))
-        for helper in ("preload", "joint", "animation", "animated_by", "ambient_light", "sky"):
-            if helper in self.helpers:
-                functions.append(HELPER_SOURCES[helper])
-        header = []
-        if self.physics:
-            header.append("use avian3d::prelude::*;")
-        header.append(f"use bevy::{_use_tree(self.symbols)};")
-        if self.importer:
-            names = sorted(self.importer)
-            header.append(f"use {IMPORTER_CRATE}::{names[0]};" if len(names) == 1 else f"use {IMPORTER_CRATE}::{{{', '.join(names)}}};")
-        return stamp("\n".join(header) + "\n\n" + "\n\n".join(functions) + "\n"), self.warnings
+        return functions
 
     def _sky(self, sky):
         path = self.files.get(sky.get("file")) if sky.get("file") else None
@@ -868,6 +859,8 @@ class _Generator:
         return [f"{{{name}()}}"]
 
     def _entity_lines(self, entity, prefabs):
+        if entity.transform is None:
+            return list(entity.body)
         prefab = (prefabs or {}).get(_behavior(entity)) if entity.shareable else None
         if prefab is None:
             return [*entity.head, entity.transform, entity.body[0], *entity.mesh, *entity.body[1:], *self._children_lines(entity.mesh_parts + entity.parts + entity.children, prefabs)]
@@ -886,12 +879,11 @@ class _Generator:
                 continue
             groups.setdefault(behavior, []).append((position, entity))
             position += 1
-        taken = set()
         prefabs = {}
         for signature, members in sorted(groups.items(), key=lambda item: item[1][0][0]):
             if len(members) < 2:
                 continue
-            name = self._unique_prefab([entity for _position, entity in members], taken)
+            name = self._unique_prefab([entity for _position, entity in members], self.taken)
             shared = len({_mesh_signature(entity) for _position, entity in members}) == 1
             prefabs[signature] = (name, members[0][1], members[0][0], shared)
         return prefabs
@@ -962,6 +954,9 @@ class _Generator:
             kind = component["type"]
             if kind == "audio_player":
                 body.extend(self._audio_entries(component))
+            elif kind == "scene_reference" and component.get("prefab") in self.calls:
+                parts.append(_part([], None, [f"@{self.calls[component['prefab']]}()"]))
+                shareable = False
             elif kind == "scene_reference":
                 path = self._reference(index, component.get("path") or "")
                 if path is not None:
@@ -1459,5 +1454,26 @@ def _branch(tree):
     return items[0] if len(items) == 1 else "{" + ", ".join(items) + "}"
 
 
-def scene_source(gltf, glb, name, prefabs=True, files=None, crate=None):
-    return _Generator(gltf, glb, name, prefabs, files, crate).build()
+def scene_source(gltf, glb, name, prefabs=True, files=None, crate=None, scenes=(), calls=None):
+    shared = {"taken": set((calls or {}).values()), "chunks": []}
+    generator = _Generator(gltf, glb, name, prefabs, files, crate, calls, shared)
+    generators = [generator]
+    functions = generator.build()
+    for function, scene_gltf, scene_glb, scene_name in scenes:
+        generator = _Generator(scene_gltf, scene_glb, scene_name, prefabs, files, crate, calls, shared)
+        functions.extend(generator.build(f"pub fn {function}() -> impl Scene"))
+        generators.append(generator)
+    for chunk, lines in shared["chunks"]:
+        functions.append(_list_function(f"fn {chunk}() -> impl SceneList", lines))
+    helpers = set().union(*(generator.helpers for generator in generators))
+    for helper in ("preload", "joint", "animation", "animated_by", "ambient_light", "sky"):
+        if helper in helpers:
+            functions.append(HELPER_SOURCES[helper])
+    header = []
+    if any(generator.physics for generator in generators):
+        header.append("use avian3d::prelude::*;")
+    header.append(f"use bevy::{_use_tree(set().union(*(generator.symbols for generator in generators)))};")
+    importer = sorted(set().union(*(generator.importer for generator in generators)))
+    if importer:
+        header.append(f"use {IMPORTER_CRATE}::{importer[0]};" if len(importer) == 1 else f"use {IMPORTER_CRATE}::{{{', '.join(importer)}}};")
+    return stamp("\n".join(header) + "\n\n" + "\n\n".join(functions) + "\n"), [warning for generator in generators for warning in generator.warnings]

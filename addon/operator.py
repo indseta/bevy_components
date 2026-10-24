@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import bpy
 from bpy.app.handlers import persistent
@@ -16,6 +17,7 @@ from .fingerprint import bake_record
 from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command, needs_scene
+from .prefab import collection_export, find_collection, prefab_file, prefab_fingerprint, prefab_fresh, prefab_order, prefab_settings, remember_prefab, scene_export
 from .preferences import draw_encoder_status, encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .project import game_assets, game_folder, play_target
@@ -1061,14 +1063,15 @@ class BEVY_OT_cancel_export(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _draw_include(operator, layout):
+def _draw_include(operator, layout, limits=True):
     header, body = layout.panel("BEVY_export_include")
     header.label(text="Include")
     if body:
-        column = body.column(heading="Limit to")
-        column.prop(operator, "selected_only", text="Selected Objects")
-        column.prop(operator, "visible_only", text="Visible Objects")
-        column.prop(operator, "renderable_only", text="Renderable Objects")
+        if limits:
+            column = body.column(heading="Limit to")
+            column.prop(operator, "selected_only", text="Selected Objects")
+            column.prop(operator, "visible_only", text="Visible Objects")
+            column.prop(operator, "renderable_only", text="Renderable Objects")
         column = body.column(heading="Data")
         column.prop(operator, "include_lights", text="Lights")
         column.prop(operator, "include_cameras", text="Cameras")
@@ -1077,7 +1080,7 @@ def _draw_include(operator, layout):
 
 
 def _export_key(operator):
-    return (operator.filepath, operator.selected_only, operator.visible_only, operator.renderable_only, operator.include_animations, operator.apply_modifiers)
+    return (operator.filepath, operator.collection, operator.selected_only, operator.visible_only, operator.renderable_only, operator.include_animations, operator.apply_modifiers)
 
 
 def _draw_compression(operator, layout, context):
@@ -1101,7 +1104,10 @@ def _draw_checks(operator, layout, context, key, find):
     checks = getattr(operator, "_checks", None)
     if checks is None or checks[0] != key:
         checks = (key, find())
-        operator._checks = checks
+        try:
+            operator._checks = checks
+        except AttributeError:
+            pass
     issues = checks[1]
     header, body = layout.panel("BEVY_export_checks")
     header.label(text="Checks")
@@ -1114,8 +1120,20 @@ def _draw_checks(operator, layout, context, key, find):
             body.label(text="No problems found", icon="CHECKMARK")
 
 
-def _exported_objects(operator, context):
-    return exported_objects(context, operator)
+def _drawn_collection(operator, context):
+    if operator.collection:
+        return find_collection(operator.collection)
+    if getattr(context.space_data, "type", None) == "PROPERTIES":
+        return getattr(context, "collection", None)
+    return None
+
+
+def _exported_objects(operator, context, collection=None):
+    return list(collection.all_objects) if collection is not None else exported_objects(context, operator)
+
+
+def _prefab_members(objects):
+    return [obj for collection in prefab_order(objects)[0] for obj in collection.all_objects]
 
 
 def _bsn_paths(operator):
@@ -1135,9 +1153,9 @@ def _glb_issues(operator, objects):
 def _bsn_issues(operator, objects):
     rust_file, folder, glb = _bsn_paths(operator)
     objects = list(objects)
-    issues = check_objects(objects, destination=glb, animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_scene(objects)
+    issues = check_objects(objects, destination=glb, animations=operator.include_animations, modifiers=operator.apply_modifiers, prefab_files=False) + check_scene(objects)
     if glb is not None:
-        issues = check_rust_file(rust_file, getattr(operator, "again", False)) + issues + check_bsn(objects, asset_root(folder))
+        issues = check_rust_file(rust_file, getattr(operator, "again", False)) + issues + check_bsn(objects + _prefab_members(objects), asset_root(folder))
     return issues
 
 
@@ -1171,6 +1189,7 @@ def _blend_relative(path):
 
 class _SceneExport(ExportHelper, ExportOptions):
     again: BoolProperty(name="Export Again", description="Export to the file the last export wrote, with the settings it used, without the file dialog", default=False, options={"HIDDEN", "SKIP_SAVE"})
+    collection: StringProperty(name="Collection", description="Collection to export instead of the scene, as Collection Properties > Exporters does", options={"HIDDEN", "SKIP_SAVE"})
 
     _interactive = False
     _directory = None
@@ -1178,6 +1197,10 @@ class _SceneExport(ExportHelper, ExportOptions):
     _task = None
     _shown = None
     _issues = ()
+    _collection = None
+    _prefabs = ()
+    _own = None
+    _fresh_prefabs = True
 
     @classmethod
     def poll(cls, context):
@@ -1188,6 +1211,8 @@ class _SceneExport(ExportHelper, ExportOptions):
 
     @classmethod
     def description(cls, context, properties):
+        if properties.collection:
+            return f"Export {properties.collection} to {Path(properties.filepath).name or 'its file'}, with the prefabs inside it, using the scene's export settings"
         if not properties.again:
             return cls.bl_description
         path = cls.remembered(context.scene)
@@ -1201,7 +1226,7 @@ class _SceneExport(ExportHelper, ExportOptions):
 
     def invoke(self, context, event):
         self._interactive = True
-        if self.again:
+        if self.again or self.collection:
             return self.execute(context)
         if self.remembered(context.scene) and not self.properties.is_property_set("filepath"):
             self._recall(getattr(context.scene, self._settings))
@@ -1213,7 +1238,11 @@ class _SceneExport(ExportHelper, ExportOptions):
         if not hasattr(bpy.ops.export_scene, "gltf"):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
             return {"CANCELLED"}
-        if self.again:
+        self._collection = find_collection(self.collection) if self.collection else None
+        if self.collection and self._collection is None:
+            self.report({"ERROR"}, f"No collection named {self.collection}")
+            return {"CANCELLED"}
+        if self.again and self._collection is None:
             if not self.remembered(context.scene):
                 self.report({"ERROR"}, f"Nothing to export again yet, export the scene once with File > Export > {self.bl_label}")
                 return {"CANCELLED"}
@@ -1221,8 +1250,10 @@ class _SceneExport(ExportHelper, ExportOptions):
         if not self.filepath.strip():
             self.report({"ERROR"}, "Pick a file to export the scene to")
             return {"CANCELLED"}
-        self._remember(getattr(context.scene, self._settings))
-        objects = _exported_objects(self, context)
+        self.filepath = str(_export_path(self.filepath))
+        if self._collection is None:
+            self._remember(getattr(context.scene, self._settings))
+        objects = _exported_objects(self, context, self._collection)
         destination = self._destination()
         issues = self._check(objects)
         errors = [issue for issue in issues if issue.level == "ERROR"]
@@ -1237,9 +1268,19 @@ class _SceneExport(ExportHelper, ExportOptions):
             except EncoderError as error:
                 self.report({"ERROR"}, f"{error}. {HINT}")
                 return {"CANCELLED"}
+        own = self._collection is not None and self._collection.bevy_prefab.enabled and prefab_file(self._collection) == destination
+        self._own = prefab_fingerprint(self._collection, prefab_settings(self), context.scene) if own else None
+        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
+        try:
+            self._prefabs = self._export_prefabs(context, objects)
+        except OSError as error:
+            self.report({"ERROR"}, self._read_error.format(name=Path(error.filename or "").name or "a probe file", reason=error.strerror))
+            self._prefabs = None
+        if self._prefabs is None or (encoder is None and not self._write_prefabs()):
+            self._release()
+            return {"CANCELLED"}
         for obj in objects:
             sync_object(obj, destination.parent if destination else None)
-        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
         result = self._export_direct() if encoder is None and self._direct(objects) else self._export_scene(context, encoder)
         if "RUNNING_MODAL" not in result:
             self._release()
@@ -1282,16 +1323,53 @@ class _SceneExport(ExportHelper, ExportOptions):
         for name in EXPORT_OPTIONS:
             setattr(settings, name, getattr(self, name))
 
-    def _export_gltf(self, path):
+    def _export_gltf(self, path, collection=None, directory=None):
+        limited = collection is None
         try:
-            return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_active_scene=True, use_selection=self.selected_only, use_visible=self.visible_only, use_renderable=self.renderable_only, export_apply=self.apply_modifiers, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
+            with collection_export(collection, bpy.context.scene, directory) if collection is not None else scene_export(directory):
+                return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_active_scene=True, use_selection=limited and self.selected_only, use_visible=limited and self.visible_only, use_renderable=limited and self.renderable_only, export_apply=self.apply_modifiers, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
         except Exception as error:
             self.report({"ERROR"}, f"GLB export failed: {error}")
             return {"CANCELLED"}
 
+    def _export_level(self, path):
+        destination = self._destination()
+        return self._export_gltf(path, self._collection, destination.parent if destination else None)
+
+    def _export_prefabs(self, context, objects):
+        settings = prefab_settings(self)
+        outputs = []
+        for collection in prefab_order(objects)[0]:
+            target = self._prefab_target(collection)
+            fingerprint = prefab_fingerprint(collection, settings, context.scene) if self._fresh_prefabs else None
+            if fingerprint is not None and prefab_fresh(collection, target, fingerprint):
+                continue
+            for obj in collection.all_objects:
+                sync_object(obj, target.parent)
+            path = Path(self._directory.name) / f"prefab_{len(outputs)}.glb"
+            result = self._export_gltf(path, collection, target.parent)
+            if "FINISHED" not in result:
+                return None
+            gltf, binary = self._prepare_prefab(*read_glb(path.read_bytes()))
+            outputs.append(SimpleNamespace(collection=collection, target=target, fingerprint=fingerprint, gltf=gltf, binary=binary, jobs=[], written=False))
+        return outputs
+
+    def _prepare_prefab(self, gltf, binary):
+        return self._prepare(gltf, binary)
+
+    def _write_prefabs(self):
+        return True
+
+    def _remember_own(self):
+        if self._own is not None:
+            remember_prefab(self._collection, _export_path(self.filepath), self._own)
+
+    def _prefab_note(self):
+        return f" and {count(len(self._prefabs), 'prefab')}" if self._prefabs else ""
+
     def _export_direct(self):
         path = Path(self._directory.name) / "scene.glb"
-        result = self._export_gltf(path)
+        result = self._export_level(path)
         if "FINISHED" not in result:
             return result
         output = Path(self.filepath)
@@ -1300,13 +1378,14 @@ class _SceneExport(ExportHelper, ExportOptions):
         except OSError as error:
             self.report({"ERROR"}, f"Could not write {output}: {error}")
             return {"CANCELLED"}
-        self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}")
+        self._remember_own()
+        self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}{self._prefab_note()}")
         self._report_warnings()
         return {"FINISHED"}
 
     def _export_scene(self, context, encoder):
         path = Path(self._directory.name) / "scene.glb"
-        result = self._export_gltf(path)
+        result = self._export_level(path)
         if "FINISHED" not in result:
             return result
         try:
@@ -1319,9 +1398,12 @@ class _SceneExport(ExportHelper, ExportOptions):
             return self._finish([])
         try:
             jobs = plan_textures(gltf, binary, self.texture_compression, convert=image_to_png)
+            for prefab in self._prefabs:
+                prefab.jobs = plan_textures(prefab.gltf, prefab.binary, self.texture_compression, convert=image_to_png)
         except ValueError as error:
             return self._failed(error)
         self._scene = (gltf, binary, jobs)
+        jobs = [job for prefab in self._prefabs for job in prefab.jobs] + jobs
         settings = {
             "etc1s_quality": self.etc1s_quality,
             "etc1s_effort": self.etc1s_effort,
@@ -1357,6 +1439,7 @@ class _SceneExport(ExportHelper, ExportOptions):
         self._directory = None
         self._scene = None
         self._task = None
+        self._prefabs = ()
 
     def _report_warnings(self):
         for issue in self._issues:
@@ -1370,20 +1453,27 @@ class _SceneExport(ExportHelper, ExportOptions):
 
     def _finish(self, encoded):
         gltf, binary, jobs = self._scene
-        for job, data in zip(jobs, encoded):
+        everything = [job for prefab in self._prefabs for job in prefab.jobs] + list(jobs)
+        for job, data in zip(everything, encoded):
             problem = check_encoded(job, data)
             if problem:
                 return self._failed(problem)
-        before = sum(len(data) for data in {job.image: job.data for job in jobs}.values())
-        gltf, binary = embed_textures(gltf, binary, jobs, encoded)
+        before = sum(len(data) for data in {job.image: job.data for job in jobs}.values()) + sum(len(data) for prefab in self._prefabs for data in {job.image: job.data for job in prefab.jobs}.values())
+        start = 0
+        for prefab in self._prefabs:
+            prefab.gltf, prefab.binary = embed_textures(prefab.gltf, prefab.binary, prefab.jobs, encoded[start:start + len(prefab.jobs)])
+            start += len(prefab.jobs)
+        gltf, binary = embed_textures(gltf, binary, jobs, encoded[start:])
+        if not self._write_prefabs():
+            return {"CANCELLED"}
         summary = self._write(gltf, binary)
         if summary is None:
             return {"CANCELLED"}
-        resized = sorted({job.name for job in jobs if job.resized})
+        resized = sorted({job.name for job in everything if job.resized})
         if resized:
             self.report({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need")
-        if jobs:
-            self.report({"INFO"}, f"Exported Bevy scene with {len(jobs)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {summary}")
+        if everything:
+            self.report({"INFO"}, f"Exported Bevy scene with {len(everything)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {summary}")
         else:
             self.report({"INFO"}, f"Exported Bevy scene: {summary}")
         self._report_warnings()
@@ -1406,13 +1496,31 @@ class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
         layout = self.layout
         layout.use_property_split = True
         layout.use_property_decorate = False
-        layout.prop(self, "export_on_save")
-        _draw_include(self, layout)
+        collection = _drawn_collection(self, context)
+        if collection is None:
+            layout.prop(self, "export_on_save")
+        _draw_include(self, layout, collection is None)
         _draw_compression(self, layout, context)
-        _draw_checks(self, layout, context, _export_key(self), lambda: _glb_issues(self, _exported_objects(self, context)))
+        _draw_checks(self, layout, context, (*_export_key(self), collection), lambda: _glb_issues(self, _exported_objects(self, context, collection)))
 
     def _destination(self):
         return _export_path(self.filepath)
+
+    def _prefab_target(self, collection):
+        return prefab_file(collection)
+
+    def _write_prefabs(self):
+        for prefab in self._prefabs:
+            if prefab.written:
+                continue
+            try:
+                write_if_changed(prefab.target, write_glb(prefab.gltf, prefab.binary))
+            except OSError as error:
+                self.report({"ERROR"}, f"Could not write {prefab.target}: {error}")
+                return False
+            remember_prefab(prefab.collection, prefab.target, prefab.fingerprint)
+            prefab.written = True
+        return True
 
     def _check(self, objects):
         return _glb_issues(self, objects)
@@ -1430,7 +1538,8 @@ class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
         except OSError as error:
             self.report({"ERROR"}, f"Could not write {output}: {error}")
             return None
-        return self.filepath
+        self._remember_own()
+        return f"{self.filepath}{self._prefab_note()}"
 
 
 class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
@@ -1447,8 +1556,11 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
     _read_error = "Could not copy {name} into the assets folder: {reason}"
     _settings = "bevy_bsn_export"
     _target = "rust_file"
+    _fresh_prefabs = False
     _files = None
     _copies = ()
+    _taken = None
+    _functions = None
 
     def draw(self, context):
         layout = self.layout
@@ -1496,25 +1608,43 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
     def _direct(self, objects):
         return False
 
-    def _prepare(self, gltf, binary):
-        _rust_file, folder, glb = _bsn_paths(self)
-        root = asset_root(folder)
+    def _export_prefabs(self, context, objects):
         self._files = {}
         self._copies = []
-        taken = {glb.name}
+        self._taken = {_bsn_paths(self)[2].name.lower()}
+        self._functions = {}
+        return _SceneExport._export_prefabs(self, context, objects)
+
+    def _prefab_target(self, collection):
+        base = snake_case(collection.name) or "prefab"
+        self._functions[collection.name_full] = _unique(f"prefab_{base}", set(self._functions.values()), "_")
+        name = _unique(base, {Path(taken).stem for taken in self._taken}, "_")
+        self._taken.add(f"{name}.glb")
+        return _bsn_paths(self)[1] / f"{name}.glb"
+
+    def _prepare(self, gltf, binary):
+        self._collect(gltf)
+        self._copies = [(target, source.read_bytes()) for target, source in self._copies]
+        return gltf, binary
+
+    def _prepare_prefab(self, gltf, binary):
+        self._collect(gltf)
+        return gltf, binary
+
+    def _collect(self, gltf):
+        _rust_file, folder, glb = _bsn_paths(self)
+        root = asset_root(folder)
         for holder in (*gltf.get("nodes", []), *gltf.get("scenes", [])):
             for component in node_components(holder):
-                if component.get("type") == "scene_reference":
+                if component.get("type") == "scene_reference" and component.get("prefab") not in self._functions:
                     raw = component.get("path") or ""
                     source = Path(os.path.normpath(glb.parent / raw))
                     if raw and not inside(source, root) and source.is_file():
-                        self._files[raw] = self._place(source, folder, root, taken)
+                        self._files[raw] = self._place(source, folder, root, self._taken)
                 elif component.get("file"):
                     raw = component["file"]
                     source = Path(os.path.abspath(bpy.path.abspath(raw)))
-                    self._files[raw] = load_path(source, root) if inside(source, root) else self._place(source, folder, root, taken)
-        self._copies = [(target, source.read_bytes()) for target, source in self._copies]
-        return gltf, binary
+                    self._files[raw] = load_path(source, root) if inside(source, root) else self._place(source, folder, root, self._taken)
 
     def _place(self, source, folder, root, taken):
         for target, copied in self._copies:
@@ -1533,14 +1663,18 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
     def _write(self, gltf, binary):
         rust_file, folder, glb = _bsn_paths(self)
         root = asset_root(folder)
+        scenes = [(self._functions[prefab.collection.name_full], prefab.gltf, load_path(prefab.target, root), prefab.collection.name) for prefab in self._prefabs]
         try:
-            source, warnings = scene_source(gltf, load_path(glb, root), rust_file.stem, prefabs=self.prefab_functions, files=self._files, crate=module_crate(rust_file))
+            source, warnings = scene_source(gltf, load_path(glb, root), rust_file.stem, prefabs=self.prefab_functions, files=self._files, crate=module_crate(rust_file), scenes=scenes, calls=self._functions)
         except BsnError as error:
             self.report({"ERROR"}, f"Cannot write the scene: {error}")
             return None
-        strip_components(gltf)
-        drop_scenes(gltf)
-        assets = [(glb, write_glb(gltf, binary)), *self._copies]
+        assets = []
+        for target, scene_gltf, scene_binary in [(glb, gltf, binary), *((prefab.target, prefab.gltf, prefab.binary) for prefab in self._prefabs)]:
+            strip_components(scene_gltf)
+            drop_scenes(scene_gltf)
+            assets.append((target, write_glb(scene_gltf, scene_binary)))
+        assets.extend(self._copies)
         written = 0
         try:
             for target, data in assets:
@@ -1554,7 +1688,7 @@ class BEVY_OT_export_bsn(bpy.types.Operator, _SceneExport):
             print("Bevy Components:", warning)
         if warnings:
             self.report({"WARNING"}, f"{count(len(warnings), 'part')} of the scene left out of the BSN file: {warnings[0]}")
-        files = 2 + len(self._copies)
+        files = 2 + len(self._copies) + len(self._prefabs)
         stale = f", removed {count(len(removed), 'old file')}" if removed else ""
         return f"{rust_file} ({count(written, 'file')} of {files} changed{stale})"
 
@@ -1616,6 +1750,17 @@ class BEVY_OT_export_all_scenes(bpy.types.Operator):
             return {"CANCELLED"}
         self.report({"WARNING"} if skipped else {"INFO"}, f"Exported {count(len(exported), 'scene')}: {', '.join(exported)}{note}")
         return {"FINISHED"}
+
+
+class BEVY_FH_glb(bpy.types.FileHandler):
+    bl_idname = "BEVY_FH_glb"
+    bl_label = "Bevy Scene (.glb)"
+    bl_export_operator = BEVY_OT_export_glb.bl_idname
+    bl_file_extensions = ".glb"
+
+    @classmethod
+    def poll_drop(cls, context):
+        return False
 
 
 @persistent

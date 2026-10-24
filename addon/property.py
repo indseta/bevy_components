@@ -3,6 +3,7 @@ from math import radians
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, IntVectorProperty, PointerProperty, StringProperty
 
+from .prefab import prefab_toggled
 from .system import LAYER_COUNT, component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, overview_index, redraw_viewports, select_overview_object, set_variant, sync_changed, type_path_suggestions, variant_index, variant_items
 
 COMPONENT_TYPES = [
@@ -306,6 +307,12 @@ class BEVY_PG_bsn_export(bpy.types.PropertyGroup, ExportOptions):
 class BEVY_PG_overview(bpy.types.PropertyGroup):
     filter: EnumProperty(name="Show", description="Component type the overview lists objects for", items=COMPONENT_FILTERS, default="ALL")
     active: IntProperty(name="Object", description="Click an object to select it", get=overview_index, set=select_overview_object)
+
+
+class BEVY_PG_prefab(bpy.types.PropertyGroup):
+    enabled: BoolProperty(name="Bevy Prefab", description="Export the collection to its own GLB file, and its collection instances as Scene References to that file", default=False, update=prefab_toggled)
+    filepath: StringProperty(name="GLB File", description="GLB file that the collection exports to. Keep it in your game's assets folder, like the scenes that use it", subtype="FILE_PATH", options=PATH_OPTIONS)
+    exported: StringProperty(name="Last Export", description="Fingerprint of the collection at its last export, so scene exports skip it while it is unchanged", options={"HIDDEN"})
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):

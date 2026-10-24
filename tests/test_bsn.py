@@ -254,6 +254,26 @@ class TestScene(unittest.TestCase):
         self.assertEqual(text.count("WorldAssetRoot("), 2)
         self.assertEqual(warnings, ["far: ../../outside.glb is outside the assets folder, so it is left out"])
 
+    def test_collection_prefabs_call_their_functions(self):
+        post = {"type": "scene_reference", "path": "props/lamp_post.glb", "scene": 0, "prefab": "lamp post"}
+        level = scene(node("post_a", [post], translation=[1, 0, 0]), node("post_b", [post], translation=[2, 0, 0]), node("other", [{**post, "prefab": "unknown"}]), meshes=0)
+        lamp = scene(node("pole", BODY, mesh=0), node("head", [{"type": "scene_reference", "path": "lantern.glb", "scene": 0, "prefab": "lantern"}]))
+        lantern = scene(node("bulb", mesh=0))
+        prefabs = [("prefab_lantern", lantern, "scenes/lantern.glb", "lantern"), ("prefab_lamp_post", lamp, "scenes/lamp_post.glb", "lamp post")]
+        text, warnings = source(level, scenes=prefabs, calls={"lamp post": "prefab_lamp_post", "lantern": "prefab_lantern"})
+        self.assertEqual(warnings, [])
+        setup = function(text, "setup")
+        self.assertEqual(setup.count("@prefab_lamp_post()"), 2)
+        self.assertNotIn("@object_", setup)
+        self.assertEqual(text.count("WorldAssetRoot("), 1)
+        self.assertIn('WorldAssetRoot("scenes/props/lamp_post.glb#Scene0")', setup)
+        lamp_post = function(text, "prefab_lamp_post")
+        self.assertIn('#lamp_post\n        Transform\n        Visibility\n        @preload("scenes/lamp_post.glb")', lamp_post)
+        self.assertIn("@prefab_lantern()", lamp_post)
+        self.assertIn("RigidBody::Dynamic", lamp_post)
+        self.assertIn('Mesh3d("scenes/lantern.glb#Mesh0/Primitive0")', function(text, "prefab_lantern"))
+        self.assertEqual((text.count("use avian3d::prelude::*;"), text.count("fn preload(")), (1, 1))
+
     def test_probe_files_come_from_the_file_map(self):
         probe = {"type": "reflection_probe", "file": "//probes/room.ktx2", "intensity": 500.0}
         text, warnings = source(scene(node("room", [probe]), meshes=0), files={"//probes/room.ktx2": "scenes/room.ktx2"})

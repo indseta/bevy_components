@@ -6,7 +6,7 @@ use bevy_components_importer::{BlenderCustomComponents, BlenderSceneReady, Blend
 use common::*;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::{f32::consts::{FRAC_PI_2, FRAC_PI_4}, fmt, fs, sync::{Arc, Mutex}, thread, time::Duration};
+use std::{f32::consts::{FRAC_PI_2, FRAC_PI_4}, fmt, fs, mem, sync::{Arc, Mutex}, thread, time::Duration};
 
 #[derive(Deserialize, Debug, PartialEq)]
 struct Pickup {
@@ -195,6 +195,10 @@ fn windmill_ready() -> ReadyScene {
     return ReadyScene { path: "props/windmill.glb#Scene0".to_string(), dynamic_crate: false, lightmapped_collider: false, hinge: false, windmill_towers: 1 };
 }
 
+fn prefab_ready(name: &str) -> ReadyScene {
+    return ReadyScene { path: format!("props/{name}.glb#Scene0"), dynamic_crate: false, lightmapped_collider: false, hinge: false, windmill_towers: 0 };
+}
+
 fn warnings_while(run: impl FnOnce()) -> Vec<String> {
     let warnings = Warnings::default();
     tracing::subscriber::with_default(Registry::default().with(warnings.clone()), run);
@@ -308,7 +312,7 @@ fn sensors_are_marked() {
         assert!(world.get::<Sensor>(node).is_some(), "{name}");
     }
     let mut sensors = world.query_filtered::<Entity, With<Sensor>>();
-    assert_eq!(sensors.iter(world).count(), 2);
+    assert_eq!(sensors.iter(world).count(), 2 + nodes(world, "lantern_glass").len());
 }
 
 #[test]
@@ -427,7 +431,10 @@ fn scene_ready_waits_for_imported_components_and_references() {
     app.init_resource::<ReadyScenes>();
     app.add_observer(record_ready_scene);
     spawn_scene(&mut app, SCENE).unwrap_or_else(|error| panic!("{SCENE} did not load: {error}"));
-    assert_eq!(app.world().resource::<ReadyScenes>().0, vec![windmill_ready(), windmill_ready(), sample_scene_ready()]);
+    let mut ready = mem::take(&mut app.world_mut().resource_mut::<ReadyScenes>().0);
+    assert_eq!(ready.pop(), Some(sample_scene_ready()));
+    ready.sort_by(|first, second| first.path.cmp(&second.path));
+    assert_eq!(ready, vec![prefab_ready("lamp_post"), prefab_ready("lamp_post"), prefab_ready("lantern"), prefab_ready("lantern"), windmill_ready(), windmill_ready()]);
 }
 
 #[test]
@@ -534,7 +541,7 @@ fn only_component_data_is_exported() {
         assert_eq!(value.as_object().map(|object| object.keys().cloned().collect::<Vec<_>>()), Some(vec!["bevy_components".to_string()]), "{name}");
         count += 1;
     }
-    assert_eq!(count, 59);
+    assert_eq!(count, 67);
 }
 
 #[test]
@@ -719,7 +726,7 @@ fn collision_events_are_enabled_where_exported() {
         assert!(world.get::<CollisionEventsEnabled>(node).is_some(), "{name}");
     }
     let mut enabled = world.query_filtered::<Entity, With<CollisionEventsEnabled>>();
-    assert_eq!(enabled.iter(world).count(), 3);
+    assert_eq!(enabled.iter(world).count(), 3 + nodes(world, "lantern_glass").len());
 }
 
 #[test]
@@ -1172,7 +1179,9 @@ fn reloaded_scenes_rebuild_their_components_once() {
     let directory = std::env::temp_dir().join(format!("bevy_components_reload_{}", std::process::id()));
     fs::create_dir_all(directory.join("props")).expect("temporary directory");
     fs::copy(format!("{ASSETS}/{SCENE}"), directory.join(SCENE)).expect("scene copy");
-    fs::copy(format!("{ASSETS}/props/windmill.glb"), directory.join("props/windmill.glb")).expect("prop copy");
+    for prop in ["windmill.glb", "lamp_post.glb", "lantern.glb"] {
+        fs::copy(format!("{ASSETS}/props/{prop}"), directory.join("props").join(prop)).expect("prop copy");
+    }
     let mut app = SceneApp { assets: directory.to_string_lossy().to_string(), watch: true, ..default() }.build();
     spawn_scene(&mut app, SCENE).expect("the copied scene loads");
     let before = scene_counts(app.world_mut());
@@ -1185,7 +1194,7 @@ fn reloaded_scenes_rebuild_their_components_once() {
     for _ in 0..1000 {
         app.update();
         let friction = colliders(app.world_mut(), "crate").first().and_then(|collider| app.world().get::<Friction>(*collider).copied());
-        if friction == Some(Friction::new(0.3)) && app.world().resource::<ReadyInstances>().0 >= ready + 3 {
+        if friction == Some(Friction::new(0.3)) && app.world().resource::<ReadyInstances>().0 >= 2 * ready {
             reloaded = true;
             break;
         }
@@ -1332,6 +1341,29 @@ fn scene_references_spawn_their_scenes() {
         instance_node(world, name, "windmill_blades");
     }
     assert_eq!(nodes(world, "windmill_tower").len(), 2);
+}
+
+#[test]
+fn prefab_instances_spawn_their_collections() {
+    let mut app = load_scene(SCENE);
+    let world = app.world_mut();
+    for (name, pole, glass) in [("lamp_post_a", Vec3::new(-3.0, 1.25, -8.0), Vec3::new(-2.7, 2.6, -8.0)), ("lamp_post_b", Vec3::new(3.0, 1.25, -8.0), Vec3::new(3.0, 2.6, -8.3))] {
+        let root = node(world, name);
+        assert_eq!(world.get::<WorldAssetRoot>(root).and_then(|root| root.0.path()).map(|path| path.to_string()).as_deref(), Some("props/lamp_post.glb#Scene0"), "{name}");
+        let head = instance_node(world, name, "lamp_head");
+        assert_eq!(world.get::<WorldAssetRoot>(head).and_then(|root| root.0.path()).map(|path| path.to_string()).as_deref(), Some("props/lantern.glb#Scene0"), "{name}");
+        for (part, expected) in [("lamp_pole", pole), ("lantern_glass", glass)] {
+            let entity = instance_node(world, name, part);
+            let found = world.get::<GlobalTransform>(entity).map(|transform| transform.translation()).expect("prefab parts have a global transform");
+            assert!(found.distance(expected) < 1e-4, "{name} {part} is at {found}");
+        }
+        let pole = instance_node(world, name, "lamp_pole");
+        assert!(world.get::<Collider>(pole).and_then(|collider| collider.shape().as_capsule()).is_some(), "{name}");
+        assert_eq!(world.get::<RigidBody>(pole), Some(&RigidBody::Static), "{name}");
+        let glass = instance_node(world, name, "lantern_glass");
+        assert!(world.get::<Collider>(glass).and_then(|collider| collider.shape().as_ball()).is_some() && world.get::<Sensor>(glass).is_some(), "{name}");
+    }
+    assert_eq!((nodes(world, "lamp_pole").len(), nodes(world, "lantern_glass").len()), (2, 2));
 }
 
 #[test]

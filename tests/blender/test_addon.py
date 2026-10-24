@@ -20,7 +20,7 @@ import gpu
 import numpy
 from mathutils import Matrix, Quaternion, Vector
 
-from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, STATIC_ASSETS, STATIC_FIXTURE, STATIC_ROCKS, add_component, add_empty, add_light, add_material, add_mesh, animate, apply_lod_preset, build_sample_scene, build_static_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
+from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, STATIC_ASSETS, STATIC_FIXTURE, STATIC_ROCKS, add_component, add_empty, add_instance, add_light, add_material, add_mesh, add_prefab, animate, apply_lod_preset, build_sample_scene, build_static_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, move_to, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -33,6 +33,7 @@ DYNAMIC_BODY = {**KINEMATIC_BODY, "kind": "dynamic", "gravity_scale": 1.0, "line
 DEFAULT_JOINT = {"type": "joint", "kind": "revolute", "body1": None, "body2": None, "axis": [0.0, 1.0, 0.0], "angle_limits": None, "distance_limits": None, "swing_limit": None, "linear_damping": 0.0, "angular_damping": 0.0, "collide": False}
 DEFAULT_AUDIO = {"type": "audio_player", "path": "", "volume": 1.0, "loop": False, "autoplay": True, "spatial": True, "distance": 5.0}
 WINDMILL = {"type": "scene_reference", "path": "props/windmill.glb", "scene": 0}
+LAMP_POST = {"type": "scene_reference", "path": "props/lamp_post.glb", "scene": 0, "prefab": "lamp_post"}
 OBSTACLE = {"type": "navigation", "kind": "obstacle", "cost": None}
 DEFAULT_LIGHT = {"type": "light", "intensity": None, "radius": None, "range": None, "color": None, "size": None, "shadows": True, "contact_shadows": False, "volumetric": False, "baked": False, "depth_bias": None, "normal_bias": None, "near_clip": None, "cascades": None}
 EXPECTED_COMPONENTS = {
@@ -221,6 +222,12 @@ EXPECTED_COMPONENTS = {
     ],
     "windmill_b": [
         WINDMILL,
+    ],
+    "lamp_post_a": [
+        LAMP_POST,
+    ],
+    "lamp_post_b": [
+        LAMP_POST,
     ],
     "fog_bank": [
         {"type": "fog_volume", "size": [6.0, 2.0, 6.0], "color": [0.8, 0.85, 1.0], "density": 0.2, "absorption": 0.3, "scattering": 0.3, "anisotropy": 0.6, "light_tint": [1.0, 1.0, 1.0], "light_intensity": 1.5},
@@ -487,7 +494,7 @@ def _remembered_exports(glb="", bsn=""):
 
 
 def _open_dialog(operator_class, **values):
-    operator = SimpleNamespace(again=False, filepath="", assets_folder="", prefab_functions=True, filename_ext=operator_class.filename_ext, _settings=operator_class._settings, _target=operator_class._target, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
+    operator = SimpleNamespace(again=False, collection="", filepath="", assets_folder="", prefab_functions=True, filename_ext=operator_class.filename_ext, _settings=operator_class._settings, _target=operator_class._target, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
     for name, value in {**{name: None for name in addon.property.EXPORT_OPTIONS}, **values}.items():
         setattr(operator, name, value)
     operator._recall = MethodType(operator_class._recall, operator)
@@ -504,7 +511,7 @@ def _resolved(path):
 def _dialog(test, operator_class, **values):
     properties = getattr(bpy.ops.export_scene, operator_class.bl_idname.partition(".")[2]).get_rna_type()
     defaults = {name: properties.properties[name].default for name in addon.property.EXPORT_OPTIONS}
-    return SimpleNamespace(layout=FakeLayout(test), bl_rna=properties, **{"filepath": "", **defaults, **values})
+    return SimpleNamespace(layout=FakeLayout(test), bl_rna=properties, **{"filepath": "", "collection": "", **defaults, **values})
 
 
 def _again_buttons(layout):
@@ -547,9 +554,10 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_game"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
+        self.assertTrue(hasattr(bpy.types.Collection, "bevy_prefab"))
         for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
@@ -1729,11 +1737,12 @@ class TestPanels(unittest.TestCase):
 
     def test_export_again_describes_where_it_exports(self):
         glb = addon.operator.BEVY_OT_export_glb
-        self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False)), glb.bl_description)
+        self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False, collection="")), glb.bl_description)
         with _remembered_exports(glb="//level.glb"):
-            self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True)), "Export the scene again to //level.glb with the settings the last export used, without the file dialog")
+            self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene again to //level.glb with the settings the last export used, without the file dialog")
         with _remembered_exports():
-            self.assertEqual(addon.operator.BEVY_OT_export_bsn.description(bpy.context, SimpleNamespace(again=True)), "Export the scene once with File > Export > Bevy Scene (BSN), then export it again here with one click")
+            self.assertEqual(addon.operator.BEVY_OT_export_bsn.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene once with File > Export > Bevy Scene (BSN), then export it again here with one click")
+        self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False, collection="lamp_post", filepath="/game/assets/props/lamp_post.glb")), "Export lamp_post to lamp_post.glb, with the prefabs inside it, using the scene's export settings")
         again = bpy.ops.export_scene.bevy_components_glb.get_rna_type().properties["again"]
         self.assertTrue(again.is_hidden and again.is_skip_save)
 
@@ -3896,6 +3905,7 @@ class TestExport(unittest.TestCase):
         gltf = export_sample_scene(path, include_animations=False)
         nodes = {node["name"]: node for node in gltf["nodes"]}
         self.assertEqual(json.loads(nodes["windmill_a"]["extras"]["bevy_components"])["components"], [{**WINDMILL, "path": "../props/windmill.glb"}])
+        self.assertEqual(json.loads(nodes["lamp_post_b"]["extras"]["bevy_components"])["components"], [{**LAMP_POST, "path": "../props/lamp_post.glb"}])
         self.assertNotIn("animations", gltf)
 
     def test_plain_gltf_export_leaves_out_editor_state(self):
@@ -4048,7 +4058,7 @@ class TestExportOptions(unittest.TestCase):
         export_sample_scene(self.path)
         self.assertEqual((self.path.read_bytes(), self.path.stat().st_mtime_ns), before)
 
-        def broken(operator, path):
+        def broken(operator, path, collection=None, directory=None):
             Path(path).write_bytes(b"half a scene")
             operator.report({"ERROR"}, "GLB export failed: disk full")
             return {"CANCELLED"}
@@ -4391,7 +4401,7 @@ class TestBsnExport(unittest.TestCase):
 
     def test_files_land_in_the_assets_folder(self):
         folder = self.assets / "bsn"
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "probe_cubemap.ktx2", "sample_scene.glb"])
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "probe_cubemap.ktx2", "sample_scene.glb"])
         self.assertEqual((folder / "probe_cubemap.ktx2").read_bytes(), CUBEMAP.read_bytes())
         self.assertIn('Mesh3d("bsn/sample_scene.glb#Mesh', self.source)
         self.assertIn('environment_map: "bsn/probe_cubemap.ktx2"', self.source)
@@ -4416,7 +4426,7 @@ class TestBsnExport(unittest.TestCase):
         (project / "Cargo.toml").write_text('[package]\nname = "my_game"\nversion = "0.1.0"\n')
         source = export_bsn_scene(project / "src" / "level.rs")
         folder = project / "assets" / "scenes" / "level"
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "level.glb", "probe_cubemap.ktx2", "windmill.glb"])
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "level.glb", "probe_cubemap.ktx2", "windmill.glb"])
         self.assertEqual((folder / "windmill.glb").read_bytes(), (self.assets / PROP).read_bytes())
         self.assertIn('Mesh3d("scenes/level/level.glb#Mesh', source)
         self.assertIn('WorldAssetRoot("scenes/level/windmill.glb#Scene0")', source)
@@ -4510,11 +4520,11 @@ class TestBsnExport(unittest.TestCase):
         finally:
             item.probe_file = str(LIGHTMAP)
         self.assertIn('Lightmap { image: "floor_lightmap.ktx2"', source)
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "notes.txt", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "notes.txt", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
         record = json.loads(bpy.context.scene.bevy_bsn_export.written_files)
-        self.assertEqual(sorted(record["files"]), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
+        self.assertEqual(sorted(record["files"]), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
         export_bsn_scene(self.root / "stale" / "renamed.rs", folder)
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "notes.txt", "probe_cubemap.ktx2", "renamed.glb", "windmill.glb"])
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "notes.txt", "probe_cubemap.ktx2", "renamed.glb", "windmill.glb"])
 
     def test_library_projects_get_crate_paths(self):
         project = self.root / "library_game"
@@ -4584,6 +4594,213 @@ class TestStaticBsnScene(unittest.TestCase):
         self.assertIn("            Children [\n                {children_1()}\n                --\n                {children_2()}\n            ]", self.source)
         self.assertIn("fn children_2() -> impl SceneList {\n    return bsn_list! {\n", self.source)
         self.assertEqual(self.source.count('Name("rock.'), STATIC_ROCKS)
+
+
+def _scene_components(node):
+    return json.loads(node["extras"]["bevy_components"])["components"]
+
+
+class _ExporterOperator(SimpleNamespace):
+    def __setattr__(self, name, value):
+        if name.startswith("_"):
+            raise AttributeError("Writing to ID classes in this context is not allowed")
+        super().__setattr__(name, value)
+
+
+class TestPrefabs(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+        bpy.context.scene.property_unset("bevy_glb_export")
+        bpy.context.scene.property_unset("bevy_bsn_export")
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.assets = self.root / "assets"
+        self.level = self.assets / "level.glb"
+        folder = bpy.data.collections.new("prefabs")
+        bpy.context.scene.collection.children.link(folder)
+        self.lantern = add_prefab("lantern", folder, self.assets / "props" / "lantern.glb")
+        self.bulb = move_to(add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "bulb", subdivisions=1, radius=0.2), self.lantern)
+        add_component(self.bulb, "COLLIDER", collider_shape="SPHERE", collider_radius=0.2)
+        self.lamp = add_prefab("lamp post", folder, self.assets / "props" / "lamp_post.glb")
+        self.lamp.instance_offset = (0, 10, 0)
+        self.pole = move_to(add_mesh(bpy.ops.mesh.primitive_cube_add, "pole", size=0.2, location=(0, 10, 1)), self.lamp)
+        add_component(self.pole, "RIGID_BODY", rigid_body_kind="STATIC")
+        self.head = move_to(add_instance("head", self.lantern, (0, 10, 2)), self.lamp)
+        bpy.context.view_layer.layer_collection.children["prefabs"].exclude = True
+        self.post_a = add_instance("post_a", self.lamp, (4, 0, 0))
+        self.post_b = add_instance("post_b", self.lamp, (-4, 2, 0), 90)
+        add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=10)
+
+    def tearDown(self):
+        clear_scene()
+        bpy.context.scene.property_unset("bevy_glb_export")
+        bpy.context.scene.property_unset("bevy_bsn_export")
+        self.directory.cleanup()
+
+    def _exported_prefabs(self, **options):
+        with mock.patch.object(addon.operator, "collection_export", wraps=addon.operator.collection_export) as exported:
+            export_sample_scene(self.level, **options)
+        return [call.args[0].name for call in exported.call_args_list]
+
+    def _issues(self):
+        objects = addon.system.exported_objects(bpy.context, bpy.context.scene.bevy_glb_export, selected=False)
+        return [(issue.level, issue.obj.name if issue.obj else None, issue.message) for issue in addon.validation.check_objects(objects, destination=self.level)]
+
+    def test_instances_spawn_the_prefab_glb(self):
+        gltf = export_sample_scene(self.level)
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertEqual(sorted(nodes), ["ground", "post_a", "post_b"])
+        self.assertEqual([_scene_components(nodes[name]) for name in ("post_a", "post_b")], [[{"type": "scene_reference", "path": "props/lamp_post.glb", "scene": 0, "prefab": "lamp post"}]] * 2)
+        self.assertEqual([_rounded(nodes[name]["translation"]) for name in ("post_a", "post_b")], [[4.0, 0.0, 0.0], [-4.0, 0.0, -2.0]])
+        self.assertEqual(_rounded(nodes["post_b"]["rotation"]), [0.0, 0.70711, 0.0, 0.70711])
+        lamp = read_gltf(self.assets / "props" / "lamp_post.glb")
+        lamp_nodes = {node["name"]: node for node in lamp["nodes"]}
+        self.assertEqual((lamp["scenes"][0]["name"], sorted(lamp_nodes)), ("lamp post", ["head", "pole"]))
+        self.assertEqual([_rounded(lamp_nodes[name]["translation"]) for name in ("pole", "head")], [[0.0, 1.0, 0.0], [0.0, 2.0, 0.0]])
+        self.assertEqual(_scene_components(lamp_nodes["head"]), [{"type": "scene_reference", "path": "lantern.glb", "scene": 0, "prefab": "lantern"}])
+        self.assertEqual(_scene_components(lamp_nodes["pole"]), [STATIC_BODY])
+        lantern = read_gltf(self.assets / "props" / "lantern.glb")
+        self.assertEqual(([node["name"] for node in lantern["nodes"]], lantern["scenes"][0]["name"]), (["bulb"], "lantern"))
+        self.assertEqual(_scene_components(lantern["nodes"][0])[0]["shape"], "sphere")
+        self.assertEqual([scene.name for scene in bpy.data.scenes], ["Scene"])
+        self.assertIs(bpy.context.window.scene, bpy.context.scene)
+        self.assertEqual(self.post_a.instance_collection, self.lamp)
+
+    def test_scene_exports_write_prefabs_that_changed(self):
+        self.assertEqual(self._exported_prefabs(), ["lantern", "lamp post"])
+        self.assertEqual(self._exported_prefabs(), [])
+        self.bulb.location.x = 0.5
+        self.assertEqual(self._exported_prefabs(), ["lantern"])
+        self.pole.bevy_component_data.components[0].rigid_body_kind = "DYNAMIC"
+        self.assertEqual(self._exported_prefabs(), ["lamp post"])
+        self.bulb.data.vertices[0].co.z += 0.1
+        self.assertEqual(self._exported_prefabs(), ["lantern"])
+        self.post_a.location.x = 8
+        self.assertEqual(self._exported_prefabs(), [])
+        (self.assets / "props" / "lantern.glb").unlink()
+        self.assertEqual(self._exported_prefabs(), ["lantern"])
+        self.lamp.instance_offset = (0, 9, 0)
+        self.assertEqual(self._exported_prefabs(), ["lamp post"])
+        self.assertEqual(self._exported_prefabs(apply_modifiers=False), ["lantern", "lamp post"])
+        self.assertEqual(self._exported_prefabs(apply_modifiers=False), [])
+        record = json.loads(self.lamp.bevy_prefab.exported)
+        self.assertEqual(record["size"], (self.assets / "props" / "lamp_post.glb").stat().st_size)
+
+    def test_checks_block_broken_prefabs(self):
+        self.assertEqual(self._issues(), [])
+        self.lantern.bevy_prefab.filepath = ""
+        self.assertEqual(self._issues(), [("ERROR", "head", "Prefab lantern has no GLB file. Set one in Properties > Collection > Bevy Prefab")])
+        with self.assertRaisesRegex(RuntimeError, "Cannot export: head: Prefab lantern has no GLB file"):
+            export_sample_scene(self.level)
+        self.lantern.bevy_prefab.filepath = str(self.assets / "props" / "lamp_post.glb")
+        self.assertEqual(self._issues(), [("ERROR", "post_a", "Prefabs lantern and lamp post both export to lamp_post.glb")])
+        self.lantern.bevy_prefab.filepath = str(self.level)
+        self.assertEqual(self._issues(), [("ERROR", "head", "Prefab lantern exports to level.glb, the scene's own file")])
+        self.lantern.bevy_prefab.filepath = str(self.root / "elsewhere" / "lantern.glb")
+        self.assertEqual(self._issues(), [("WARNING", "head", "Prefab lantern exports outside the assets folder of lamp_post.glb, so the game cannot load it")])
+        self.lantern.bevy_prefab.filepath = str(self.assets / "props" / "lantern.glb")
+        loop = move_to(add_instance("loop", self.lamp, (0, 0, 0)), self.lantern)
+        self.assertIn(("ERROR", "loop", "Prefab lamp post ends up inside itself through lamp post > lantern > lamp post, so it cannot export"), self._issues())
+        bpy.data.objects.remove(loop)
+        add_component(self.post_a, "SCENE_REFERENCE", scene_file=str(self.assets / "props" / "lantern.glb"))
+        self.assertIn(("ERROR", "post_a", "Spawns prefab lamp post, so it cannot also spawn a Scene Reference. Move the Scene Reference to a child object"), self._issues())
+        self.post_a.bevy_component_data.components.clear()
+        empty = add_prefab("empty", bpy.context.scene.collection, self.assets / "props" / "empty.glb")
+        add_instance("nothing", empty, (0, 0, 0))
+        self.assertEqual(self._issues(), [("WARNING", "nothing", "Prefab empty has no objects, so its instances spawn nothing")])
+        layout = FakeLayout(self)
+        addon.panel.draw_components(layout, bpy.context, self.head)
+        self.assertIn("Part of prefab lamp post, so it exports to the prefab's GLB file and not with the scene", " ".join(layout.texts()))
+        select(self.post_b)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertIn("Bevy Prefab: lamp post", panel.layout.texts())
+        self.assertFalse(_prop_layout(panel.layout, "filepath").is_alert())
+        self.lamp.bevy_prefab.filepath = ""
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertTrue(_prop_layout(panel.layout, "filepath").is_alert())
+        self.lamp.bevy_prefab.enabled = False
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertNotIn("filepath", panel.layout.props())
+        self.assertIn("Bevy Prefab: lamp post", panel.layout.texts())
+
+    def test_collection_exporter_exports_only_the_collection(self):
+        self.assertIsNotNone(bpy.types.FileHandler.bl_rna_get_subclass_py("BEVY_FH_glb"))
+        with bpy.context.temp_override(collection=self.lamp):
+            self.assertEqual(bpy.ops.collection.exporter_add(name="BEVY_FH_glb"), {"FINISHED"})
+        exporter = self.lamp.exporters[0]
+        target = self.assets / "export" / "lamp.glb"
+        exporter.export_properties.filepath = str(target)
+        with bpy.context.temp_override(collection=self.lamp):
+            self.assertEqual(bpy.ops.collection.exporter_export(index=0), {"FINISHED"})
+        gltf = read_gltf(target)
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertEqual((gltf["scenes"][0]["name"], sorted(nodes)), ("lamp post", ["head", "pole"]))
+        self.assertEqual(_rounded(nodes["pole"]["translation"]), [0.0, 1.0, 0.0])
+        self.assertEqual(_scene_components(nodes["head"]), [{"type": "scene_reference", "path": "../props/lantern.glb", "scene": 0, "prefab": "lantern"}])
+        self.assertTrue((self.assets / "props" / "lantern.glb").is_file())
+        self.assertFalse((self.assets / "props" / "lamp_post.glb").exists())
+        self.assertEqual((bpy.context.scene.bevy_glb_export.filepath, [scene.name for scene in bpy.data.scenes]), ("", ["Scene"]))
+        operator = _ExporterOperator(**vars(_dialog(self, addon.operator.BEVY_OT_export_glb, collection="lamp post", filepath=str(target))))
+        addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+        self.assertNotIn("export_on_save", operator.layout.props())
+        self.assertNotIn("selected_only", operator.layout.props())
+        self.assertIn("No problems found", operator.layout.texts())
+
+    def test_exporting_a_prefab_records_it(self):
+        own = self.assets / "props" / "lamp_post.glb"
+        with bpy.context.temp_override(scene=bpy.context.scene):
+            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(collection="lamp post", filepath=str(own), include_animations=True), {"FINISHED"})
+        gltf = read_gltf(own)
+        self.assertEqual((gltf["scenes"][0]["name"], sorted(node["name"] for node in gltf["nodes"])), ("lamp post", ["head", "pole"]))
+        self.assertEqual([_scene_components(node) for node in gltf["nodes"] if node["name"] == "pole"], [[STATIC_BODY]])
+        self.assertEqual(self._exported_prefabs(), [])
+        with self.assertRaisesRegex(RuntimeError, "No collection named missing"):
+            bpy.ops.export_scene.bevy_components_glb(collection="missing", filepath=str(own))
+
+    def test_prefab_panel(self):
+        panel_type = addon.panel.BEVY_PT_collection_prefab
+        context = SimpleNamespace(collection=self.lamp, scene=bpy.context.scene, region=None)
+        self.assertTrue(panel_type.poll(context))
+        self.assertFalse(panel_type.poll(SimpleNamespace(collection=bpy.context.scene.collection, scene=bpy.context.scene)))
+        panel = FakePanel(self)
+        panel_type.draw_header(panel, context)
+        self.assertEqual(panel.layout.props(), ["enabled"])
+        bpy.context.scene.bevy_glb_export.texture_compression = "UASTC"
+        panel = FakePanel(self)
+        panel_type.draw(panel, context)
+        self.assertEqual(panel.layout.props(), ["filepath"])
+        self.assertIn("2 instances in this file", " ".join(panel.layout.texts()))
+        [(text, properties, enabled)] = panel.layout.buttons()
+        self.assertEqual((text, properties.collection, properties.filepath, properties.texture_compression, enabled), ("Export Prefab", "lamp post", str(self.assets / "props" / "lamp_post.glb"), "UASTC", True))
+        self.lamp.bevy_prefab.filepath = ""
+        panel = FakePanel(self)
+        panel_type.draw(panel, context)
+        self.assertTrue(_prop_layout(panel.layout, "filepath").alert)
+        self.assertEqual([enabled for text, properties, enabled in panel.layout.buttons()], [False])
+        self.assertEqual(bpy.types.BEVY_PT_collection_prefab.bl_context, "collection")
+
+    def test_new_prefabs_get_a_file_next_to_the_scene(self):
+        collection = bpy.data.collections.new("Street Lamp")
+        collection.bevy_prefab.enabled = True
+        self.assertEqual(collection.bevy_prefab.filepath, "")
+        collection.bevy_prefab.enabled = False
+        with _remembered_exports(glb=str(self.level)):
+            collection.bevy_prefab.enabled = True
+        self.assertEqual(_resolved(collection.bevy_prefab.filepath), self.assets / "prefabs" / "street_lamp.glb")
+
+    def test_bsn_export_calls_prefab_functions(self):
+        folder = self.assets / "scenes" / "street"
+        source = export_bsn_scene(self.root / "src" / "lamp_post.rs", folder)
+        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["lamp_post.glb", "lamp_post_2.glb", "lantern.glb"])
+        self.assertEqual([source.count(text) for text in ("pub fn prefab_lamp_post() -> impl Scene", "pub fn prefab_lantern() -> impl Scene", "@prefab_lamp_post()", "@prefab_lantern()")], [1, 1, 2, 1])
+        self.assertIn('@preload("scenes/street/lamp_post_2.glb")', source)
+        self.assertIn('Mesh3d("scenes/street/lantern.glb#Mesh0/Primitive0")', source)
+        self.assertNotIn("WorldAssetRoot", source)
+        self.assertFalse((self.assets / "props").exists())
+        self.assertNotIn("extras", json.dumps(read_gltf(folder / "lamp_post_2.glb")))
 
 
 def _fake_blender(directory):

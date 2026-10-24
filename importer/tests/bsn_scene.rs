@@ -18,6 +18,7 @@ const BSN_SCENE: &str = "bsn/sample_scene.glb";
 const STATIC_SCENE: &str = "bsn_static/static_scene.glb";
 const STATIC_ROCKS: usize = 260;
 const DECIMALS: usize = 4;
+const PREFABS: [(&str, &str); 2] = [("lamp_post", "props/lamp_post.glb"), ("lantern", "props/lantern.glb")];
 
 #[derive(Component, Reflect, Clone, Default)]
 #[reflect(Component, Default)]
@@ -327,6 +328,18 @@ fn walk(world: &World, entity: Entity, node: usize, path: &str, tree: &Tree, nod
         matched.insert(child_entity);
         walk(world, child_entity, *child, &path, tree, nodes);
     }
+    if let Some((root, file)) = prefab_root(world, entity, &children) {
+        matched.insert(root);
+        found.retain(|line| !line.starts_with("WorldAssetRoot"));
+        let prefab = gltf_tree(file);
+        let spawned: Vec<Entity> = world.get::<Children>(root).map_or(Vec::new(), |children| children.iter().collect());
+        for node in &prefab.roots {
+            match spawned.iter().copied().find(|candidate| world.get::<Name>(*candidate).is_some_and(|name| name.as_str() == prefab.names[*node])) {
+                Some(child) => walk(world, child, *node, &path, &prefab, nodes),
+                None => found.push(format!("missing prefab node {}", prefab.names[*node])),
+            }
+        }
+    }
     for child in children.into_iter().filter(|child| !matched.contains(child)) {
         if let Some(transform) = world.get::<Transform>(child) && *transform != Transform::IDENTITY {
             found.push(format!("child Transform {}", debug(transform)));
@@ -336,6 +349,18 @@ fn walk(world: &World, entity: Entity, node: usize, path: &str, tree: &Tree, nod
     found.sort();
     found.dedup_by(|later, earlier| later == earlier && later.starts_with("Navigation"));
     nodes.insert(path, found);
+}
+
+fn prefab_root(world: &World, entity: Entity, children: &[Entity]) -> Option<(Entity, &'static str)> {
+    for (root, file) in PREFABS {
+        if world.get::<WorldAssetRoot>(entity).is_some_and(|scene| scene.0.path().is_some_and(|path| path.path().to_str() == Some(file))) {
+            return children.first().map(|child| (*child, file));
+        }
+        if let Some(child) = children.iter().copied().find(|child| world.get::<Name>(*child).is_some_and(|name| name.as_str() == root)) {
+            return Some((child, file));
+        }
+    }
+    return None;
 }
 
 fn scene_nodes(world: &mut World, scene_root: Entity) -> BTreeMap<String, Vec<String>> {
@@ -421,6 +446,8 @@ fn bsn_scene_shares_prefabs() {
     assert!(source.contains("pub fn setup() -> impl Scene"));
     assert_eq!(source.matches("@object_windmill()").count(), 2);
     assert!(source.contains("pub fn object_windmill() -> impl Scene"));
+    assert_eq!((source.matches("@prefab_lamp_post()").count(), source.matches("@prefab_lantern()").count()), (2, 1));
+    assert!(source.contains("pub fn prefab_lamp_post() -> impl Scene") && source.contains("pub fn prefab_lantern() -> impl Scene"));
 }
 
 #[test]

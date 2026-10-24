@@ -7,11 +7,12 @@ from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
 from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
+from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
 from .project import game_folder, play_target
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .schema import short_name
 from .system import ambient_light, component_index, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
-from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
+from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
 
@@ -450,15 +451,31 @@ def _draw_component(layout, context, obj, index, item, issues):
             draw_message(body, issue.message, width=context.region.width if context.region else 300)
 
 
+def _draw_prefab_instance(layout, collection):
+    settings = collection.bevy_prefab
+    column = layout.column(align=True)
+    column.prop(settings, "enabled", text=f"Bevy Prefab: {collection.name}")
+    if settings.enabled:
+        row = column.row()
+        row.alert = prefab_file(collection) is None
+        row.prop(settings, "filepath", text="")
+
+
 def draw_components(layout, context, obj):
     row = layout.row()
     row.operator("wm.call_menu", text="Add Component", icon="ADD").name = BEVY_MT_component_add.bl_idname
     row.menu(BEVY_MT_object_context_menu.bl_idname, text="", icon="DOWNARROW_HLT")
     settings = export_settings(context.scene)
     issues = check_object(obj, exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers)
+    width = context.region.width if context.region else 300
     for issue in issues:
         if issue.item is None:
-            draw_message(layout, issue.message, width=context.region.width if context.region else 300)
+            draw_message(layout, issue.message, width=width)
+    if obj.instance_type == "COLLECTION" and obj.instance_collection is not None:
+        _draw_prefab_instance(layout, obj.instance_collection)
+    owner = prefab_owner(obj)
+    if owner is not None:
+        draw_message(layout, f"Part of prefab {owner.name}, so it exports to the prefab's GLB file and not with the scene", icon="INFO", width=width)
     for index, item in enumerate(obj.bevy_component_data.components):
         _draw_component(layout, context, obj, index, item, issues)
 
@@ -735,6 +752,47 @@ class BEVY_PT_scene_collision_layers(bpy.types.Panel):
         grid = layout.grid_flow(row_major=False, columns=2, even_columns=True, align=True)
         for layer in range(LAYER_COUNT):
             grid.prop(layers, f"layer_{layer}", text=str(layer))
+
+
+class BEVY_PT_collection_prefab(bpy.types.Panel):
+    bl_label = "Bevy Prefab"
+    bl_idname = "BEVY_PT_collection_prefab"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "collection"
+
+    @classmethod
+    def poll(cls, context):
+        collection = getattr(context, "collection", None)
+        return collection is not None and context.scene is not None and collection != context.scene.collection
+
+    def draw_header(self, context):
+        self.layout.prop(context.collection.bevy_prefab, "enabled", text="")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        collection = context.collection
+        settings = collection.bevy_prefab
+        layout.active = settings.enabled
+        width = context.region.width if context.region else 300
+        path = prefab_file(collection)
+        row = layout.row()
+        row.alert = settings.enabled and path is None
+        row.prop(settings, "filepath")
+        if path is None:
+            draw_message(layout, "Pick a GLB file for the prefab. Scene exports write it there and spawn it at each instance of the collection", icon="ERROR" if settings.enabled else "INFO", width=width)
+        else:
+            draw_message(layout, f"Scene exports write the prefab when it changed and spawn it at each instance of the collection, {count(len(prefab_instances(collection)), 'instance')} in this file", icon="INFO", width=width)
+        row = layout.row()
+        row.enabled = path is not None
+        button = row.operator(BEVY_OT_export_glb.bl_idname, text="Export Prefab", icon="EXPORT")
+        button.collection = collection.name_full
+        button.filepath = str(path or "")
+        options = context.scene.bevy_glb_export
+        for name in PREFAB_OPTIONS:
+            setattr(button, name, getattr(options, name))
 
 
 class BEVY_PT_world_sky(bpy.types.Panel):
