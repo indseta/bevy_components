@@ -53,7 +53,7 @@ The importer's warnings start with the Blender object's name, such as `crate: In
 ## Usage
 
 1. Select an object, press **Add Component** and pick a component, or start typing to search.
-2. Export with **File > Export > Bevy Scene (.glb)**. After that, **Export Again** writes the same file with the same settings, without the file dialog.
+2. Export the scene with **File > Export > Bevy Scene (.glb)**. After that, **Export Again** writes the same file with the same settings, without the file dialog. To export single objects with the options of Blender's glTF export, use **File > Export > Bevy glTF (.glb/.gltf)**.
 3. Put the GLB in your game's `assets/` folder and load it as above. Or set your game's folder as the **Game Project** and press **Play** in **3D Viewport > N > Bevy** to export and run the game in one click.
 
 Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the running game reloads the scene every time you save the .blend file.

@@ -11,18 +11,21 @@ bl_info = {
 import bpy
 from bpy.props import PointerProperty
 
+from .changes import depsgraph_changed, forget_revisions
 from .gizmo import BEVY_GGT_audio_handles, BEVY_GGT_collider_handles, BEVY_GGT_light_handles, BEVY_GGT_range_handles, stop_drag_tracking
+from .gltf import CLASSES as GLTF_CLASSES
 from .menu import BEVY_MT_component_add, BEVY_MT_component_add_game, BEVY_MT_component_add_lighting, BEVY_MT_component_add_physics, BEVY_MT_component_add_presets, BEVY_MT_component_add_rendering, BEVY_MT_component_context_menu, BEVY_MT_component_remove_presets, BEVY_MT_object_context_menu, BEVY_MT_object_menu, BEVY_MT_select_by_component, bake_status, export_menu, export_status, object_menu, play_status, select_menu, text_header
 from .operator import BEVY_FH_glb, BEVY_OT_add_component, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_select_object, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, BEVY_OT_validate, export_on_save, stop_bakes, stop_exports, stop_games
 from .overlay import register_draw_handlers, unregister_draw_handlers
 from .panel import BEVY_PT_collection_prefab, BEVY_PT_object_properties, BEVY_PT_overlay, BEVY_PT_scene_collision_layers, BEVY_PT_scene_definitions, BEVY_PT_view_export, BEVY_PT_view_overview, BEVY_PT_view_play, BEVY_PT_view_sidebar, BEVY_PT_world_ambient_light, BEVY_PT_world_sky, BEVY_UL_definitions, BEVY_UL_fields, BEVY_UL_objects
 from .preferences import BEVY_AP_preferences
 from .property import BEVY_PG_ambient_light, BEVY_PG_bake_settings, BEVY_PG_collision_layers, BEVY_PG_component, BEVY_PG_definition, BEVY_PG_definitions, BEVY_PG_field, BEVY_PG_game, BEVY_PG_glb_export, BEVY_PG_object_data, BEVY_PG_overview, BEVY_PG_prefab, BEVY_PG_sky, BEVY_PG_viewport_settings
-from .system import glTF2ExportUserExtension, load_game_types, problems_changed, save_sync, stop_panel_tracking, stop_schema_updates
+from .system import glTF2ExportUserExtension, load_game_types, problems_changed, save_cleanup, stop_panel_tracking, stop_schema_updates
 from .validation import stop_problem_counts
 
-CLASSES = (BEVY_AP_preferences, BEVY_PG_field, BEVY_PG_component, BEVY_PG_object_data, BEVY_PG_collision_layers, BEVY_PG_definition, BEVY_PG_definitions, BEVY_PG_ambient_light, BEVY_PG_sky, BEVY_PG_game, BEVY_PG_bake_settings, BEVY_PG_glb_export, BEVY_PG_prefab, BEVY_PG_overview, BEVY_PG_viewport_settings, BEVY_OT_add_component, BEVY_OT_remove_component, BEVY_OT_duplicate_component, BEVY_OT_copy_component_to_selected, BEVY_OT_reset_component, BEVY_OT_move_component, BEVY_OT_lod_preset, BEVY_OT_set_collision_layers, BEVY_OT_fit_collider, BEVY_OT_pick_sound, BEVY_OT_pick_file, BEVY_OT_define_fields, BEVY_OT_reload_schema, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_remove, BEVY_OT_field_move, BEVY_OT_copy_to_selected, BEVY_OT_copy_component, BEVY_OT_copy_components, BEVY_OT_paste_components, BEVY_OT_save_preset, BEVY_OT_apply_preset, BEVY_OT_remove_preset, BEVY_OT_edit_as_text, BEVY_OT_apply_text, BEVY_OT_select_by_component, BEVY_OT_select_object, BEVY_OT_validate, BEVY_OT_cancel_export, BEVY_OT_export_glb, BEVY_OT_export_all_scenes, BEVY_FH_glb, BEVY_OT_unwrap_lightmap, BEVY_OT_cancel_bake, BEVY_OT_bake_lighting, BEVY_OT_stop_game, BEVY_OT_show_game_output, BEVY_OT_play, BEVY_MT_component_add, BEVY_MT_component_add_game, BEVY_MT_component_add_physics, BEVY_MT_component_add_rendering, BEVY_MT_component_add_lighting, BEVY_MT_component_add_presets, BEVY_MT_component_remove_presets, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, BEVY_MT_object_menu, BEVY_MT_select_by_component, BEVY_UL_definitions, BEVY_UL_fields, BEVY_UL_objects, BEVY_PT_object_properties, BEVY_PT_view_sidebar, BEVY_PT_view_overview, BEVY_PT_view_export, BEVY_PT_view_play, BEVY_PT_scene_definitions, BEVY_PT_scene_collision_layers, BEVY_PT_collection_prefab, BEVY_PT_world_sky, BEVY_PT_world_ambient_light, BEVY_PT_overlay, BEVY_GGT_collider_handles, BEVY_GGT_range_handles, BEVY_GGT_light_handles, BEVY_GGT_audio_handles)
+CLASSES = (BEVY_AP_preferences, BEVY_PG_field, BEVY_PG_component, BEVY_PG_object_data, BEVY_PG_collision_layers, BEVY_PG_definition, BEVY_PG_definitions, BEVY_PG_ambient_light, BEVY_PG_sky, BEVY_PG_game, BEVY_PG_bake_settings, BEVY_PG_glb_export, BEVY_PG_prefab, BEVY_PG_overview, BEVY_PG_viewport_settings, BEVY_OT_add_component, BEVY_OT_remove_component, BEVY_OT_duplicate_component, BEVY_OT_copy_component_to_selected, BEVY_OT_reset_component, BEVY_OT_move_component, BEVY_OT_lod_preset, BEVY_OT_set_collision_layers, BEVY_OT_fit_collider, BEVY_OT_pick_sound, BEVY_OT_pick_file, BEVY_OT_define_fields, BEVY_OT_reload_schema, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_field_add, BEVY_OT_field_remove, BEVY_OT_field_move, BEVY_OT_copy_to_selected, BEVY_OT_copy_component, BEVY_OT_copy_components, BEVY_OT_paste_components, BEVY_OT_save_preset, BEVY_OT_apply_preset, BEVY_OT_remove_preset, BEVY_OT_edit_as_text, BEVY_OT_apply_text, BEVY_OT_select_by_component, BEVY_OT_select_object, BEVY_OT_validate, BEVY_OT_cancel_export, BEVY_OT_export_glb, BEVY_OT_export_all_scenes, BEVY_FH_glb, BEVY_OT_unwrap_lightmap, BEVY_OT_cancel_bake, BEVY_OT_bake_lighting, BEVY_OT_stop_game, BEVY_OT_show_game_output, BEVY_OT_play, BEVY_MT_component_add, BEVY_MT_component_add_game, BEVY_MT_component_add_physics, BEVY_MT_component_add_rendering, BEVY_MT_component_add_lighting, BEVY_MT_component_add_presets, BEVY_MT_component_remove_presets, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, BEVY_MT_object_menu, BEVY_MT_select_by_component, BEVY_UL_definitions, BEVY_UL_fields, BEVY_UL_objects, BEVY_PT_object_properties, BEVY_PT_view_sidebar, BEVY_PT_view_overview, BEVY_PT_view_export, BEVY_PT_view_play, BEVY_PT_scene_definitions, BEVY_PT_scene_collision_layers, BEVY_PT_collection_prefab, BEVY_PT_world_sky, BEVY_PT_world_ambient_light, BEVY_PT_overlay, BEVY_GGT_collider_handles, BEVY_GGT_range_handles, BEVY_GGT_light_handles, BEVY_GGT_audio_handles) + GLTF_CLASSES
 HANDLERS = ("depsgraph_update_post", "undo_post", "redo_post", "load_post")
+CHANGE_HANDLERS = {"depsgraph_update_post": depsgraph_changed, "frame_change_post": depsgraph_changed, "undo_post": forget_revisions, "redo_post": forget_revisions, "load_post": forget_revisions}
 
 
 def register():
@@ -48,8 +51,8 @@ def register():
     bpy.types.VIEW3D_MT_select_object.append(select_menu)
     bpy.types.TEXT_HT_header.append(text_header)
     register_draw_handlers()
-    if save_sync not in bpy.app.handlers.save_pre:
-        bpy.app.handlers.save_pre.append(save_sync)
+    if save_cleanup not in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.append(save_cleanup)
     if load_game_types not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(load_game_types)
     if export_on_save not in bpy.app.handlers.save_post:
@@ -57,6 +60,9 @@ def register():
     for name in HANDLERS:
         if problems_changed not in getattr(bpy.app.handlers, name):
             getattr(bpy.app.handlers, name).append(problems_changed)
+    for name, handler in CHANGE_HANDLERS.items():
+        if handler not in getattr(bpy.app.handlers, name):
+            getattr(bpy.app.handlers, name).append(handler)
 
 
 def unregister():
@@ -75,8 +81,11 @@ def unregister():
     for name in HANDLERS:
         if problems_changed in getattr(bpy.app.handlers, name):
             getattr(bpy.app.handlers, name).remove(problems_changed)
-    if save_sync in bpy.app.handlers.save_pre:
-        bpy.app.handlers.save_pre.remove(save_sync)
+    for name, handler in CHANGE_HANDLERS.items():
+        if handler in getattr(bpy.app.handlers, name):
+            getattr(bpy.app.handlers, name).remove(handler)
+    if save_cleanup in bpy.app.handlers.save_pre:
+        bpy.app.handlers.save_pre.remove(save_cleanup)
     bpy.types.TEXT_HT_header.remove(text_header)
     bpy.types.VIEW3D_MT_select_object.remove(select_menu)
     bpy.types.VIEW3D_MT_object_context_menu.remove(object_menu)

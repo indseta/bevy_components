@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Added
+
+- **Bevy glTF export**: **File > Export > Bevy glTF (.glb/.gltf)** is Blender's glTF export with the same dialog and options, made for Bevy. It always writes the Bevy components without ticking Custom Properties, so single objects and props export with their colliders. It also works as a collection exporter. See [Exporting](docs/exporting.md).
+
+### Changed
+
+- Objects no longer keep a copy of their components in a `bevy_components` custom property. The export builds them when it runs, so renamed joint bodies and other edits always reach the file, and saving removes the old property from older files.
+- The viewport previews and labels redraw much faster in big scenes: with 2000 objects, a redraw where nothing changed takes about 8 ms instead of 430 ms, and only objects that changed are rebuilt.
+
 ### Removed
 
 - The **BSN export** (**File > Export > Bevy Scene (BSN)**) is gone, so the addon writes GLB files only and the importer is the one way into Bevy. Its settings, the **Enum Type** of enum fields in **Bevy Custom Components** and the `enums` entry in custom component extras, which only that export read, went with it. Files that used it still open and export their GLB.

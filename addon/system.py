@@ -5,14 +5,16 @@ import os
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
-from .prefab import filter_tree, instance_node, prefab_members, prefab_scene
+from .changes import relatives, revision, touch
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_scene, sky_component, tuple_fields, variant_names
+from .prefab import export_directory, filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
 from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
 
@@ -30,6 +32,10 @@ PANEL_DRAWN_EXPANDED = True
 PROBLEM_CHANGES = [0, 0.0]
 SCHEMA_CHECK_INTERVAL = 1.0
 
+SUMMARY_LIMIT = 8192
+_resolved = [None]
+_skipped = [None]
+_summaries = {}
 _game_schema = {"checked": None, "key": None, "path": None, "types": {}, "error": ""}
 _variant_items = {}
 
@@ -110,10 +116,59 @@ def problem_changes():
     return tuple(PROBLEM_CHANGES)
 
 
+@contextmanager
+def resolving():
+    if _resolved[0] is not None:
+        yield
+        return
+    _resolved[0] = {}
+    try:
+        yield
+    finally:
+        _resolved[0] = None
+
+
+def resolved(function):
+    @functools.wraps(function)
+    def wrapper(*arguments, **options):
+        with resolving():
+            return function(*arguments, **options)
+    return wrapper
+
+
 def components_for(obj):
     if not hasattr(obj, "bevy_component_data"):
         return []
+    memo = _resolved[0]
+    if memo is None:
+        return _components(obj)
+    found = memo.get(obj.as_pointer())
+    if found is None:
+        found = memo[obj.as_pointer()] = _components(obj)
+    return list(found)
+
+
+def _components(obj):
     return [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]
+
+
+def _summary(obj):
+    key = revision(obj)
+    found = _summaries.get(obj.session_uid)
+    if found is None or found[0] != key:
+        if len(_summaries) >= SUMMARY_LIMIT:
+            _summaries.clear()
+        items = components_for(obj)
+        found = _summaries[obj.session_uid] = (key, frozenset(item.component_type for item in items), tuple(item.custom_type for item in items if item.component_type == "CUSTOM" and item.custom_type.strip()))
+    return found
+
+
+def component_kinds(obj):
+    return _summary(obj)[1] if hasattr(obj, "bevy_component_data") else frozenset()
+
+
+def custom_types(obj):
+    return _summary(obj)[2] if hasattr(obj, "bevy_component_data") else ()
 
 
 def component_of(obj, kind):
@@ -252,32 +307,41 @@ def default_clip(obj):
     return next(iter(sorted(object_actions(obj))), "")
 
 
-def sync_object(obj, directory=None):
-    if not obj or not isinstance(obj, bpy.types.Object) or obj.library:
-        return
+def touch_object(obj):
+    if isinstance(obj, bpy.types.Object):
+        touch_objects([obj])
+
+
+def touch_objects(objects):
     problems_changed()
-    data = getattr(obj, "bevy_component_data", None)
-    if not data:
-        return
+    objects = list(objects)
+    if objects:
+        touch(relatives(objects))
+
+
+@contextmanager
+def bevy_export():
+    previous = _skipped[0]
+    _skipped[0] = skipped = []
+    try:
+        yield skipped
+    finally:
+        _skipped[0] = previous
+
+
+def object_components(obj, directory=None, skipped=None):
     locate = functools.partial(scene_path, directory=directory)
-    items = components_for(obj)
-    try:
-        serialized = serialize_items(items, locate)
-    except ValueError:
-        items = [item for item in items if _serializes(item, locate)]
-        serialized = serialize_items(items, locate)
-    if items:
-        obj[EXTRAS_KEY] = serialized
-    else:
-        obj.pop(EXTRAS_KEY, None)
-
-
-def _serializes(item, locate):
-    try:
-        serialize_items([item], locate)
-    except ValueError:
-        return False
-    return True
+    components = []
+    for item in components_for(obj):
+        try:
+            component = serialize_component(item, locate)
+        except ValueError as error:
+            if skipped is not None:
+                skipped.append(f"{obj.name}: {error}")
+            continue
+        if component is not None:
+            components.append(component)
+    return components
 
 
 def component_index(obj, item):
@@ -413,7 +477,7 @@ def paste_components(obj, components, scene):
             if definition is not None:
                 link_component(item, definition)
         pasted += 1
-    sync_object(obj)
+    touch_object(obj)
     return pasted
 
 
@@ -447,10 +511,10 @@ def copy_to_object(source, destination, obj):
             setattr(destination, prop, obj)
 
 
-def sync_changed(self, context):
+def touch_changed(self, context):
     obj = getattr(self, "id_data", None)
     if isinstance(obj, bpy.types.Object):
-        sync_object(obj)
+        touch_object(obj)
         redraw_viewports()
 
 
@@ -459,7 +523,7 @@ def light_intensity_toggled(self, context):
     light = light_of(obj)
     if self.light_use_intensity and light is not None and not self.is_property_set("light_intensity"):
         self.light_intensity = light_intensity(light, obj)
-    sync_changed(self, context)
+    touch_changed(self, context)
 
 
 def light_bias_toggled(self, context):
@@ -470,7 +534,7 @@ def light_bias_toggled(self, context):
         self.light_normal_bias = normal
         if near is not None:
             self.light_near_clip = near
-    sync_changed(self, context)
+    touch_changed(self, context)
 
 
 def _uses_nodes(world):
@@ -738,8 +802,8 @@ def apply_definitions(scene):
         definition = find_definition(scene, item.custom_type)
         if definition is not None and link_component(item, definition):
             changed.add(obj)
-    for obj in changed:
-        sync_object(obj)
+    if changed:
+        touch_objects(changed)
     redraw_viewports()
 
 
@@ -808,7 +872,7 @@ def custom_type_changed(self, context):
             link_component(self, definition)
         else:
             unlink_component(self)
-    sync_changed(self, context)
+    touch_changed(self, context)
 
 
 def field_changed(self, context):
@@ -816,7 +880,7 @@ def field_changed(self, context):
     if isinstance(owner, bpy.types.Scene):
         apply_definitions(owner)
     else:
-        sync_changed(self, context)
+        touch_changed(self, context)
 
 
 def definition_renamed(self, context):
@@ -833,9 +897,10 @@ def definition_renamed(self, context):
 
 
 @persistent
-def save_sync(_scene):
+def save_cleanup(_scene):
     for obj in bpy.data.objects:
-        sync_object(obj)
+        if obj.library is None and EXTRAS_KEY in obj:
+            del obj[EXTRAS_KEY]
 
 
 def asset_path(path):
@@ -882,9 +947,10 @@ class glTF2ExportUserExtension:
     def gather_tree_filter_tag_hook(self, vtree, _export_settings):
         filter_tree(vtree)
 
-    def gather_node_hook(self, gltf2_node, blender_object, _export_settings):
+    def gather_node_hook(self, gltf2_node, blender_object, export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
         _remove_extra(gltf2_node, "bevy_prefab")
+        _component_extras(gltf2_node, blender_object, export_settings)
         instance_node(gltf2_node, blender_object)
 
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
@@ -894,12 +960,25 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_bake_settings")
         _remove_extra(gltf2_scene, "bevy_glb_export")
         _remove_extra(gltf2_scene, "bevy_bsn_export")
+        _remove_extra(gltf2_scene, "bevy_gltf_export_settings")
         _remove_extra(gltf2_scene, "bevy_component_overview")
         _remove_extra(gltf2_scene, "bevy_game")
         prefab_scene(gltf2_scene, blender_scene)
         world = getattr(blender_scene, "world", None)
         components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
         gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}
+
+
+def _component_extras(gltf2_node, obj, export_settings):
+    if obj is None or not hasattr(obj, "bevy_component_data") or _skipped[0] is None and not export_settings.get("gltf_extras"):
+        return
+    with resolving():
+        components = object_components(obj, export_directory() or os.path.dirname(export_settings.get("gltf_filepath", "")) or None, _skipped[0])
+    if components:
+        extras = gltf2_node.extras if isinstance(gltf2_node.extras, dict) else {}
+        gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)}
+    else:
+        _remove_extra(gltf2_node, EXTRAS_KEY)
 
 
 def _remove_extra(gltf2_element, key):

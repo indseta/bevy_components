@@ -315,7 +315,7 @@ def _operator_exists(idname):
 
 
 def _stored(obj):
-    return json.loads(obj["bevy_components"])
+    return {"version": addon.metadata.SCHEMA_VERSION, "components": addon.system.object_components(obj)}
 
 
 def _rounded(value):
@@ -553,19 +553,21 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_prefab"))
-        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component"):
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "export_scene.bevy_gltf"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
+        for idname in ("BEVY_FH_glb", "BEVY_FH_gltf"):
+            self.assertIsNotNone(bpy.types.FileHandler.bl_rna_get_subclass_py(idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Components", "object"))
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.menu.bake_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.menu.play_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
-        self.assertIn(addon.system.save_sync, bpy.app.handlers.save_pre)
+        self.assertIn(addon.system.save_cleanup, bpy.app.handlers.save_pre)
         self.assertIn(addon.operator.export_on_save, bpy.app.handlers.save_post)
         for menu in (bpy.types.VIEW3D_MT_object, bpy.types.VIEW3D_MT_object_context_menu):
             self.assertIn(addon.menu.object_menu, menu._dyn_ui_initialize())
@@ -573,6 +575,10 @@ class TestRegistration(unittest.TestCase):
         self.assertIn(addon.menu.text_header, bpy.types.TEXT_HT_header._dyn_ui_initialize())
         for name in ("depsgraph_update_post", "undo_post", "redo_post", "load_post"):
             self.assertIn(addon.system.problems_changed, getattr(bpy.app.handlers, name))
+        for name in ("depsgraph_update_post", "frame_change_post"):
+            self.assertIn(addon.changes.depsgraph_changed, getattr(bpy.app.handlers, name))
+        for name in ("undo_post", "redo_post", "load_post"):
+            self.assertIn(addon.changes.forget_revisions, getattr(bpy.app.handlers, name))
         self.assertEqual(bpy.context.preferences.addons[addon.__name__].preferences.ktx_path, "")
 
     def test_registers_with_restricted_blend_data(self):
@@ -614,7 +620,7 @@ class TestOperators(unittest.TestCase):
         add_component(self.obj, "CUSTOM")
         self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["collider", "custom", "custom"])
 
-    def test_property_changes_sync_custom_property(self):
+    def test_property_changes_reach_the_serialized_components(self):
         item = add_component(self.obj, "VISIBILITY_RANGE")
         item.fade_out_start = 30
         item.fade_out_end = 40
@@ -992,7 +998,6 @@ class TestOperators(unittest.TestCase):
             self.assertEqual(len(obj.bevy_component_data.components), 0)
         holder = bpy.data.objects["holder"]
         holder.bevy_component_data.components.add().component_type = "LIGHTMAP"
-        addon.system.sync_object(holder)
         self.assertEqual(_stored(holder)["components"], [])
 
     def test_unwrap_lightmap_fills_the_second_uv_map(self):
@@ -1116,6 +1121,7 @@ class TestOperators(unittest.TestCase):
             bpy.ops.wm.save_as_mainfile(filepath=str(path))
             bpy.ops.wm.open_mainfile(filepath=str(path))
         obj = bpy.data.objects["subject"]
+        self.assertNotIn("bevy_components", obj)
         self.assertEqual(obj.bevy_component_data.components[0].collider_radius, 2.0)
         self.assertEqual(_stored(obj)["components"][0]["radius"], 2.0)
         self.assertEqual(list(obj.bevy_component_data.components[0].collider_memberships), layers(1, 7))
@@ -1128,7 +1134,7 @@ class TestOperators(unittest.TestCase):
         joint = add_component(self.obj, "JOINT", joint_kind="SPHERICAL", joint_use_swing=True)
         joint.joint_body1 = frame
         frame.name = "door_frame"
-        self.assertEqual(_stored(self.obj)["components"][1]["body1"], "frame")
+        self.assertEqual(_stored(self.obj)["components"][1]["body1"], "door_frame")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "scene.blend"
             bpy.ops.wm.save_as_mainfile(filepath=str(path))
@@ -1185,7 +1191,6 @@ class TestPanels(unittest.TestCase):
         add_component(self.obj, "COLLIDER")
         removed = add_component(self.obj, "RIGID_BODY")
         removed["component_type"] = 3
-        addon.system.sync_object(self.obj)
         self.assertEqual([item["type"] for item in _stored(self.obj)["components"]], ["collider"])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
@@ -1695,12 +1700,12 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         with _remembered_exports():
             addon.menu.export_menu(panel, bpy.context)
-        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb"])
+        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_gltf", "export_scene.bevy_components_glb"])
         panel = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.export_menu(panel, bpy.context)
-        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb", "export_scene.bevy_components_glb"])
-        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)", False), ("Export Again (level.glb)", True)])
+        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_gltf", "export_scene.bevy_components_glb", "export_scene.bevy_components_glb"])
+        self.assertEqual(_again_buttons(panel.layout), [("Bevy glTF (.glb/.gltf)", False), ("Bevy Scene (.glb)", False), ("Export Again (level.glb)", True)])
 
     def test_sidebar_export_panel(self):
         panel = FakePanel(self)
@@ -2854,15 +2859,44 @@ class TestViewport(unittest.TestCase):
         self.obj.data.vertices[0].co *= 3
         lamp.data.use_custom_distance = True
         lamp.data.cutoff_distance = 6
+        bpy.context.view_layer.update()
         second = addon.overlay.preview_entries(bpy.context, self.settings)
         self.assertEqual([entry is again for entry, again in zip(first, second)], [False, False])
         self.assertEqual(_extents(second[1]["batches"][0][1]), (6.0, 6.0, 6.0))
 
-    def test_preview_cache_skips_objects_without_stored_components(self):
+    def test_preview_cache_keeps_objects_that_did_not_change(self):
+        add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
+        other = add_mesh(bpy.ops.mesh.primitive_cube_add, "other", location=(4, 0, 0))
+        add_component(other, "COLLIDER", collider_shape="SPHERE")
+        other.keyframe_insert("location", frame=1)
+        other.location = (4, 0, 6)
+        other.keyframe_insert("location", frame=11)
+        bpy.context.scene.frame_set(1)
+        select(self.obj, other)
+        bpy.context.view_layer.update()
+        entry = lambda obj: addon.overlay.PREVIEW_CACHE[("OBJECT", obj.session_uid)]
+        addon.overlay.preview_entries(bpy.context, self.settings)
+        first, moving = entry(self.obj), entry(other)
+        try:
+            bpy.context.scene.frame_set(6)
+            addon.overlay.preview_entries(bpy.context, self.settings)
+            self.assertIs(entry(self.obj), first)
+            self.assertIsNot(entry(other), moving)
+            self.assertEqual(round(entry(other)["batches"][0][0].translation.z, 4), 3.0)
+            other.location = (4, 0, 0)
+            other.animation_data_clear()
+            bpy.context.view_layer.update()
+            addon.overlay.preview_entries(bpy.context, self.settings)
+            self.assertEqual(round(entry(other)["batches"][0][0].translation.z, 4), 0.0)
+        finally:
+            bpy.context.scene.frame_set(1)
+
+    def test_preview_cache_starts_over_after_undo(self):
         add_component(self.obj, "COLLIDER", collider_shape="CUBOID")
         select(self.obj)
-        del self.obj["bevy_components"]
         first = addon.overlay.preview_entries(bpy.context, self.settings)[0]
+        self.assertIs(addon.overlay.preview_entries(bpy.context, self.settings)[0], first)
+        addon.changes.forget_revisions()
         again = addon.overlay.preview_entries(bpy.context, self.settings)[0]
         self.assertIsNot(again, first)
         self.assertEqual(len(again["batches"]), 1)
@@ -2874,6 +2908,8 @@ class TestViewport(unittest.TestCase):
         self.assertTrue(first["batches"])
         self.assertIs(addon.overlay.preview_entries(bpy.context, self.settings)[0], first)
         next(vertex for vertex in self.obj.data.vertices if vertex.co.z > 0).co.z += 1
+        self.obj.data.update()
+        bpy.context.view_layer.update()
         edited = addon.overlay.preview_entries(bpy.context, self.settings)[0]
         self.assertIsNot(edited, first)
         navigation.navigation_kind = "OBSTACLE"
@@ -3465,7 +3501,7 @@ class TestValidation(unittest.TestCase):
             audio.audio_path = path
             self.assertEqual(self._messages(), [f"speaker: {message}" for message in messages], path)
         audio.audio_path = "sounds/fire.ogg"
-        self.assertEqual(json.loads(speaker["bevy_components"])["components"][0]["path"], "sounds/fire.ogg")
+        self.assertEqual(_stored(speaker)["components"][0]["path"], "sounds/fire.ogg")
 
     def test_joints_need_moving_bodies(self):
         hinge = add_empty("hinge", (0, 0, 0))
@@ -3997,6 +4033,46 @@ def _all_scenes_report():
     operator = SimpleNamespace(report=mock.Mock())
     result = addon.operator.BEVY_OT_export_all_scenes.execute(operator, bpy.context)
     return result, operator.report.call_args.args
+
+
+class TestBevyGltf(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+
+    def test_bevy_gltf_export_acts_like_the_gltf_export_with_components(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
+        add_component(crate, "COLLIDER", collider_shape="SPHERE", collider_radius=1.5)
+        add_component(crate, "CUSTOM", custom_type="game::Loot", custom_json='{"gold": 3}')
+        broken = add_component(crate, "CUSTOM", custom_type="game::Broken", custom_json="{")
+        crate["note"] = "left out"
+        rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", location=(4, 0, 0))
+        add_component(rock, "VISIBILITY_RANGE")
+        select(crate)
+        operator = addon.gltf.BEVY_OT_export_gltf
+        self.assertEqual(operator.bl_idname, "export_scene.bevy_gltf")
+        self.assertTrue(issubclass(operator, sys.modules["io_scene_gltf2"].ExportGLTF2_Base))
+        self.assertEqual(addon.gltf.BEVY_FH_gltf.bl_export_operator, operator.bl_idname)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "crate.glb"
+            reference = add_component(crate, "SCENE_REFERENCE", scene_file=str(Path(directory) / "props" / "tree.glb"))
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True), {"FINISHED"})
+            gltf = read_gltf(path)
+            bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True)
+            plain = read_gltf(path)
+        self.assertEqual(addon.gltf._skipped_message(["crate: invalid JSON in Custom Component"]), "Left out 1 Bevy component that cannot export: crate: invalid JSON in Custom Component. See Validate All Objects")
+        self.assertEqual(addon.gltf._skipped_message([f"crate: problem {index}" for index in range(5)]), "Left out 5 Bevy components that cannot export: crate: problem 0; crate: problem 1; crate: problem 2 and 2 more. See Validate All Objects")
+        with addon.system.bevy_export() as skipped:
+            addon.system.object_components(crate, None, addon.system._skipped[0])
+        self.assertEqual([message.split(":")[:2] for message in skipped], [["crate", " Custom JSON for game"]])
+        self.assertEqual([node["name"] for node in gltf["nodes"]], ["crate"])
+        extras = gltf["nodes"][0]["extras"]
+        self.assertEqual(list(extras), ["bevy_components"])
+        components = _rounded(json.loads(extras["bevy_components"])["components"])
+        self.assertEqual([component["type"] for component in components], ["collider", "custom", "scene_reference"])
+        self.assertEqual((components[0]["radius"], components[1]["data"], components[2]["path"]), (1.5, {"gold": 3}, "props/tree.glb"))
+        self.assertNotIn("extras", plain["nodes"][0])
+        self.assertTrue(reference.enabled and broken.enabled)
+        self.assertNotIn("bevy_components", crate)
 
 
 class TestExportOptions(unittest.TestCase):

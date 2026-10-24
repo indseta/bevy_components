@@ -1,6 +1,11 @@
 # Exporting
 
-**File > Export > Bevy Scene (.glb)** writes the scene as one GLB with its components in the glTF extras. The same export sits in the dropdown next to **Add Component**. To make the GLB smaller, see [texture compression](texture_compression.md).
+**File > Export** has two Bevy exports, and both write each object's components in its glTF extras:
+
+- **Bevy glTF (.glb/.gltf)** is Blender's own glTF export, with the same dialog and options such as **Limit to Selected Objects**, made for Bevy. It always writes the Bevy components, such as a prop's Collider and Visibility Range, without ticking **Custom Properties**. Use it to export a single object, a prop or anything else you would export as glTF. It can also be a collection's exporter under **Properties > Collection > Exporters**. When a component cannot export, such as a Custom Component with broken JSON, it leaves that one out and says so.
+- **Bevy Scene (.glb)** writes a whole level. It runs the checks first, can compress textures, writes prefabs and has Export Again, Export on Save and Play. The same export sits in the dropdown next to **Add Component**, and the rest of this page is about it. To make the GLB smaller, see [texture compression](texture_compression.md).
+
+Blender's plain **glTF 2.0** export writes the components only when **Include > Custom Properties** is ticked.
 
 ## Options
 
