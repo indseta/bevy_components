@@ -26,6 +26,8 @@
 - The viewport previews and labels redraw much faster in big scenes: with 2000 objects, a redraw where nothing changed takes about 8 ms instead of 430 ms, and only objects that changed are rebuilt.
 - The checks behind the problem count, each component's warnings, Validate All Objects and the export run again only for objects that changed, so with 2000 objects they take about 15 ms instead of 180 ms when little changed. Adding, duplicating or deleting an object no longer makes every check or preview start over.
 - Play runs the same export as Export Again instead of calling its operator, so when texture compression fails, Play says why.
+- The components panel in **3D Viewport > N > Bevy** is now called **Game Components**, like the one in Properties, and the Bevy subpanels under Rigid Body and Rigid Body Constraint show what the object exports as, such as a Dynamic Body or a Ball Joint.
+- A Rigid Body Constraint marked **Breakable** gets a warning, since Avian joints don't break on their own.
 
 ### Fixed
 
@@ -37,6 +39,8 @@
 - Sounds and other files in an `assets` folder inside another one follow the game project's `Cargo.toml`, also when it is added after the file was first exported.
 - **Bake Lighting** leaves out meshes hidden by a **Collision Only** collider, as the game does, and moving them no longer marks a bake out of date.
 - Importer: when a scene that set `Gravity` is despawned or reloads without it, the gravity from before comes back.
+- Hints and warnings in panels wrap to the panel's real width, so they are no longer cut off in the Bevy sidebar.
+- A light's Bevy panel no longer repeats Blender's Radius, its Shadows checkbox sits next to the arrow like Blender's own subpanels, and a speaker's Bevy panel says when no sound is picked.
 
 ### Removed
 

@@ -1,10 +1,10 @@
 import os
 import re
-import textwrap
 import time
 from collections import namedtuple
 from pathlib import Path, PurePosixPath
 
+import blf
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
@@ -55,6 +55,10 @@ UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
 PROCEDURAL_NODES = {"AMBIENT_OCCLUSION", "BEVEL", "CAMERA", "FRESNEL", "HAIR_INFO", "LAYER_WEIGHT", "LIGHT_PATH", "NEW_GEOMETRY", "OBJECT_INFO", "PARTICLE_INFO", "POINT_INFO", "SCRIPT", "TANGENT", "TEX_COORD", "WIREFRAME"}
 AMBIENT_WITH_SKY = "Bevy Ambient Light takes the World color, which the Bevy Sky's environment light already gives, so meshes get the World's light twice"
 PROBLEM_DELAY = 0.5
+MESSAGE_MARGIN = 62
+TAB_MARGIN = 22
+NO_SOUND = "No sound picked, so nothing plays"
+BREAKABLE = "Avian joints don't break on their own, so the game leaves out Breakable. Game code can add JointDisabled to break the joint"
 ISSUE_CACHE_LIMIT = 16384
 UNCACHED_KINDS = {"SCENE_REFERENCE", "LIGHTMAP", "AUDIO_PLAYER", "ANIMATION", *FILE_KINDS}
 COLLECTION_ONLY = "Collections only pass on game and custom components, Navigation and Visibility Range"
@@ -83,9 +87,24 @@ def issue_summary(issues):
 
 def draw_message(layout, text, icon="ERROR", width=300):
     scale = (bpy.context.preferences.system.ui_scale if bpy.context.preferences else 0.0) or 1.0
+    region = bpy.context.region
+    margin = MESSAGE_MARGIN + (TAB_MARGIN if region is not None and region.type == "UI" else 0)
     column = layout.column(align=True)
-    for index, line in enumerate(textwrap.wrap(text, max(20, int((width - 40) / (6 * scale))))):
+    for index, line in enumerate(wrap_text(text, width - margin * scale, scale)):
         column.label(text=line, icon=icon if index == 0 else "BLANK1")
+
+
+def wrap_text(text, space, scale):
+    points = bpy.context.preferences.ui_styles[0].widget.points if bpy.context.preferences else 11
+    blf.size(0, points * scale)
+    lines = []
+    for word in text.split():
+        joined = f"{lines[-1]} {word}" if lines else word
+        if lines and blf.dimensions(0, joined)[0] <= space:
+            lines[-1] = joined
+        else:
+            lines.append(word)
+    return lines
 
 
 def draw_issues(layout, rows, limit, more, select=False, width=300):
@@ -400,6 +419,8 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
             issues.extend(Issue("WARNING", obj, item, message) for message in (_speaker_warnings(obj) if is_native(item) else []) + _audio_warnings(item, assets))
         elif item.component_type == "JOINT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _joint_warnings(obj, item, exported))
+            if is_native(item) and obj.rigid_body_constraint.use_breaking:
+                issues.append(Issue("WARNING", obj, item, BREAKABLE))
         elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
             issues.extend(_scene_reference_issues(obj, item, destination))
         elif item.component_type == "ANIMATION":
@@ -569,7 +590,7 @@ def _data_issues(obj):
     if obj.type == "LIGHT_PROBE" and obj.data.type == "PLANE" and not any(component_of(obj, kind) is not None for kind in FILE_KINDS):
         issues.append(Issue("WARNING", obj, None, "Bevy has no planar reflections, so the game leaves this Light Probe out"))
     if obj.type == "SPEAKER" and not obj.data.muted and component_of(obj, "AUDIO_PLAYER") is None:
-        issues.append(Issue("WARNING", obj, None, "No sound picked, so nothing plays"))
+        issues.append(Issue("WARNING", obj, None, NO_SOUND))
     source = fog_source(obj)
     item = component_of(obj, "FOG_VOLUME")
     if source is not None and (item is None or is_native(item)):
