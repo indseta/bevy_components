@@ -13,7 +13,7 @@ from bpy.app.handlers import persistent
 from mathutils import Matrix
 
 from .changes import collection_users, relatives, revision, touch
-from .collection import COLLECTION_KINDS, collections_changed, with_collections
+from .collection import COLLECTION_KINDS, collections_changed, from_collection, with_collections
 from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_scene, sky_component, tuple_fields, variant_names
 from .native import MESH_TYPES, fog_source, physics_components, with_native
 from .prefab import export_directory, filter_tree, instance_node, prefab_members, prefab_scene
@@ -161,7 +161,7 @@ def _summary(obj):
         if len(_summaries) >= SUMMARY_LIMIT:
             _summaries.clear()
         items = components_for(obj)
-        found = _summaries[obj.session_uid] = (key, frozenset(item.component_type for item in items), tuple(item.custom_type for item in items if item.component_type == "CUSTOM" and item.custom_type.strip()))
+        found = _summaries[obj.session_uid] = (key, frozenset(item.component_type for item in items), tuple(item.custom_type for item in items if item.component_type == "CUSTOM" and item.custom_type.strip()), tuple(item.as_pointer() for item in items if from_collection(item)))
     return found
 
 
@@ -171,6 +171,10 @@ def component_kinds(obj):
 
 def custom_types(obj):
     return _summary(obj)[2] if hasattr(obj, "bevy_component_data") else ()
+
+
+def shared_items(obj):
+    return _summary(obj)[3] if hasattr(obj, "bevy_component_data") else ()
 
 
 def component_of(obj, kind):
