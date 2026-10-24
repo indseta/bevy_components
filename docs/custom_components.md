@@ -38,6 +38,6 @@ The importer inserts the component itself when your type derives `Reflect` with 
 | Vector 2D | `Vec2` |
 | Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
 | Color | `Color`, in sRGB |
-| Enum | An enum whose variants hold no data, such as `Team::Red`. The BSN export needs its **Enum Type**, such as `my_game::Team` |
+| Enum | An enum whose variants hold no data, such as `Team::Red` |
 
 Fields named `0`, `1` and so on fill a tuple struct, such as `Reward(u32, f32)`.

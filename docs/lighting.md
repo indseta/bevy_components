@@ -31,7 +31,7 @@ The export embeds each probe's `.ktx2` file in the GLB, so the scene stays one f
 The addon bakes lightmaps, Reflection Probes, Irradiance Volumes and the Bevy Sky with Cycles.
 
 1. Add a **Lightmap** (under Lighting) to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
-2. Click **Bake** on a component to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default, and **Export Again** exports the scene to the GLB or BSN file of its last export once the bake finishes.
+2. Click **Bake** on a component to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default, and **Export Again** exports the scene to the GLB file of its last export once the bake finishes.
 
 A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; bakes that already finished keep their new files. Each component's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.
 

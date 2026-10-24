@@ -10,7 +10,7 @@ from pathlib import Path
 import bpy
 from mathutils import Quaternion, Vector
 
-from .bsn import snake_case
+from .files import snake_case
 from .metadata import EXTRAS_KEY, SCHEMA_VERSION, addon_version, relative_path, serialize_items
 
 FINGERPRINT_VERSION = 1

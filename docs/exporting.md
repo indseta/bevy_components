@@ -1,6 +1,6 @@
 # Exporting
 
-**File > Export > Bevy Scene (.glb)** writes the scene as one GLB with its components in the glTF extras. The same export sits in the dropdown next to **Add Component**. To write Rust code instead, see the [BSN export](bsn_export.md), and to make the GLB smaller, [texture compression](texture_compression.md).
+**File > Export > Bevy Scene (.glb)** writes the scene as one GLB with its components in the glTF extras. The same export sits in the dropdown next to **Add Component**. To make the GLB smaller, see [texture compression](texture_compression.md).
 
 ## Options
 
@@ -18,13 +18,11 @@ Turn on **Export on Save** in the export dialog or under **3D Viewport > N > Bev
 bevy = { version = "0.20", features = ["file_watcher"] }
 ```
 
-A BSN export rewrites its `.rs` file on save as well, but the game only picks that up when it is rebuilt.
-
 ## Prefabs
 
 Tick **Properties > Collection > Bevy Prefab** on a collection and pick its GLB file. Its collection instances then export as a Scene Reference to that file instead of copies of its objects, while the viewport keeps showing the collection. Each scene export writes the prefab's GLB first, but only when the collection's objects, components or transforms or the export settings changed since its last export. The collection's **Instance Offset** is the prefab's origin, and prefabs can hold instances of other prefabs. Keep the prefab collections in another scene or in a collection excluded from the view layer; scene exports leave their objects out either way. An instance's **Components** panel shows the same checkbox and file, since an excluded collection has no Collection tab.
 
-**Export Prefab** in that panel writes just the prefab. Any collection can also export on its own from **Properties > Collection > Exporters > Add > Bevy Scene (.glb)**, which writes the prefabs inside it as well. The BSN export writes each prefab as a `prefab_<name>()` function below `setup()`, with its GLB in the assets folder, and calls it at every instance.
+**Export Prefab** in that panel writes just the prefab. Any collection can also export on its own from **Properties > Collection > Exporters > Add > Bevy Scene (.glb)**, which writes the prefabs inside it as well.
 
 ## Checks
 

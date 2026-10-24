@@ -15,11 +15,6 @@ FIXTURE = ROOT / "importer" / "tests" / "assets" / "sample_scene.glb"
 SCHEMA = FIXTURE.parent / "bevy_components_schema.json"
 SOUNDS = FIXTURE.parent / "sounds"
 COMPRESSED_FIXTURES = {mode: FIXTURE.with_name(f"sample_scene_{mode.lower()}.glb") for mode in ("ETC1S", "UASTC", "AUTOMATIC")}
-BSN_FIXTURE = ROOT / "importer" / "tests" / "bsn" / "sample_scene.rs"
-BSN_ASSETS = FIXTURE.parent / "bsn"
-STATIC_FIXTURE = BSN_FIXTURE.with_name("static_scene.rs")
-STATIC_ASSETS = FIXTURE.parent / "bsn_static"
-STATIC_ROCKS = 260
 PROP = Path("props") / "windmill.glb"
 LAMP_POST = Path("props") / "lamp_post.glb"
 LANTERN = Path("props") / "lantern.glb"
@@ -659,41 +654,12 @@ def build_sample_scene(directory=FIXTURE.parent):
     select()
 
 
-def build_static_scene():
-    clear_scene()
-    material, _shader = add_material("painted")
-    material.use_backface_culling = True
-    statue = add_mesh(bpy.ops.mesh.primitive_cube_add, "statue", size=1, location=(-2, 0, 0.5))
-    statue.data.materials.append(material)
-    mirrored = bpy.data.objects.new("statue_mirrored", statue.data)
-    mirrored.location = (2, 0, 0.5)
-    mirrored.scale = (-1, 1, 1)
-    bpy.context.scene.collection.objects.link(mirrored)
-    rocks = add_empty("rocks", (0, 4, 0))
-    rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", subdivisions=1, radius=0.2)
-    for index in range(STATIC_ROCKS):
-        obj = bpy.data.objects.new(f"rock.{index:03d}", rock.data)
-        obj.location = (index % 20 - 10, index // 20, 0)
-        obj.parent = rocks
-        bpy.context.scene.collection.objects.link(obj)
-    bpy.data.objects.remove(rock)
-    select()
-
-
 def export_sample_scene(path, **options):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     result = bpy.ops.export_scene.bevy_components_glb(filepath=str(path), **{"include_animations": True, **options})
     if "FINISHED" not in result:
         raise RuntimeError(f"Export failed: {result}")
     return read_gltf(path)
-
-
-def export_bsn_scene(path, assets_folder="", **options):
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    result = bpy.ops.export_scene.bevy_components_bsn(filepath=str(path), assets_folder=str(assets_folder), **{"include_animations": True, **options})
-    if "FINISHED" not in result:
-        raise RuntimeError(f"Export failed: {result}")
-    return Path(path).read_text(encoding="utf-8")
 
 
 def export_props(directory):
@@ -714,9 +680,6 @@ if __name__ == "__main__":
         export_sample_scene(FIXTURE)
         for mode, path in COMPRESSED_FIXTURES.items():
             export_sample_scene(path, texture_compression=mode)
-        export_bsn_scene(BSN_FIXTURE, BSN_ASSETS)
-        build_static_scene()
-        export_bsn_scene(STATIC_FIXTURE, STATIC_ASSETS)
     sys.stdout.flush()
     sys.stderr.flush()
     os._exit(0)

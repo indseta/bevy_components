@@ -179,8 +179,6 @@ def mesh_sources(obj, children, kind, instances=True):
 
 
 def export_settings(scene):
-    if scene.bevy_bsn_export.rust_file.strip() and not scene.bevy_glb_export.filepath.strip():
-        return scene.bevy_bsn_export
     return scene.bevy_glb_export
 
 

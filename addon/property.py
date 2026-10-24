@@ -92,7 +92,7 @@ class BEVY_PG_field(bpy.types.PropertyGroup):
     color_value: FloatVectorProperty(name="Value", size=4, subtype="COLOR_GAMMA", default=(1.0, 1.0, 1.0, 1.0), min=0.0, max=1.0, update=sync_changed)
     enum_value: EnumProperty(name="Value", items=variant_items, get=variant_index, set=set_variant)
     variants: StringProperty(name="Variants", description="Names of the enum's variants, separated by commas, such as Red, Blue", update=field_changed)
-    rust_type: StringProperty(name="Rust Type", description="Rust type of the field. For an enum, its type path, such as my_game::Team, which the BSN export needs", update=field_changed)
+    rust_type: StringProperty(name="Rust Type", description="Rust type of the field, such as u8, which sets the range of values it accepts", update=field_changed)
 
 
 class BEVY_PG_component(bpy.types.PropertyGroup):
@@ -271,7 +271,7 @@ class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
     samples: IntProperty(name="Samples", description="Cycles samples per pixel. More samples give smoother light and take longer", default=128, min=1, soft_max=4096)
     folder: StringProperty(name="Folder", description="Folder for the baked .ktx2 files, where // is the folder of the .blend file", subtype="DIR_PATH", default="//baked_lighting/", options=PATH_OPTIONS)
     lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the scene exports its lamps, since Bevy already lights meshes with them", default=False)
-    export_again: EnumProperty(name="Export Again", description="Export the scene again when the bake finishes, to the file and with the settings of its last export", items=(("NONE", "Off", "Only bake"), ("GLB", "Bevy Scene (.glb)", "Export the scene again to the .glb file that the last GLB export wrote"), ("BSN", "Bevy Scene (BSN)", "Export the scene again to the .rs file that the last BSN export wrote")), default="NONE")
+    export_again: EnumProperty(name="Export Again", description="Export the scene again when the bake finishes, to the file and with the settings of its last export", items=(("NONE", "Off", "Only bake"), ("GLB", "Bevy Scene (.glb)", "Export the scene again to the .glb file that the last GLB export wrote")), default="NONE")
 
 
 class ExportOptions:
@@ -295,13 +295,6 @@ EXPORT_OPTIONS = tuple(ExportOptions.__annotations__)
 
 class BEVY_PG_glb_export(bpy.types.PropertyGroup, ExportOptions):
     filepath: StringProperty(name="GLB File", description="GLB file that the last export wrote, which Export Again writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
-
-
-class BEVY_PG_bsn_export(bpy.types.PropertyGroup, ExportOptions):
-    rust_file: StringProperty(name="Rust File", description="Rust file that the last BSN export wrote, which Export Again writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
-    assets_folder: StringProperty(name="Assets Folder", description="Assets folder that the last BSN export wrote, empty for the default next to Cargo.toml", subtype="DIR_PATH", options=PATH_OPTIONS)
-    prefab_functions: BoolProperty(name="Prefab Functions", description="Whether the last BSN export wrote shared objects as object_ functions", default=True)
-    written_files: StringProperty(name="Written Files", description="Assets folder and files that the last BSN export wrote there, so the next export can remove the ones it no longer needs", options={"HIDDEN"})
 
 
 class BEVY_PG_overview(bpy.types.PropertyGroup):

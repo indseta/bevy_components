@@ -5,7 +5,7 @@ import bpy
 
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
 from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
 from .project import game_folder, play_target
@@ -580,12 +580,9 @@ class BEVY_PT_view_export(bpy.types.Panel):
         draw_export_again(column, context.scene)
         draw_export_all(column)
         column.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Scene (.glb)...", icon="EXPORT")
-        column.operator(BEVY_OT_export_bsn.bl_idname, text="Bevy Scene (BSN)...", icon="EXPORT")
-        exports = [(operator, label) for operator, label in ((BEVY_OT_export_glb, "GLB"), (BEVY_OT_export_bsn, "BSN")) if operator.remembered(context.scene)]
-        if exports:
+        if BEVY_OT_export_glb.remembered(context.scene):
             column.separator()
-        for operator, label in exports:
-            column.prop(getattr(context.scene, operator._settings), "export_on_save", text="Export on Save" if len(exports) == 1 else f"Export {label} on Save")
+            column.prop(context.scene.bevy_glb_export, "export_on_save", text="Export on Save")
 
 
 def _draw_play_target(layout, context, width):
@@ -598,7 +595,7 @@ def _draw_play_target(layout, context, width):
         layout.operator("preferences.addon_show", text="Open Preferences", icon="PREFERENCES").module = __package__
         return
     layout.label(text="Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", icon="CONSOLE")
-    if not any(operator.remembered(context.scene) for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn)):
+    if not BEVY_OT_export_glb.remembered(context.scene):
         draw_message(layout, "Export the scene once, then Play exports it again each time", "INFO", width)
 
 
@@ -712,7 +709,6 @@ class BEVY_PT_scene_definitions(bpy.types.Panel):
         body.prop(field, "field_type")
         if field.field_type == "ENUM":
             body.prop(field, "variants")
-            body.prop(field, "rust_type", text="Enum Type")
         body.prop(field, _field_property(field), text="Default")
 
 

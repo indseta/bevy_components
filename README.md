@@ -1,6 +1,6 @@
 # Bevy Components
 
-Blender addon for adding Bevy components to objects and exporting scenes as a single GLB or as BSN Rust code, plus a Rust importer that turns the GLB's components back into components in Bevy.
+Blender addon for adding Bevy components to objects and exporting them as GLB files, plus a Rust importer that turns the GLB's components back into components in Bevy.
 
 Requires Blender 4.2+, Bevy 0.20 and Avian 0.8.
 
@@ -83,7 +83,6 @@ The World properties add **Bevy Sky** and **Bevy Ambient Light**, and **Bevy Pre
 - [Lighting](docs/lighting.md): lights, ambient light, the sky, fog, light probes and baked lighting
 - [Exporting](docs/exporting.md): export options, Export Again, hot reload, prefabs and the checks
 - [Texture compression](docs/texture_compression.md): KTX2 textures embedded in the GLB
-- [BSN export](docs/bsn_export.md): the scene as Rust code with `bsn!`
 - [Play and the viewer](docs/play.md): run your game from Blender, or open any scene in the importer's viewer
 - [Development](docs/development.md): tests, CI and releases
 
