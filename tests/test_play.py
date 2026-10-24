@@ -31,7 +31,7 @@ def program(folder, name, code):
 def alive(pid):
     try:
         status = pathlib.Path(f"/proc/{pid}/stat").read_text()
-    except FileNotFoundError:
+    except (FileNotFoundError, ProcessLookupError):
         return False
     return status.rsplit(")", 1)[1].split()[0] != "Z"
 
