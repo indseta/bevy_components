@@ -98,13 +98,14 @@ fn split_glb(bytes: &[u8]) -> Option<Glb<'_>> {
     while offset + CHUNK_HEADER_LENGTH <= length {
         let chunk_length = read_u32(bytes, offset)? as usize;
         let chunk_type = read_u32(bytes, offset + 4)?;
-        let chunk = bytes.get(offset + CHUNK_HEADER_LENGTH..offset + CHUNK_HEADER_LENGTH + chunk_length)?;
+        let end = (offset + CHUNK_HEADER_LENGTH).checked_add(chunk_length)?;
+        let chunk = bytes.get(offset + CHUNK_HEADER_LENGTH..end)?;
         if chunk_type == JSON_CHUNK && json.is_none() {
             json = Some(chunk);
         } else if chunk_type == BIN_CHUNK && binary.is_empty() {
             binary = chunk;
         }
-        offset += CHUNK_HEADER_LENGTH + chunk_length;
+        offset = end;
     }
     return Some(Glb { json: json?, binary });
 }

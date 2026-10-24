@@ -177,6 +177,9 @@ def _jpeg_size(data):
             offset += 1
             continue
         marker = data[offset + 1]
+        if marker == 0xFF:
+            offset += 1
+            continue
         if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
             offset += 2
             continue

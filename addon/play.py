@@ -148,7 +148,7 @@ class GameProcess:
     def problem(self):
         lines = self.output()
         for index, line in enumerate(lines):
-            if ERROR_LINE.match(line):
+            if ERROR_LINE.match(line) or ((log := LOG_PREFIX.match(line)) is not None and log.group("level") == "ERROR"):
                 return line
             if PANIC_LINE.search(line):
                 return lines[index + 1].strip() if index + 1 < len(lines) and lines[index + 1].strip() else line

@@ -132,6 +132,12 @@ class TestNavigation(unittest.TestCase):
         setup = function(source(gltf)[0], "setup")
         self.assertEqual(setup.count("NavigationObstacle"), 3)
 
+    def test_hidden_meshes_keep_the_marker_on_their_collider(self):
+        wall = [{"type": "collider", "shape": "cuboid", "size": [4, 2, 0.5], "collision_only": True}, OBSTACLE]
+        setup = function(source(scene(node("wall", wall, mesh=0)))[0], "setup")
+        self.assertIn("Collider::cuboid(4.0, 2.0, 0.5)\n            NavigationObstacle\n", setup)
+        self.assertEqual(setup.count("NavigationObstacle"), 2)
+
     def test_scenes_without_navigation_need_no_importer(self):
         text, _warnings = source(scene(node("rock", BODY, mesh=0)))
         self.assertNotIn("bevy_components_importer", text)

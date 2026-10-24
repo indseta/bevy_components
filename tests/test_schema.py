@@ -28,6 +28,7 @@ class TestSchema(unittest.TestCase):
         self.assertEqual(patrol.others, [("timer", "bevy_time::timer::Timer")])
         self.assertTrue(patrol.has_default)
         self.assertEqual([(field.identifier, field.field_type) for field in types["my_game::Reward"].fields], [("0", "INT"), ("1", "FLOAT")])
+        self.assertEqual((patrol.tuple_struct, types["my_game::Reward"].tuple_struct), (False, True))
 
     def test_missing_or_odd_defaults_fall_back(self):
         fields = [{"name": "tint", "type": "color"}, {"name": "mode", "type": "enum", "variants": ["Idle", "Run"], "default": "Fly"}, {"name": "count", "type": "int", "default": 2 ** 40}, {"name": "aim", "type": "vector2", "default": [1, "x"]}, {"name": "path", "type": "other", "rust_type": "alloc::vec::Vec<f32>"}]

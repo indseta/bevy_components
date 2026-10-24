@@ -32,11 +32,12 @@ class GameField:
 
 
 class GameType:
-    def __init__(self, name, fields, others, has_default):
+    def __init__(self, name, fields, others, has_default, tuple_struct=False):
         self.name = name
         self.fields = fields
         self.others = others
         self.has_default = has_default
+        self.tuple_struct = tuple_struct
 
 
 def short_name(type_path):
@@ -71,7 +72,7 @@ def parse_schema(text):
             if kind == "ENUM" and default not in variant_names(variants):
                 default = next(iter(variant_names(variants)), "")
             fields.append(GameField(name, kind, rust_type, variants, FIELD_ZEROS[kind] if default is None else default))
-        types[entry["type_path"]] = GameType(entry["type_path"], fields, others, entry.get("has_default") is True)
+        types[entry["type_path"]] = GameType(entry["type_path"], fields, others, entry.get("has_default") is True, entry.get("kind") == "tuple_struct")
     return types
 
 

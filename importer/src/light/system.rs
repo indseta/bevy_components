@@ -96,10 +96,23 @@ pub fn apply_scene_lighting(mut commands: Commands, scenes: Query<(Entity, &Gltf
                         continue;
                     };
                     commands.insert_resource(BlenderSky { image, brightness, environment_light });
+                    commands.insert_resource(SkySource(entity));
                 }
                 _ => {}
             }
         }
+    }
+}
+
+pub fn clear_sky(mut commands: Commands, source: Option<Res<SkySource>>, scenes: Query<(), With<GltfSceneExtras>>, cameras: Query<Entity, With<SkyCamera>>) {
+    let Some(source) = source else { return; };
+    if scenes.contains(source.0) {
+        return;
+    }
+    commands.remove_resource::<SkySource>();
+    commands.remove_resource::<BlenderSky>();
+    for camera in &cameras {
+        commands.entity(camera).remove::<(SkyCamera, Skybox, GeneratedEnvironmentMapLight)>();
     }
 }
 

@@ -246,6 +246,10 @@ def check_bsn(objects, root):
         for item in components_for(obj):
             if item.component_type == "CUSTOM" and not component_errors(item):
                 component = serialize_component(item)
+                game_type = game_types().get(item.custom_type) if item.use_fields else None
+                if game_type is not None and game_type.tuple_struct and game_type.others:
+                    issues.append(Issue("ERROR", obj, item, f"{item.custom_type} is a tuple struct with fields Blender cannot set, so the BSN export cannot write it"))
+                    continue
                 untyped = [field.name for field in item.fields if item.use_fields and field.field_type == "ENUM" and not field.rust_type.strip()]
                 if untyped:
                     issues.append(Issue("ERROR", obj, item, f"Set the Enum Type of {', '.join(untyped)} in Properties > Scene > Bevy Custom Components, which the BSN export needs to write the variant"))
@@ -328,9 +332,12 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
                 issues.append(Issue("WARNING", obj, item, f"Added more than once, but an entity holds only one {item.custom_type}"))
             custom_types.add(item.custom_type)
             game_type = game_types().get(item.custom_type)
-            if item.use_fields and game_type is not None and game_type.others and not game_type.has_default:
+            if item.use_fields and game_type is not None and game_type.others:
                 names = ", ".join(name for name, _rust_type in game_type.others)
-                issues.append(Issue("WARNING", obj, item, f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
+                if game_type.tuple_struct:
+                    issues.append(Issue("WARNING", obj, item, f"Blender cannot set field {names}, and a tuple struct cannot leave fields out, so the game cannot insert {item.custom_type}. Name its fields, or skip that one with #[reflect(skip_serializing)]"))
+                elif not game_type.has_default:
+                    issues.append(Issue("WARNING", obj, item, f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
     light = light_of(obj)
     if light is not None and light.type == "AREA" and not any(item.component_type == "LIGHT" for item in obj.bevy_component_data.components):
         issues.append(Issue("WARNING", obj, None, "glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"))

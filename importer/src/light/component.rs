@@ -56,3 +56,6 @@ pub struct NoBlenderSky;
 
 #[derive(Component)]
 pub struct SkyCamera(pub BlenderSky);
+
+#[derive(Resource)]
+pub struct SkySource(pub Entity);

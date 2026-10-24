@@ -668,7 +668,9 @@ class TestOperators(unittest.TestCase):
         collider = add_component(self.obj, "COLLIDER")
         custom = add_component(self.obj, "CUSTOM", custom_json="{broken")
         collider.enabled = False
-        self.assertNotIn("bevy_components", self.obj.keys())
+        self.assertEqual(_stored(self.obj)["components"], [DYNAMIC_BODY])
+        with self.assertRaises(RuntimeError):
+            bpy.ops.bevy_components.validate()
         custom.enabled = False
         self.assertEqual(_stored(self.obj)["components"], [DYNAMIC_BODY])
         self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
@@ -1104,6 +1106,8 @@ class TestOperators(unittest.TestCase):
     def test_invalid_custom_json_is_not_stored(self):
         add_component(self.obj, "CUSTOM", custom_json="{broken")
         self.assertNotIn("bevy_components", self.obj.keys())
+        add_component(self.obj, "SHADOWS")
+        self.assertEqual([component["type"] for component in _stored(self.obj)["components"]], ["shadows"])
 
     def test_save_and_reload(self):
         add_component(self.obj, "COLLIDER", collider_shape="SPHERE", collider_radius=2, collider_friction=0.2, collider_memberships=layers(1, 7))
@@ -1965,6 +1969,19 @@ class TestCustomFields(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.define_fields(index=0), {"FINISHED"})
         self.assertEqual((self.library.active_index, len(self.library.definitions)), (0, 2))
 
+    def test_define_fields_keeps_enum_variants_and_rust_types(self):
+        definition = define_component("game::Team", ("side", "STRING", ""))
+        definition.fields[0].field_type = "ENUM"
+        definition.fields[0].variants = "Red, Blue"
+        definition.fields[0].rust_type = "game::Side"
+        item = add_component(self.obj, "CUSTOM", type_path="game::Team")
+        item.fields[0].enum_value = "Blue"
+        self.library.definitions.clear()
+        self.assertEqual(bpy.ops.bevy_components.define_fields(index=0), {"FINISHED"})
+        field = self._definition("game::Team").fields[0]
+        self.assertEqual((field.field_type, field.variants, field.rust_type, field.string_value), ("ENUM", "Red, Blue", "game::Side", "Blue"))
+        self.assertEqual(addon.validation.check_object(self.obj, bpy.data.objects), [])
+
     def test_define_fields_restores_a_missing_definition(self):
         define_component("game::Tag", ("label", "STRING", "a"))
         item = set_fields(add_component(self.obj, "CUSTOM", type_path="game::Tag"), label="b")
@@ -2116,6 +2133,17 @@ class TestGameComponents(unittest.TestCase):
         with self.assertRaises(TypeError):
             mode.enum_value = "Hover"
         self.assertEqual(addon.validation.check_object(self.obj, bpy.data.objects), [])
+
+    def test_tuple_structs_need_every_field(self):
+        with tempfile.TemporaryDirectory() as folder:
+            schema = Path(folder) / "bevy_components_schema.json"
+            fields = [{"name": "0", "type": "float", "rust_type": "f32", "default": 1.0}, {"name": "1", "type": "other", "rust_type": "bevy_asset::handle::Handle<bevy_image::image::Image>"}]
+            schema.write_text(json.dumps({"version": 1, "components": [{"type_path": "my_game::Spawn", "kind": "tuple_struct", "has_default": True, "fields": fields}]}), encoding="utf-8")
+            use_game_schema(schema)
+            self.addCleanup(use_game_schema, None)
+            add_component(self.obj, "CUSTOM", type_path="my_game::Spawn")
+            self.assertEqual([issue.message for issue in addon.validation.check_object(self.obj, bpy.data.objects)], ["Blender cannot set field 1, and a tuple struct cannot leave fields out, so the game cannot insert my_game::Spawn. Name its fields, or skip that one with #[reflect(skip_serializing)]"])
+            self.assertEqual([(issue.level, issue.message) for issue in addon.validation.check_bsn([self.obj], Path(folder))], [("ERROR", "my_game::Spawn is a tuple struct with fields Blender cannot set, so the BSN export cannot write it")])
 
     def test_tuple_structs_export_their_values_in_order(self):
         use_game_schema()
@@ -4088,6 +4116,18 @@ class TestExportOptions(unittest.TestCase):
         self.assertNotEqual(rust_file.read_text(encoding="utf-8"), source)
         self.assertTrue(self.scene.bevy_glb_export.export_on_save)
 
+    def test_export_on_save_finishes_the_glb_before_the_bsn_export(self):
+        add_mesh(bpy.ops.mesh.primitive_cube_add, "saved")
+        export_sample_scene(self.path)
+        export_bsn_scene(Path(self.directory.name) / "src" / "level.rs", Path(self.directory.name) / "assets")
+        self.scene.bevy_glb_export.export_on_save = True
+        self.scene.bevy_bsn_export.export_on_save = True
+        calls = []
+        exports = SimpleNamespace(**{name: lambda mode, name=name, **options: calls.append((name, mode, options)) for name in ("bevy_components_glb", "bevy_components_bsn")})
+        with mock.patch.object(bpy.ops, "export_scene", exports):
+            addon.operator.export_on_save(bpy.data.filepath)
+        self.assertEqual(calls, [("bevy_components_glb", "EXEC_DEFAULT", {"again": True}), ("bevy_components_bsn", "INVOKE_DEFAULT", {"again": True})])
+
     def test_saving_a_copy_does_not_export(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "copied")
         export_sample_scene(self.path)
@@ -4683,6 +4723,8 @@ class TestPrefabs(unittest.TestCase):
         self.assertEqual(self._exported_prefabs(), ["lamp post"])
         self.assertEqual(self._exported_prefabs(apply_modifiers=False), ["lantern", "lamp post"])
         self.assertEqual(self._exported_prefabs(apply_modifiers=False), [])
+        with mock.patch.object(addon.prefab, "addon_version", lambda: "99.0.0"):
+            self.assertEqual(self._exported_prefabs(apply_modifiers=False), ["lantern", "lamp post"])
         record = json.loads(self.lamp.bevy_prefab.exported)
         self.assertEqual(record["size"], (self.assets / "props" / "lamp_post.glb").stat().st_size)
 
@@ -4911,6 +4953,14 @@ class TestBakeLighting(unittest.TestCase):
         scene.world = bpy.data.worlds.get(world)
         if dark is not None and dark.users == 0:
             bpy.data.worlds.remove(dark)
+
+    def test_bakes_find_components_that_moved(self):
+        room = add_empty("room", (0, 0, 0))
+        add_component(room, "SHADOWS")
+        probe = add_component(room, "REFLECTION_PROBE")
+        operator = _bake_operator(_jobs=[{"object": "room", "index": 0, "kind": "CUBEMAP", "file": "//baked_lighting/room.ktx2", "fingerprint": "abc"}])
+        self.assertEqual(len(operator._store_files(1)), 1)
+        self.assertEqual((probe.probe_file, probe.bake_fingerprint), ("//baked_lighting/room.ktx2", "abc"))
 
     def _probe(self, name, kind, location=(0, 0, 0), **values):
         holder = add_empty(name, location)

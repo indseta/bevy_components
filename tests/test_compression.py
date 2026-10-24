@@ -141,6 +141,10 @@ class TestImages(unittest.TestCase):
     def test_jpeg_info(self):
         self.assertEqual(compression.image_info(_jpeg(640, 480)), (640, 480, False))
 
+    def test_jpeg_markers_may_have_fill_bytes(self):
+        padded = _jpeg(640, 480).replace(b"\xff\xc0", b"\xff\xff\xff\xc0").replace(b"\xff\xe0", b"\xff\xff\xe0")
+        self.assertEqual(compression.image_info(padded), (640, 480, False))
+
     def test_unknown_images(self):
         with self.assertRaises(ValueError):
             compression.image_info(b"RIFF0000WEBP")

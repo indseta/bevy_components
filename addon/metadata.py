@@ -1,3 +1,4 @@
+import functools
 import json
 import math
 import os
@@ -430,6 +431,7 @@ def serialize_items(items, locate=_portable):
     return json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)
 
 
+@functools.cache
 def addon_version():
     return tomllib.loads(MANIFEST.read_text(encoding="utf-8"))["version"]
 

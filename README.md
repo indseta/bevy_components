@@ -166,7 +166,7 @@ Your components then show under **Add Component**, in a menu named after your cr
 
 ### In the game
 
-The importer inserts the component itself when your type derives `Reflect` with `#[reflect(Component)]`, found by its type path or by crate and type name, so `my_game::Health` also finds `my_game::stats::Health`. Add `#[reflect(Default)]` to fill in fields the data leaves out. Other types arrive as JSON in `BlenderCustomComponents`, which `serde_json::from_value` reads into a struct with the same field names. Either way, the fields map to these Rust types:
+The importer inserts the component itself when your type derives `Reflect` with `#[reflect(Component)]`, found by its type path or by crate and type name, so `my_game::Health` also finds `my_game::stats::Health`, and a plain `Health` finds it when no other registered type has that name. Add `#[reflect(Default)]` to fill in fields the data leaves out. Other types arrive as JSON in `BlenderCustomComponents`, which `serde_json::from_value` reads into a struct with the same field names. Either way, the fields map to these Rust types:
 
 | Field | Rust type |
 | --- | --- |
@@ -281,7 +281,7 @@ fn setup(mut commands: Commands) {
 
 With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file, so **Export Again** writes the same files in one click, and it only rewrites files that changed. It will not write over `main.rs`, `lib.rs` or another crate root, warns before it replaces a `.rs` file it did not write or one edited since the last export (Export Again refuses those), and removes files it copied into the assets folder earlier that the scene no longer uses. Rebuild the game after exporting again.
 
-- Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors, colors and enum variants.
+- Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors, colors and enum variants. Custom JSON is written as it is typed, so give a float field `5.0`, not `5`.
 - Navigation writes the importer's `NavigationWalkable` and `NavigationObstacle`, so a scene that uses it needs the importer crate, though not its plugin.
 - The Bevy Sky sets the importer's `BlenderSky` resource, so a scene with a sky needs the importer crate and its plugin, which puts the sky on the cameras.
 - Physics needs Avian with its `collider-from-mesh` feature. Add `BlenderBevyComponentsPlugin` when you compress textures or use a Scene Reference, since the referenced GLBs carry their components the usual way.

@@ -942,7 +942,7 @@ class _Generator:
             mesh_parts.extend(_part([], "Transform", primitive + mesh_entries) for primitive in primitives)
         body.extend(self._collider_entries(index, components))
         collider = _first(components, "collider")
-        if len(primitives) != 1 and collider is not None and collider.get("shape") in COLLIDER_SHAPES and collider.get("shape") not in MESH_SHAPES:
+        if not mesh and collider is not None and collider.get("shape") in COLLIDER_SHAPES and collider.get("shape") not in MESH_SHAPES:
             body.extend(self._navigation_entries(index))
         body.extend(self._body_entries(index, components))
         body.extend(self._light_entries(index, components))

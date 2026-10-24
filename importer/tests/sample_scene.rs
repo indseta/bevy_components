@@ -50,6 +50,10 @@ mod stats {
     pub struct Unmarked {
         pub value: f32,
     }
+
+    #[derive(Component, Reflect, Debug, PartialEq)]
+    #[reflect(Component)]
+    pub struct Tagged<T>(pub T);
 }
 
 fn node(world: &mut World, name: &str) -> Entity {
@@ -384,11 +388,15 @@ fn registered_custom_components_are_inserted() {
     let mut app = SceneApp::default().build();
     let hero = json!([{"type": "custom", "type_path": "sample_scene::Health", "data": {"current": 5}}, {"type": "custom", "type_path": "sample_scene::stats::Armor", "data": 3}, {"type": "custom", "type_path": "sample_scene::stats::Loot", "data": {"item": "coin", "tint": {"Srgba": {"red": 1.0, "green": 0.8, "blue": 0.2, "alpha": 1.0}}, "offset": [0.0, 1.5, 0.0]}}, {"type": "custom", "type_path": "my_game::Unknown", "data": {"level": 2}}]);
     let villain = json!([{"type": "custom", "type_path": "sample_scene::stats::Health", "data": {"current": 5, "shield": 2}}, {"type": "custom", "type_path": "sample_scene::stats::Loot", "data": {"item": "coin"}}, {"type": "custom", "type_path": "sample_scene::stats::Unmarked", "data": {"value": 1.0}}, {"type": "custom", "type_path": "other_game::Health", "data": {"current": 1}}]);
+    let guard = json!([{"type": "custom", "type_path": "Armor", "data": 4}, {"type": "custom", "type_path": "sample_scene::Tagged<i32>", "data": 7}]);
+    app.register_type::<stats::Tagged<i32>>();
     let world = app.world_mut();
     let hero = world.spawn((Name::new("hero"), Transform::default(), component_extras(hero))).id();
     let villain = world.spawn((Name::new("villain"), Transform::default(), component_extras(villain))).id();
+    let guard = world.spawn((Name::new("guard"), Transform::default(), component_extras(guard))).id();
     app.update();
     let world = app.world();
+    assert_eq!((world.get::<stats::Armor>(guard), world.get::<stats::Tagged<i32>>(guard)), (Some(&stats::Armor(4)), Some(&stats::Tagged(7))));
     assert_eq!(world.get::<stats::Health>(hero), Some(&stats::Health { current: 5.0, maximum: 100.0 }));
     assert_eq!(world.get::<stats::Armor>(hero), Some(&stats::Armor(3)));
     assert_eq!(world.get::<stats::Loot>(hero), Some(&stats::Loot { item: "coin".to_string(), tint: Color::srgba(1.0, 0.8, 0.2, 1.0), offset: Vec3::new(0.0, 1.5, 0.0) }));
@@ -1512,6 +1520,26 @@ fn cameras_show_the_scene_sky() {
     }
     assert!(world.get::<Skybox>(opted_out).is_none());
     assert!(world.get::<GeneratedEnvironmentMapLight>(opted_out).is_none());
+}
+
+#[test]
+fn the_sky_leaves_with_its_scene() {
+    let mut app = SceneApp::default().build();
+    let camera = app.world_mut().spawn(Camera3d::default()).id();
+    if let Err(error) = spawn_scene(&mut app, SCENE) {
+        panic!("{SCENE} did not load: {error}");
+    }
+    app.update();
+    assert!(app.world().get::<Skybox>(camera).is_some());
+    let roots: Vec<Entity> = app.world_mut().query_filtered::<Entity, With<WorldAssetRoot>>().iter(app.world()).collect();
+    for root in roots {
+        app.world_mut().entity_mut(root).despawn();
+    }
+    app.update();
+    let world = app.world();
+    assert!(world.get_resource::<BlenderSky>().is_none());
+    assert!(world.get::<Skybox>(camera).is_none());
+    assert!(world.get::<GeneratedEnvironmentMapLight>(camera).is_none());
 }
 
 #[test]

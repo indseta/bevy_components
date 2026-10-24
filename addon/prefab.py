@@ -11,7 +11,7 @@ import bpy
 from mathutils import Quaternion, Vector
 
 from .bsn import snake_case
-from .metadata import EXTRAS_KEY, SCHEMA_VERSION, relative_path, serialize_items
+from .metadata import EXTRAS_KEY, SCHEMA_VERSION, addon_version, relative_path, serialize_items
 
 FINGERPRINT_VERSION = 1
 SCENE_NAME = "Bevy Prefab Export"
@@ -113,7 +113,7 @@ def prefab_settings(options):
 def prefab_fingerprint(collection, settings, scene):
     digest = hashlib.sha256()
     seen = {}
-    _update(digest, (FINGERPRINT_VERSION, SCHEMA_VERSION, str(prefab_file(collection)), tuple(collection.instance_offset), sorted(settings.items())))
+    _update(digest, (FINGERPRINT_VERSION, SCHEMA_VERSION, addon_version(), str(prefab_file(collection)), tuple(collection.instance_offset), sorted(settings.items())))
     animated = False
     for obj in sorted(collection.all_objects, key=lambda obj: obj.name_full):
         if obj.mode == "EDIT":

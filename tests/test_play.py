@@ -169,6 +169,9 @@ class GameProcessTests(unittest.TestCase):
             self.assertEqual(task.problem(), "error[E0425]: cannot find value `x`")
             task = finished(play.GameProcess(python("import sys; sys.exit(3)"), folder, "game"))
             self.assertEqual(task.problem(), "no output")
+            log = "2026-10-24T12:00:00.123456Z ERROR bevy_asset::server: Failed to load asset 'levels/missing.glb'"
+            task = finished(play.GameProcess(python(f"import sys; print({log!r}); print('2026-10-24T12:00:01Z  INFO bevy_app: Exiting'); sys.exit(1)"), folder, "game"))
+            self.assertEqual(task.problem(), log)
 
     @unittest.skipUnless(POSIX, "uses an executable script")
     def test_cargo_builds_until_it_runs_the_game(self):

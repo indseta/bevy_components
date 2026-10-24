@@ -578,19 +578,21 @@ class BEVY_OT_define_fields(bpy.types.Operator):
         definition = scene_definition(context.scene, item.custom_type)
         if definition is None:
             if item.use_fields:
-                fields = [(field.identifier, field.name, field.field_type, field_slot(field)) for field in item.fields]
+                fields = [(field.identifier, field.name, field.field_type, field.variants, field.rust_type, field_slot(field)) for field in item.fields]
             else:
                 try:
-                    fields = [("", name, kind, value) for name, kind, value in infer_fields(json.loads(item.custom_json))]
+                    fields = [("", name, kind, "", "", value) for name, kind, value in infer_fields(json.loads(item.custom_json))]
                 except (json.JSONDecodeError, ValueError) as error:
                     self.report({"ERROR"}, f"Cannot define fields for {item.custom_type}: {error}")
                     return {"CANCELLED"}
             definition = library.definitions.add()
-            for identifier, name, kind, value in fields:
+            for identifier, name, kind, variants, rust_type, value in fields:
                 field = definition.fields.add()
                 field.identifier = identifier or new_identifier()
                 field.name = name
                 field.field_type = kind
+                field.variants = variants
+                field.rust_type = rust_type
                 write_field(field, value)
             definition.name = item.custom_type
         library.active_index = list(library.definitions).index(definition)
@@ -1768,15 +1770,16 @@ def export_on_save(path):
     scene = bpy.context.scene
     if path != bpy.data.filepath or scene is None or not hasattr(scene, "bevy_glb_export"):
         return
-    for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn):
-        if getattr(scene, operator._settings).export_on_save and operator.remembered(scene):
-            try:
-                getattr(bpy.ops.export_scene, operator.bl_idname.partition(".")[2])("INVOKE_DEFAULT", again=True)
-            except RuntimeError as error:
-                message = str(error).removeprefix("Error: ").strip()
-                print("Bevy Components: Export on Save failed:", message)
-                if not bpy.app.background:
-                    bpy.context.window_manager.popup_menu(lambda menu, _context, text=message: menu.layout.label(text=text), title=f"Export on Save failed ({operator.bl_label})", icon="ERROR")
+    operators = [operator for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn) if getattr(scene, operator._settings).export_on_save and operator.remembered(scene)]
+    for index, operator in enumerate(operators):
+        mode = "INVOKE_DEFAULT" if index == len(operators) - 1 else "EXEC_DEFAULT"
+        try:
+            getattr(bpy.ops.export_scene, operator.bl_idname.partition(".")[2])(mode, again=True)
+        except RuntimeError as error:
+            message = str(error).removeprefix("Error: ").strip()
+            print("Bevy Components: Export on Save failed:", message)
+            if not bpy.app.background:
+                bpy.context.window_manager.popup_menu(lambda menu, _context, text=message: menu.layout.label(text=text), title=f"Export on Save failed ({operator.bl_label})", icon="ERROR")
 
 
 class BEVY_OT_unwrap_lightmap(bpy.types.Operator):
@@ -2016,9 +2019,11 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
                 continue
             obj = bpy.data.objects.get(job["object"])
             items = obj.bevy_component_data.components if obj is not None and obj.library is None else ()
-            if job["index"] < len(items) and FILE_KINDS.get(items[job["index"]].component_type) == job["kind"]:
-                items[job["index"]].probe_file = job["file"]
-                items[job["index"]].bake_fingerprint = job.get("fingerprint", "")
+            matching = [item for item in items if FILE_KINDS.get(item.component_type) == job["kind"]]
+            item = items[job["index"]] if job["index"] < len(items) and items[job["index"]] in matching else matching[0] if len(matching) == 1 else None
+            if item is not None:
+                item.probe_file = job["file"]
+                item.bake_fingerprint = job.get("fingerprint", "")
                 stored.append(job)
         return stored
 

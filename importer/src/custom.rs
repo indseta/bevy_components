@@ -34,13 +34,29 @@ fn registration<'a>(registry: &'a TypeRegistry, type_path: &str) -> Option<&'a T
     if let Some(registration) = registry.get_with_type_path(type_path) {
         return Some(registration);
     }
-    let (crate_name, _) = type_path.split_once("::")?;
-    let short_path = type_path.rsplit("::").next()?;
-    let in_crate = |registration: &&TypeRegistration| registration.type_info().type_path_table().crate_name() == Some(crate_name);
-    if !registry.is_ambiguous(short_path) {
-        return registry.get_with_short_type_path(short_path).filter(in_crate);
+    let crate_name = type_path.split_once("::").map(|(name, _)| name);
+    let short_path = short_path(type_path);
+    let in_crate = |registration: &&TypeRegistration| crate_name.is_none_or(|name| registration.type_info().type_path_table().crate_name() == Some(name));
+    if !registry.is_ambiguous(&short_path) {
+        return registry.get_with_short_type_path(&short_path).filter(in_crate);
     }
     let mut found = registry.iter().filter(|registration| registration.type_info().type_path_table().short_path() == short_path).filter(in_crate);
     let registration = found.next()?;
     return found.next().is_none().then_some(registration);
+}
+
+fn short_path(type_path: &str) -> String {
+    let mut short = String::new();
+    let mut segment = String::new();
+    for character in type_path.chars() {
+        if character.is_alphanumeric() || character == '_' || character == ':' {
+            segment.push(character);
+            continue;
+        }
+        short.push_str(segment.rsplit("::").next().unwrap_or_default());
+        segment.clear();
+        short.push(character);
+    }
+    short.push_str(segment.rsplit("::").next().unwrap_or_default());
+    return short;
 }

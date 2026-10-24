@@ -1,3 +1,4 @@
+import functools
 import json
 import mimetypes
 import os
@@ -260,14 +261,25 @@ def sync_object(obj, directory=None):
     data = getattr(obj, "bevy_component_data", None)
     if not data:
         return
+    locate = functools.partial(scene_path, directory=directory)
     items = components_for(obj)
+    try:
+        serialized = serialize_items(items, locate)
+    except ValueError:
+        items = [item for item in items if _serializes(item, locate)]
+        serialized = serialize_items(items, locate)
     if items:
-        try:
-            obj[EXTRAS_KEY] = serialize_items(items, lambda path: scene_path(path, directory))
-        except ValueError:
-            obj.pop(EXTRAS_KEY, None)
+        obj[EXTRAS_KEY] = serialized
     else:
         obj.pop(EXTRAS_KEY, None)
+
+
+def _serializes(item, locate):
+    try:
+        serialize_items([item], locate)
+    except ValueError:
+        return False
+    return True
 
 
 def component_index(obj, item):
