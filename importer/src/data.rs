@@ -33,6 +33,7 @@ pub enum ExportedComponent {
         restitution: Option<f32>,
         memberships: Option<u32>,
         filters: Option<u32>,
+        own_mesh: Option<bool>,
     },
     RigidBody {
         kind: String,
@@ -73,6 +74,9 @@ pub enum ExportedComponent {
     },
     Light(ExportedLight),
     AmbientLight(ExportedAmbientLight),
+    Gravity {
+        value: [f32; 3],
+    },
     Custom {
         type_path: String,
         data: Value,

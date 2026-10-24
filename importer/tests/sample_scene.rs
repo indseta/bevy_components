@@ -801,6 +801,65 @@ fn collision_only_hides_meshes_but_keeps_colliders() {
     assert_ne!(world.get::<Visibility>(hull), Some(&Visibility::Hidden));
 }
 
+fn own_mesh(mut collider: Value) -> Value {
+    collider["own_mesh"] = json!(true);
+    return collider;
+}
+
+#[test]
+fn colliders_from_blender_physics_leave_child_meshes_alone() {
+    let mut app = SceneApp::default().build();
+    let world = app.world_mut();
+    let cube = world.resource_mut::<Assets<Mesh>>().add(Mesh::from(Cuboid::new(2.0, 2.0, 2.0)));
+    let hull = spawn_components(world, "hull", Vec3::ZERO, json!([own_mesh(box_collider("convex", false, None, true))]));
+    let hull_mesh = spawn_mesh(world, &cube, hull);
+    let hull_part = world.spawn((Transform::default(), ChildOf(hull))).id();
+    let hull_part_mesh = spawn_mesh(world, &cube, hull_part);
+    let wall = spawn_components(world, "wall", Vec3::new(10.0, 0.0, 0.0), json!([own_mesh(box_collider("cuboid", false, None, true))]));
+    let wall_mesh = spawn_mesh(world, &cube, wall);
+    let wall_part = world.spawn((Transform::default(), ChildOf(wall))).id();
+    let wall_part_mesh = spawn_mesh(world, &cube, wall_part);
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    assert_eq!([hull_mesh, hull_part_mesh, wall_mesh, wall_part_mesh].map(|mesh| world.get::<Visibility>(mesh) == Some(&Visibility::Hidden)), [true, false, true, false]);
+    assert_eq!([hull_mesh, hull_part_mesh, wall, wall_mesh, wall_part_mesh].map(|entity| world.get::<Collider>(entity).is_some()), [true, false, true, false, false]);
+}
+
+#[test]
+fn cylinders_and_cones_stand_on_the_y_axis() {
+    let mut app = SceneApp::default().build();
+    let world = app.world_mut();
+    let cylinder = spawn_components(world, "cylinder", Vec3::ZERO, json!([{"type": "collider", "shape": "cylinder", "size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 2.0, "sensor": false}]));
+    let cone = spawn_components(world, "cone", Vec3::new(5.0, 0.0, 0.0), json!([{"type": "collider", "shape": "cone", "size": [1.0, 1.0, 1.0], "radius": 1.0, "height": 3.0, "offset": [0.0, 1.5, 0.0], "sensor": false}]));
+    app.update();
+    let world = app.world();
+    let shape = world.get::<Collider>(cylinder).expect("a cylinder collider").shape().as_cylinder().expect("a cylinder");
+    assert_eq!((shape.radius, shape.half_height), (0.5, 1.0));
+    let bounds = world.get::<Collider>(cone).expect("a cone collider").aabb(Vec3::ZERO, Quat::IDENTITY, 0.0);
+    assert!(bounds.min.abs_diff_eq(Vec3::new(-1.0, 0.0, -1.0), 1e-5) && bounds.max.abs_diff_eq(Vec3::new(1.0, 3.0, 1.0), 1e-5), "the cone spans {bounds:?}");
+    assert_eq!(world.get::<RigidBody>(cylinder), Some(&RigidBody::Static));
+}
+
+fn gravity_extras(gravity: [f32; 3]) -> GltfSceneExtras {
+    let data = json!({"version": 1, "components": [{"type": "gravity", "value": gravity}]});
+    return GltfSceneExtras { value: json!({"bevy_components": data.to_string()}).to_string() };
+}
+
+#[test]
+fn scene_gravity_replaces_avian_gravity() {
+    let mut app = single_threaded_app();
+    assert_eq!(app.world().resource::<Gravity>().0, Vec3::NEG_Y * 9.81);
+    let warnings = warnings_while(|| {
+        app.world_mut().spawn((Name::new("moon"), gravity_extras([0.0, -1.62, 0.0])));
+        app.world_mut().spawn((Name::new("floating"), component_extras(json!([{"type": "gravity", "value": [0.0, 1.0, 0.0]}]))));
+        app.update();
+    });
+    assert_eq!(app.world().resource::<Gravity>().0, Vec3::new(0.0, -1.62, 0.0));
+    assert_eq!(warnings, vec!["floating: Gravity belongs on the scene, not on an object".to_string()]);
+}
+
 #[test]
 fn masses_set_the_total_body_mass() {
     let mut app = load_scene(SCENE);

@@ -1,6 +1,6 @@
 # Components
 
-Add components with **Add Component** in **Properties > Object > Components** or **3D Viewport > N > Bevy**. Physics, Rendering and Lighting components sit in submenus, and typing searches them all. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
+Add components with **Add Component** in **Properties > Object > Components** or **3D Viewport > N > Bevy**. Physics comes from Blender's own Rigid Body, see [Physics](#physics). Physics, Rendering and Lighting components sit in submenus, and typing searches them all. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
 
 ## Working with components
 
@@ -14,11 +14,27 @@ Each component works like a modifier: collapse it, untick it to leave it out of 
 
 Previews are editor-only and are not exported. Set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded.
 
-Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
+Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull Collider components are built from every mesh on or under the object, Blender's Mesh and Convex Hull shapes from the object's own mesh, and Convex Hull previews draw the hull the game gets, one per material. Blender's Rigid Body shapes show in the same colors as Collider components.
 
 ## Physics
 
-**Collider** adds an Avian cuboid, sphere, capsule, convex hull or triangle mesh collider, or a sensor. Sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider.
+Physics uses Blender's own **Rigid Body** and **Rigid Body Constraint** in **Properties > Physics**, and the export turns them into Avian components. **Add Component > Physics** has both at the top.
+
+- **Rigid Body**: Active becomes a dynamic body, Passive a static one and **Animated** a kinematic one. An Active body with **Dynamic** turned off is static. Mass, friction, bounciness and damping go to the game unchanged, though Avian averages friction and bounciness between two colliders where Blender multiplies them.
+- **Shape**: Box, Sphere, Capsule, Cylinder and Cone take their size from the mesh and sit on the object's origin, as they do in Blender. Convex Hull and Mesh use the object's own mesh, not its children's. **Compound Parent** makes one body from the direct children that have a Rigid Body: only their shapes count.
+- **Collision Collections** become Avian collision layers 0 to 19, so two objects collide when they share a collection.
+- **Rigid Body Constraint**: Fixed, Point, Hinge and Slider become Avian's fixed, ball, hinge and slider joints with their limits. A hinge turns around the constraint object's Z axis and a slider moves along its X axis. Piston, Generic, Generic Spring and Motor have no Avian joint, so the game leaves them out.
+- **Scene > Gravity**: when the scene has a Rigid Body World and its gravity differs from Earth's, the scene sets Avian's `Gravity` when it loads.
+
+Each of those panels has a **Bevy** subpanel for what Blender lacks: mass from volume, gravity scale, swept CCD, locked axes and a starting velocity and spin under Rigid Body; Sensor, Collision Events, Collision Only and **Bevy Layers** (Avian's 32 layers, with separate Belongs To and Collides With) under Collisions; and the ball joint's swing limit and damping under Rigid Body Constraint. Axes there are Blender's.
+
+The export writes bodies where the simulation starts, also when the timeline is on a later frame.
+
+### Physics components
+
+The **Collider**, **Rigid Body** and **Joint** components cover what Blender's physics cannot: an empty that holds child colliders, a collider with an offset or another size than the mesh, a mesh collider that covers child meshes, or joints along other axes. A component replaces Blender's setting of the same kind on that object.
+
+**Collider** adds an Avian cuboid, sphere, capsule, cylinder, cone, convex hull or triangle mesh collider, or a sensor. Sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider.
 
 - **Collision Events** adds Avian's `CollisionEventsEnabled`, so the collider sends `CollisionStart` and `CollisionEnd`. It is on by default for sensors.
 - **Collision Only** hides the meshes on and under the object in the game with `Visibility::Hidden` and keeps their colliders, for invisible walls.
@@ -27,6 +43,10 @@ Handles on the selected object resize colliders, visibility ranges, light ranges
 **Rigid Body** makes the object Static, Dynamic or Kinematic. Dynamic bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Objects with a Collider and no Rigid Body on them or a parent become static bodies.
 
 **Joint** connects two bodies with an Avian Fixed, Hinge, Slider or Ball joint. Put it on an empty at the pivot, or on one of the bodies, and pick Body 1 and Body 2 from objects with a Rigid Body or Collider. Leave one empty to pin the other to that spot in the scene. The object's position and its Axis set the pivot, and limits count from where the bodies sit in Blender.
+
+### Converting older files
+
+**Bevy Components > Convert Physics to Blender** in the 3D Viewport's Object and right-click menus replaces Collider, Rigid Body and Joint components with Blender's Rigid Body and Rigid Body Constraint wherever the game gets the same physics. It keeps the components it cannot replace and lists those objects with the reason, such as a collider offset or a hinge on another axis. A collider on the default layers moves to Collision Collection 0, unless another collider in the scene relies on touching it from another layer; then it keeps those layers under Bevy Layers.
 
 ## Rendering
 

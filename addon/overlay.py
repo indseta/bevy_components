@@ -10,12 +10,13 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
-from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
-from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
+from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cone_shape_lines, cuboid_lines, cylinder_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
+from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit, serialize_items
+from .native import native_components
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .schema import short_name
-from .system import changes_mesh, children_map, component_of, components_for, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports
+from .system import changes_mesh, children_map, collider_sources, component_of, components_for, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports
 from .validation import texture_check
 
 DRAW_3D = None
@@ -107,7 +108,7 @@ def joint_objects(context, settings, objects):
     selected = set(context.selected_objects)
     listed = set(found)
     for obj in context.scene.objects:
-        if obj in listed or JOINT_TAG not in str(obj.get(EXTRAS_KEY, "")) or not obj.visible_get(view_layer=context.view_layer):
+        if obj in listed or JOINT_TAG not in str(obj.get(EXTRAS_KEY, "")) and getattr(obj, "rigid_body_constraint", None) is None or not obj.visible_get(view_layer=context.view_layer):
             continue
         joint = component_of(obj, "JOINT")
         if joint is not None and (joint.joint_body1 in selected or joint.joint_body2 in selected):
@@ -172,7 +173,11 @@ def collider_lines(obj, item, limit, children):
         return [(collider_matrix(obj, item), sphere_lines(item.collider_radius))]
     if kind == "CAPSULE":
         return [(collider_matrix(obj, item), capsule_lines(item.collider_radius, item.collider_height))]
-    return [(matrix, mesh_lines(source, kind, limit)) for source, matrix in mesh_sources(obj, children, "COLLIDER")]
+    if kind == "CYLINDER":
+        return [(collider_matrix(obj, item), cylinder_lines(item.collider_radius, item.collider_height))]
+    if kind == "CONE":
+        return [(collider_matrix(obj, item), cone_shape_lines(item.collider_radius, item.collider_height))]
+    return [(matrix, mesh_lines(source, kind, limit)) for source, matrix in collider_sources(obj, children, item)]
 
 
 def collider_color(item):
@@ -414,9 +419,22 @@ def _settings_key(settings):
     return (settings.colliders, settings.joints, settings.velocities, settings.visibility_ranges, settings.audio_ranges, settings.scene_references, settings.volumes, settings.lights, settings.navigation, settings.max_mesh_edges)
 
 
-def _object_key(obj, settings, shown, children):
+def _native_key(obj):
+    natives = native_components(obj)
+    return serialize_items(natives) if natives else None
+
+
+def _stored_key(obj):
     stored = obj.get(EXTRAS_KEY)
-    if not isinstance(stored, str):
+    native = _native_key(obj)
+    if not isinstance(stored, str) and native is None:
+        return None
+    return (stored if isinstance(stored, str) else None, native)
+
+
+def _object_key(obj, settings, shown, children):
+    stored = _stored_key(obj)
+    if stored is None:
         return None
     key = [shown, _matrix_key(obj.matrix_world), stored]
     for item in components_for(obj):
@@ -440,8 +458,8 @@ def _object_key(obj, settings, shown, children):
 
 
 def _joint_key(obj):
-    stored = obj.get(EXTRAS_KEY)
-    if not isinstance(stored, str):
+    stored = _stored_key(obj)
+    if stored is None:
         return None
     joint = component_of(obj, "JOINT")
     bodies = tuple((body.as_pointer(), tuple(body.matrix_world.translation)) if body is not None else None for body in (joint.joint_body1, joint.joint_body2))
@@ -522,8 +540,10 @@ def _label_lines(obj, settings, children):
             details = f"r={collider.collider_radius:g}m"
         elif collider.collider_shape == "CAPSULE":
             details = f"r={collider.collider_radius:g}, cylinder={collider.collider_height:g}m"
+        elif collider.collider_shape in {"CYLINDER", "CONE"}:
+            details = f"r={collider.collider_radius:g}, height={collider.collider_height:g}m"
         else:
-            sources = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER")]
+            sources = [source for source, _matrix in collider_sources(obj, children, collider)]
             if not sources:
                 details = "no mesh, so no collider"
             elif collider.collider_shape == "CONVEX":

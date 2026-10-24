@@ -2,6 +2,7 @@ import bpy
 from mathutils import Matrix, Vector
 
 from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, light_of, light_range
+from .native import is_native
 from .system import component_of, components_for, panel_expanded, redraw_viewports, sync_object
 
 VOLUME_TYPES = {"FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME"}
@@ -112,7 +113,7 @@ def _arrow(group, color, get, set):
 
 def handle_item(obj, settings):
     collider = component_of(obj, "COLLIDER")
-    if settings.colliders and collider is not None and collider.collider_shape in PRIMITIVE_SHAPES:
+    if settings.colliders and collider is not None and not is_native(collider) and collider.collider_shape in PRIMITIVE_SHAPES:
         return collider
     if settings.volumes:
         return next((item for item in components_for(obj) if item.component_type in VOLUME_TYPES), None)
@@ -135,10 +136,12 @@ def _get_handle_value(index):
         return float(item.volume_size[index]) * 0.5
     if item.collider_shape == "CUBOID":
         return float(item.collider_size[index]) * 0.5
-    if index == 0 and item.collider_shape in {"SPHERE", "CAPSULE"}:
+    if index == 0 and item.collider_shape in {"SPHERE", "CAPSULE", "CYLINDER", "CONE"}:
         return float(item.collider_radius)
     if index == 1 and item.collider_shape == "CAPSULE":
         return float(item.collider_height) * 0.5 + float(item.collider_radius)
+    if index == 1 and item.collider_shape in {"CYLINDER", "CONE"}:
+        return float(item.collider_height) * 0.5
     return 0.0
 
 
@@ -155,10 +158,12 @@ def _set_handle_value(index, value):
         dimensions = list(item.collider_size)
         dimensions[index] = amount * 2
         item.collider_size = dimensions
-    elif index == 0 and item.collider_shape in {"SPHERE", "CAPSULE"}:
+    elif index == 0 and item.collider_shape in {"SPHERE", "CAPSULE", "CYLINDER", "CONE"}:
         item.collider_radius = amount
     elif index == 1 and item.collider_shape == "CAPSULE":
         item.collider_height = max(0.0, (amount - item.collider_radius) * 2)
+    elif index == 1 and item.collider_shape in {"CYLINDER", "CONE"}:
+        item.collider_height = amount * 2
     redraw_viewports()
 
 
@@ -219,7 +224,7 @@ class BEVY_GGT_collider_handles(bpy.types.GizmoGroup):
         center = obj.matrix_world @ Matrix.Translation(_bevy_to_blender(item.collider_offset)) if collider else obj.matrix_world
         if not collider or item.collider_shape == "CUBOID":
             shown = (True, True, True)
-        elif item.collider_shape == "CAPSULE":
+        elif item.collider_shape in {"CAPSULE", "CYLINDER", "CONE"}:
             shown = (True, True, False)
         else:
             shown = (True, False, False)

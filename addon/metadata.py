@@ -32,7 +32,9 @@ FIELD_ZEROS = {
     "ENUM": "",
 }
 COLOR_CHANNELS = ("red", "green", "blue", "alpha")
-PRIMITIVE_SHAPES = {"CUBOID", "SPHERE", "CAPSULE"}
+PRIMITIVE_SHAPES = {"CUBOID", "SPHERE", "CAPSULE", "CYLINDER", "CONE"}
+MESH_SHAPES = {"TRIMESH", "CONVEX"}
+DEFAULT_GRAVITY = (0.0, -9.81, 0.0)
 INT_LIMIT = 2 ** 31
 INT_RANGES = {
     "i8": (-2 ** 7, 2 ** 7 - 1),
@@ -217,6 +219,7 @@ def serialize_component(item, locate=_portable):
             "restitution": float(item.collider_restitution),
             "memberships": _layer_bits(item.collider_memberships),
             "filters": _layer_bits(item.collider_filters),
+            **({"own_mesh": True} if getattr(item, "collider_own_mesh", False) else {}),
         }
     if kind == "RIGID_BODY":
         dynamic = item.rigid_body_kind == "DYNAMIC"
@@ -440,6 +443,12 @@ def ambient_light_component(color, brightness, baked):
     return {"type": "ambient_light", "color": [_float32(value) for value in color[:3]], "brightness": _float32(brightness), "baked": bool(baked)}
 
 
+def gravity_component(gravity):
+    if all(abs(value - default) < 1e-6 for value, default in zip(gravity, DEFAULT_GRAVITY)):
+        return None
+    return {"type": "gravity", "value": [_float32(value) for value in gravity]}
+
+
 def sky_component(sky):
     return {"type": "sky", "brightness": _float32(sky.brightness), "environment_light": _float32(sky.environment_intensity) if sky.environment_light else None, "file": sky.sky_file or None}
 
@@ -473,8 +482,10 @@ def component_errors(item):
     elif item.component_type == "COLLIDER":
         if item.collider_shape == "CUBOID" and any(value <= 0 for value in item.collider_size):
             errors.append("collider cuboid dimensions must be positive")
-        if item.collider_shape in {"SPHERE", "CAPSULE"} and item.collider_radius <= 0:
+        if item.collider_shape in {"SPHERE", "CAPSULE", "CYLINDER", "CONE"} and item.collider_radius <= 0:
             errors.append("collider radius must be positive")
+        if item.collider_shape in {"CYLINDER", "CONE"} and item.collider_height <= 0:
+            errors.append("collider height must be positive")
     elif item.component_type == "JOINT" and joint_limits_inverted(item):
         errors.append("Joint limit Min is above Max")
     elif item.component_type == "SCENE_REFERENCE":

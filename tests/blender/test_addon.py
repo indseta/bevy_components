@@ -1150,7 +1150,7 @@ class TestPanels(unittest.TestCase):
         for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM", "SHADOWS", "AUDIO_PLAYER", "JOINT", "SCENE_REFERENCE", "ANIMATION"):
             add_component(self.obj, kind)
         collider = self.obj.bevy_component_data.components[1]
-        for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE"):
+        for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE", "CYLINDER", "CONE"):
             collider.collider_shape = shape
             panel = FakePanel(self)
             self.assertTrue(addon.panel.BEVY_PT_object_properties.poll(bpy.context))
@@ -1205,7 +1205,7 @@ class TestPanels(unittest.TestCase):
         for menu_type, kinds in ((addon.menu.BEVY_MT_component_add, None), (addon.menu.BEVY_MT_component_add_physics, ["COLLIDER", "RIGID_BODY", "JOINT"]), (addon.menu.BEVY_MT_component_add_rendering, ["VISIBILITY_RANGE", "SHADOWS"]), (addon.menu.BEVY_MT_component_add_lighting, ["LIGHT", "LIGHTMAP", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "FOG_VOLUME"])):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
-            buttons = {properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()}
+            buttons = {properties.component_type: enabled for text, properties, enabled in menu.layout.buttons() if hasattr(properties, "component_type")}
             if kinds is not None:
                 self.assertEqual(list(buttons), kinds)
             found.update(buttons)
@@ -1241,7 +1241,7 @@ class TestPanels(unittest.TestCase):
         menu = FakePanel(self)
         with _remembered_exports():
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.bake_lighting", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
+        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.convert_to_native", "bevy_components.bake_lighting", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
         menu = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
@@ -3193,7 +3193,7 @@ class TestWorkflow(unittest.TestCase):
         with _remembered_exports():
             addon.menu.BEVY_MT_object_menu.draw(menu, _menu_context(self.obj))
         self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add"])
-        self.assertEqual([(text, enabled) for text, properties, enabled in menu.layout.buttons()], [("Copy All to Selected", True), ("Copy Components", True), ("Paste Components", True), ("Validate All Objects", True), ("Export Again", False)])
+        self.assertEqual([(text, enabled) for text, properties, enabled in menu.layout.buttons()], [("Copy All to Selected", True), ("Copy Components", True), ("Paste Components", True), ("Validate All Objects", True), ("Convert Physics to Blender", True), ("Export Again", False)])
         menu = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.BEVY_MT_object_menu.draw(menu, _menu_context(self.obj))
@@ -3291,6 +3291,428 @@ class TestWorkflow(unittest.TestCase):
                     panel_type.draw_header_preset(panel, bpy.context)
                 self.assertEqual(_operator_calls(panel.layout), expected, (panel_type.__name__, counted))
                 self.assertEqual(set(panel.layout.operators()), {"bevy_components.validate"} if counted else set())
+
+
+NATIVE_COLLIDER = {**DEFAULT_COLLIDER, "filters": 1, "own_mesh": True}
+BLENDER_BODY = {**DYNAMIC_BODY, "mass": 1.0, "linear_damping": 0.04, "angular_damping": 0.1}
+
+
+def _rigid_body(obj, kind="ACTIVE", shape=None):
+    select(obj)
+    bpy.ops.rigidbody.object_add(type=kind)
+    if shape is not None:
+        obj.rigid_body.collision_shape = shape
+    return obj.rigid_body
+
+
+def _constraint(obj, kind, first=None, second=None):
+    select(obj)
+    if "FINISHED" not in bpy.ops.bevy_components.add_constraint():
+        raise RuntimeError(f"Could not add a constraint to {obj.name}")
+    constraint = obj.rigid_body_constraint
+    constraint.type = kind
+    constraint.object1 = first
+    constraint.object2 = second
+    return constraint
+
+
+def _native(obj):
+    addon.system.sync_object(obj)
+    return _rounded(_stored(obj)["components"])
+
+
+def _by_type(components):
+    return {component["type"]: {key: value for key, value in component.items() if key != "own_mesh"} for component in components}
+
+
+def _shaped(name, operator, matrix=None, **options):
+    obj = add_mesh(operator, name, **options)
+    if matrix is not None:
+        obj.data.transform(matrix)
+        obj.data.update()
+    bpy.context.view_layer.update()
+    return obj
+
+
+class TestNativePhysics(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+
+    def tearDown(self):
+        clear_scene()
+
+    def _messages(self):
+        bpy.context.view_layer.update()
+        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.data.objects)]
+
+    def test_rigid_bodies_export_as_bodies_and_colliders(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2, location=(0, 0, 5))
+        body = _rigid_body(crate)
+        body.mass = 3.0
+        body.friction = 0.8
+        body.restitution = 0.25
+        self.assertEqual(_native(crate), [{**BLENDER_BODY, "mass": 3.0}, {"type": "collider", "shape": "convex", **NATIVE_COLLIDER, "offset": None, "friction": 0.8, "restitution": 0.25}])
+        body.collision_collections[0] = False
+        body.collision_collections[3] = True
+        self.assertEqual([(component.get("memberships"), component.get("filters")) for component in _native(crate)][1], (8, 8))
+        body.kinematic = True
+        self.assertEqual(_native(crate)[0], KINEMATIC_BODY)
+        body.kinematic = False
+        body.enabled = False
+        self.assertEqual(_native(crate)[0], STATIC_BODY)
+        body.enabled = True
+        body.type = "PASSIVE"
+        self.assertEqual(_native(crate)[0], STATIC_BODY)
+        select(crate)
+        bpy.ops.rigidbody.object_remove()
+        self.assertEqual(addon.system.components_for(crate), [])
+
+    def test_shapes_follow_the_mesh(self):
+        cases = (
+            (_shaped("box", bpy.ops.mesh.primitive_cube_add, Matrix.Diagonal((1.0, 1.5, 2.0, 1.0)), size=2), "BOX", {"shape": "cuboid", "size": [2.0, 4.0, 3.0]}),
+            (_shaped("ball", bpy.ops.mesh.primitive_uv_sphere_add, radius=0.75), "SPHERE", {"shape": "sphere", "radius": 0.75}),
+            (_shaped("capsule", bpy.ops.mesh.primitive_cube_add, Matrix.Diagonal((0.5, 0.5, 1.5, 1.0)), size=2), "CAPSULE", {"shape": "capsule", "radius": 0.5, "height": 2.0}),
+            (_shaped("pillar", bpy.ops.mesh.primitive_cylinder_add, radius=0.5, depth=3), "CYLINDER", {"shape": "cylinder", "radius": 0.5, "height": 3.0}),
+            (_shaped("cone", bpy.ops.mesh.primitive_cone_add, radius1=1, depth=2), "CONE", {"shape": "cone", "radius": 1.0, "height": 2.0}),
+            (_shaped("hull", bpy.ops.mesh.primitive_ico_sphere_add, radius=1), "CONVEX_HULL", {"shape": "convex", "offset": None}),
+            (_shaped("floor", bpy.ops.mesh.primitive_plane_add, size=4), "MESH", {"shape": "trimesh", "offset": None}),
+        )
+        for obj, shape, expected in cases:
+            _rigid_body(obj, "PASSIVE", shape)
+            collider = _by_type(_native(obj))["collider"]
+            self.assertEqual({key: collider[key] for key in expected}, expected, obj.name)
+            self.assertEqual(collider.get("offset", [0.0, 0.0, 0.0]) or [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], obj.name)
+        self.assertEqual(self._messages(), [])
+
+    def test_bevy_settings_fill_in_what_blender_lacks(self):
+        ball = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "ball", radius=0.5)
+        _rigid_body(ball, shape="SPHERE")
+        physics = ball.bevy_physics
+        physics.auto_mass = True
+        physics.gravity_scale = 0.5
+        physics.ccd = "ALL"
+        physics.lock_translation = (True, False, False)
+        physics.lock_rotation = (False, True, False)
+        physics.linear_velocity = (1.0, 2.0, 3.0)
+        physics.angular_velocity = (0.0, 0.0, 1.0)
+        physics.events = True
+        physics.collision_only = True
+        physics.use_layers = True
+        physics.memberships = [index == 1 for index in range(addon.property.LAYER_COUNT)]
+        physics.filters = [index == 2 for index in range(addon.property.LAYER_COUNT)]
+        self.assertEqual(_native(ball), [{**BLENDER_BODY, "mass": None, "gravity_scale": 0.5, "ccd": "all", "lock_translation": [True, False, False], "lock_rotation": [False, False, True], "linear_velocity": [1.0, 3.0, -2.0], "angular_velocity": [0.0, 1.0, 0.0]}, {"type": "collider", "shape": "sphere", **NATIVE_COLLIDER, "events": True, "collision_only": True, "memberships": 2, "filters": 4}])
+        zone = add_mesh(bpy.ops.mesh.primitive_cube_add, "zone", size=2)
+        _rigid_body(zone, "PASSIVE", "BOX")
+        zone.bevy_physics.sensor = True
+        self.assertEqual(_by_type(_native(zone))["collider"], {"type": "collider", "shape": "cuboid", **{key: value for key, value in NATIVE_COLLIDER.items() if key != "own_mesh"}, "size": [2.0, 2.0, 2.0], "sensor": True, "events": True})
+        zone.bevy_physics.events = False
+        self.assertFalse(_by_type(_native(zone))["collider"]["events"])
+
+    def test_compound_parents_join_their_children(self):
+        cart = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart", size=1)
+        _rigid_body(cart, shape="COMPOUND")
+        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel", radius=0.5, depth=0.2, location=(0, 0, -0.5))
+        wheel.parent = cart
+        _rigid_body(wheel, shape="CYLINDER")
+        self.assertEqual([component["type"] for component in _native(cart)], ["rigid_body"])
+        self.assertEqual([component["type"] for component in _native(wheel)], ["collider"])
+        self.assertEqual(self._messages(), [])
+        wheel.parent = None
+        self.assertEqual(self._messages(), ["cart: Dynamic body has no collider on it or under it, so it has no mass and collides with nothing"])
+        wheel.parent = cart
+        cart.rigid_body.collision_shape = "BOX"
+        self.assertEqual(self._messages(), ["wheel: Moves on its own instead of with cart. Set cart's Shape to Compound Parent to make them one body"])
+
+    def test_constraints_export_as_joints(self):
+        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door", size=1, location=(1, 0, 0))
+        _rigid_body(door, shape="BOX")
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", size=1, location=(-1, 0, 0))
+        _rigid_body(frame, "PASSIVE", "BOX")
+        hinge = add_empty("hinge", (0, 0, 0))
+        constraint = _constraint(hinge, "HINGE", frame, door)
+        constraint.use_limit_ang_z = True
+        constraint.limit_ang_z_lower = -1.0
+        constraint.limit_ang_z_upper = 1.5
+        hinge.bevy_physics.joint_angular_damping = 2.0
+        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "body1": "frame", "body2": "door", "angle_limits": [-1.0, 1.5], "angular_damping": 2.0}])
+        constraint.type = "SLIDER"
+        constraint.use_limit_lin_x = True
+        constraint.limit_lin_x_lower = -0.5
+        constraint.limit_lin_x_upper = 2.0
+        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "kind": "prismatic", "body1": "frame", "body2": "door", "axis": [1.0, 0.0, 0.0], "distance_limits": [-0.5, 2.0], "angular_damping": 2.0}])
+        constraint.type = "POINT"
+        hinge.bevy_physics.joint_use_swing = True
+        hinge.bevy_physics.joint_swing = 0.5
+        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "kind": "spherical", "body1": "frame", "body2": "door", "swing_limit": 0.5, "angular_damping": 2.0}])
+        constraint.type = "FIXED"
+        constraint.disable_collisions = False
+        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "kind": "fixed", "body1": "frame", "body2": "door", "axis": None, "linear_damping": None, "angular_damping": None, "collide": True}])
+        self.assertEqual(self._messages(), [])
+        constraint.type = "GENERIC"
+        self.assertEqual(addon.system.components_for(hinge), [])
+        self.assertEqual(self._messages(), ["hinge: Bevy has no Generic joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"])
+        constraint.type = "HINGE"
+        constraint.enabled = False
+        self.assertEqual(addon.system.components_for(hinge), [])
+
+    def test_components_override_blender_physics(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
+        _rigid_body(crate)
+        add_component(crate, "COLLIDER", collider_shape="SPHERE", collider_radius=2.0)
+        self.assertEqual(_by_type(_native(crate))["collider"], {"type": "collider", "shape": "sphere", **DEFAULT_COLLIDER, "radius": 2.0})
+        self.assertEqual(_native(crate)[1], BLENDER_BODY)
+        select(crate)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_collisions.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), [])
+        self.assertIn("The Collider component in Object > Components replaces these settings in Bevy", " ".join(panel.layout.texts()))
+
+    def test_scene_gravity_is_exported_when_it_changes(self):
+        scene = bpy.context.scene
+        scene.gravity = (0.0, 0.0, -3.0)
+        self.assertEqual(addon.native.physics_components(scene), [])
+        bpy.ops.rigidbody.world_add()
+        self.assertEqual(addon.native.physics_components(scene), [{"type": "gravity", "value": [0.0, -3.0, 0.0]}])
+        scene.rigidbody_world.effector_weights.gravity = 0.5
+        self.assertEqual(addon.native.physics_components(scene), [{"type": "gravity", "value": [0.0, -1.5, 0.0]}])
+        scene.use_gravity = False
+        self.assertEqual(addon.native.physics_components(scene), [{"type": "gravity", "value": [0.0, 0.0, 0.0]}])
+        scene.use_gravity = True
+        scene.rigidbody_world.effector_weights.gravity = 1.0
+        scene.gravity = (0.0, 0.0, -9.81)
+        self.assertEqual(addon.native.physics_components(scene), [])
+        with tempfile.TemporaryDirectory() as directory:
+            scene.gravity = (1.0, 0.0, -3.0)
+            gltf = export_sample_scene(Path(directory) / "gravity.glb")
+            self.assertEqual(json.loads(gltf["scenes"][0]["extras"]["bevy_components"])["components"], [{"type": "gravity", "value": [1.0, -3.0, 0.0]}])
+
+    def test_plain_gltf_export_reads_blender_physics_when_it_runs(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
+        add_component(crate, "SHADOWS", shadows_cast=False)
+        _rigid_body(crate, "PASSIVE", "BOX")
+        addon.system.sync_object(crate)
+        crate.rigid_body.friction = 0.9
+
+        def exported():
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "plain.glb"
+                bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True)
+                node = read_gltf(path)["nodes"][0]
+            return _rounded(json.loads(node["extras"]["bevy_components"])["components"])
+
+        components = exported()
+        self.assertEqual([component["type"] for component in components], ["shadows", "rigid_body", "collider"])
+        self.assertEqual(components[2]["friction"], 0.9)
+        select(crate)
+        bpy.ops.rigidbody.object_remove()
+        self.assertEqual([component["type"] for component in exported()], ["shadows"])
+
+    def test_export_puts_bodies_back_where_they_start(self):
+        scene = bpy.context.scene
+        ground = add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=20)
+        _rigid_body(ground, "PASSIVE", "MESH")
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1, location=(0, 0, 5))
+        _rigid_body(crate, shape="BOX")
+        scene.rigidbody_world.point_cache.frame_end = 100
+        for frame in range(1, 41):
+            scene.frame_set(frame)
+        self.assertLess(crate.matrix_world.translation.z, 4.0)
+        try:
+            with tempfile.TemporaryDirectory() as directory:
+                gltf = export_sample_scene(Path(directory) / "rest.glb")
+            nodes = {node["name"]: node for node in gltf["nodes"]}
+            self.assertEqual(_rounded(nodes["crate"]["translation"]), [0.0, 5.0, 0.0])
+            self.assertEqual(scene.frame_current, 40)
+            self.assertLess(crate.matrix_world.translation.z, 4.0)
+        finally:
+            scene.frame_set(1)
+
+    def test_convert_replaces_components_with_blender_physics(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
+        add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_friction=0.8)
+        add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=4.0, rigid_body_lock_rotation=(False, True, False), rigid_body_linear_velocity=(0.0, 0.0, 2.0))
+        add_component(crate, "SHADOWS", shadows_cast=False)
+        ground = add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=10, location=(0, 0, -2))
+        add_component(ground, "COLLIDER", collider_shape="TRIMESH")
+        trigger = add_mesh(bpy.ops.mesh.primitive_cube_add, "trigger", size=2, location=(4, 0, 0))
+        add_component(trigger, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_sensor=True, collider_memberships=layers(3), collider_filters=layers(3))
+        ghost = add_mesh(bpy.ops.mesh.primitive_cube_add, "ghost", size=2, location=(8, 0, 0))
+        add_component(ghost, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_memberships=layers(1), collider_filters=layers(2))
+        cart = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart", size=1, location=(0, 6, 0))
+        add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel", radius=0.5, depth=0.2, location=(0, 6, -0.5))
+        wheel.parent = cart
+        wheel.matrix_parent_inverse = cart.matrix_world.inverted()
+        add_component(wheel, "COLLIDER", collider_shape="CYLINDER", collider_radius=0.5, collider_height=0.2)
+        hinge = add_empty("hinge", (0, 0, 2))
+        add_component(hinge, "JOINT", joint_kind="REVOLUTE", joint_body1=crate, joint_use_limits=True, joint_angle_min=-0.5, joint_angle_max=0.5)
+        offset = add_mesh(bpy.ops.mesh.primitive_cube_add, "offset", size=2, location=(0, -6, 0))
+        add_component(offset, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_offset=(0.0, 1.0, 0.0))
+        holder = add_empty("holder", (0, -10, 0))
+        add_component(holder, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        slide = add_empty("slide", (0, -12, 0))
+        add_component(slide, "JOINT", joint_kind="PRISMATIC", joint_body1=crate)
+        house = add_mesh(bpy.ops.mesh.primitive_cube_add, "house", size=2, location=(0, -16, 0))
+        add_component(house, "COLLIDER", collider_shape="TRIMESH")
+        chimney = add_mesh(bpy.ops.mesh.primitive_cube_add, "chimney", size=0.5, location=(0, -16, 1.5))
+        chimney.parent = house
+        chimney.matrix_parent_inverse = house.matrix_world.inverted()
+        bpy.context.view_layer.update()
+        before = {obj.name: _by_type(_native(obj)) for obj in bpy.data.objects if obj.bevy_component_data.components}
+        converted, kept = addon.convert.convert_objects(bpy.context, bpy.context.scene.objects)
+        self.assertEqual(sorted(obj.name for obj in converted), ["cart", "crate", "ghost", "ground", "hinge", "trigger", "wheel"])
+        self.assertEqual(sorted((obj.name, reason) for obj, reason in kept), [
+            ("holder", "Blender only gives meshes a Rigid Body"),
+            ("house", "its collider also covers the meshes of child objects"),
+            ("offset", "its collider's size or offset differs from the mesh, which Blender's shape always fits"),
+            ("slide", "its axis is Y, while Blender's Slider moves along X"),
+        ])
+        self.assertEqual([item.component_type for item in crate.bevy_component_data.components], ["SHADOWS"])
+        self.assertEqual((crate.rigid_body.type, crate.rigid_body.collision_shape, cart.rigid_body.collision_shape, wheel.rigid_body.collision_shape, hinge.rigid_body_constraint.type), ("ACTIVE", "BOX", "COMPOUND", "CYLINDER", "HINGE"))
+        self.assertTrue(ghost.bevy_physics.use_layers)
+        self.assertEqual(list(trigger.rigid_body.collision_collections)[:4], [False, False, False, True])
+        self.assertIsNone(offset.rigid_body)
+        self.assertEqual([item.component_type for item in offset.bevy_component_data.components], ["COLLIDER"])
+        for obj in converted:
+            after = _by_type(_native(obj))
+            expected = before[obj.name]
+            if obj in (crate, ground, wheel):
+                self.assertEqual((expected["collider"]["filters"], after["collider"]["filters"]), (4294967295, 1), obj.name)
+                expected["collider"]["filters"] = 1
+            if obj in (ground, trigger, ghost):
+                expected["rigid_body"] = STATIC_BODY
+            self.assertEqual(after, expected, obj.name)
+        self.assertEqual(bpy.ops.bevy_components.convert_to_native(), {"FINISHED"})
+        self.assertEqual([item.component_type for item in offset.bevy_component_data.components], ["COLLIDER"])
+        clear_scene()
+        self.assertEqual(bpy.ops.bevy_components.convert_to_native(), {"CANCELLED"})
+
+    def test_convert_keeps_default_layers_that_other_colliders_rely_on(self):
+        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", size=2)
+        add_component(wall, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2))
+        probe = add_empty("probe", (5, 0, 0))
+        add_component(probe, "COLLIDER", collider_shape="SPHERE", collider_memberships=layers(4), collider_filters=layers(0))
+        converted, kept = addon.convert.convert_objects(bpy.context, [wall])
+        self.assertEqual(converted, [wall])
+        self.assertTrue(wall.bevy_physics.use_layers)
+        self.assertEqual((_by_type(_native(wall))["collider"]["memberships"], _by_type(_native(wall))["collider"]["filters"]), (1, 4294967295))
+
+    def test_checks_for_blender_physics(self):
+        shifted = _shaped("shifted", bpy.ops.mesh.primitive_cube_add, Matrix.Translation((0.0, 0.0, 1.0)), size=1)
+        _rigid_body(shifted, "PASSIVE", "BOX")
+        self.assertEqual(self._messages(), ["shifted: The mesh is not centered on its origin, but Blender and Bevy center the Box shape on it. Use Set Origin > Origin to Geometry, or add a Collider component with an offset"])
+        shifted.rigid_body.collision_shape = "CONVEX_HULL"
+        self.assertEqual(self._messages(), [])
+        floor = add_mesh(bpy.ops.mesh.primitive_plane_add, "floor", size=4)
+        _rigid_body(floor, "ACTIVE", "MESH")
+        self.assertEqual(self._messages(), ["floor: Triangle meshes collide poorly on Dynamic bodies, use Convex Hull"])
+        floor.rigid_body.type = "PASSIVE"
+        edges = bpy.data.objects.new("edges", bpy.data.meshes.new("edges"))
+        bpy.context.scene.collection.objects.link(edges)
+        edges.data.from_pydata([(0, 0, 0), (1, 0, 0)], [(0, 1)], [])
+        _rigid_body(edges, "PASSIVE", "CONVEX_HULL")
+        self.assertEqual(self._messages(), ["edges: The mesh has no faces, so no Convex Hull collider is built"])
+
+    def test_bevy_subpanels_sit_under_blender_physics(self):
+        self.assertEqual([panel.bl_parent_id for panel in (addon.panel.BEVY_PT_physics_rigid_body, addon.panel.BEVY_PT_physics_collisions, addon.panel.BEVY_PT_physics_joint)], ["PHYSICS_PT_rigid_body", "PHYSICS_PT_rigid_body_collisions", "PHYSICS_PT_rigid_body_constraint"])
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
+        self.assertFalse(addon.panel.BEVY_PT_physics_rigid_body.poll(bpy.context))
+        _rigid_body(crate, shape="COMPOUND")
+        self.assertTrue(addon.panel.BEVY_PT_physics_rigid_body.poll(bpy.context))
+        self.assertFalse(addon.panel.BEVY_PT_physics_collisions.poll(bpy.context))
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_rigid_body.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), ["auto_mass", "gravity_scale", "ccd", *["lock_translation"] * 3, *["lock_rotation"] * 3, "linear_velocity", "angular_velocity"])
+        self.assertIn("Dynamic body in Bevy", panel.layout.texts())
+        crate.rigid_body.type = "PASSIVE"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_rigid_body.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), [])
+        part = add_mesh(bpy.ops.mesh.primitive_cube_add, "part", size=0.5)
+        part.parent = crate
+        _rigid_body(part, shape="BOX")
+        self.assertFalse(addon.panel.BEVY_PT_physics_rigid_body.poll(bpy.context))
+        self.assertTrue(addon.panel.BEVY_PT_physics_collisions.poll(bpy.context))
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_collisions.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), ["sensor", "events", "collision_only", "use_layers"])
+        part.bevy_physics.use_layers = True
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_collisions.draw(panel, bpy.context)
+        self.assertEqual((panel.layout.props().count("memberships"), panel.layout.props().count("filters")), (addon.property.LAYER_COUNT, addon.property.LAYER_COUNT))
+        hinge = add_empty("hinge", (0, 0, 0))
+        select(hinge)
+        self.assertFalse(addon.panel.BEVY_PT_physics_joint.poll(bpy.context))
+        constraint = _constraint(hinge, "POINT", crate, part)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_joint.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), ["joint_use_swing", "joint_swing", "joint_linear_damping", "joint_angular_damping"])
+        constraint.type = "FIXED"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_joint.draw(panel, bpy.context)
+        self.assertEqual(panel.layout.props(), [])
+        constraint.type = "MOTOR"
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_joint.draw(panel, bpy.context)
+        self.assertIn("Bevy has no Motor joint, so the game leaves this constraint out. Use Fixed, Point, Hinge or Slider", " ".join(panel.layout.texts()))
+        select(crate)
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
+        self.assertIn("Rigid Body from Physics", panel.layout.texts())
+
+    def test_physics_menu_offers_blender_physics_first(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add_physics.draw(menu, _menu_context(crate))
+        self.assertEqual(menu.layout.operators(), ["rigidbody.object_add", "bevy_components.add_constraint", "bevy_components.add", "bevy_components.add", "bevy_components.add"])
+        self.assertEqual([enabled for text, properties, enabled in menu.layout.buttons()][:2], [True, True])
+        _rigid_body(crate)
+        _constraint(crate, "FIXED")
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add_physics.draw(menu, _menu_context(crate))
+        self.assertEqual([enabled for text, properties, enabled in menu.layout.buttons()][:2], [False, False])
+        empty = add_empty("empty", (0, 0, 0))
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add_physics.draw(menu, _menu_context(empty))
+        self.assertEqual([enabled for text, properties, enabled in menu.layout.buttons()][:2], [False, True])
+
+    def test_viewport_draws_blender_physics(self):
+        pillar = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "pillar", radius=0.5, depth=2)
+        _rigid_body(pillar, "PASSIVE", "CYLINDER")
+        pillar.pop("bevy_components", None)
+        self.assertEqual(_extents(_collider_lines(pillar, addon.system.component_of(pillar, "COLLIDER"), 1000)), (0.5, 0.5, 1.0))
+        pillar.rigid_body.collision_shape = "CONE"
+        self.assertEqual(_extents(_collider_lines(pillar, addon.system.component_of(pillar, "COLLIDER"), 1000)), (0.5, 0.5, 1.0))
+        settings = bpy.context.scene.bevy_component_previews
+        self.assertIsNotNone(addon.overlay._object_key(pillar, settings, addon.overlay._settings_key(settings), {}))
+        self.assertIsNone(addon.gizmo.handle_item(pillar, settings))
+        hinge = add_empty("hinge", (0, 0, 3))
+        _constraint(hinge, "HINGE", pillar)
+        settings.scope = "SELECTED"
+        try:
+            select(pillar)
+            self.assertIn(hinge, addon.overlay.joint_objects(bpy.context, settings, addon.overlay.preview_objects(bpy.context, settings)))
+        finally:
+            settings.property_unset("scope")
+
+    def test_bsn_export_writes_blender_physics(self):
+        pillar = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "pillar", radius=0.5, depth=2)
+        _rigid_body(pillar, "PASSIVE", "CYLINDER")
+        cone = add_mesh(bpy.ops.mesh.primitive_cone_add, "cone", radius1=1, depth=2, location=(4, 0, 0))
+        _rigid_body(cone, "PASSIVE", "CONE")
+        hull = add_mesh(bpy.ops.mesh.primitive_cube_add, "hull", size=1, location=(8, 0, 0))
+        _rigid_body(hull, "PASSIVE", "CONVEX_HULL")
+        chimney = add_mesh(bpy.ops.mesh.primitive_cube_add, "chimney", size=0.2, location=(8, 0, 1))
+        chimney.parent = hull
+        chimney.matrix_parent_inverse = hull.matrix_world.inverted()
+        bpy.context.scene.gravity = (0.0, 0.0, -3.0)
+        with tempfile.TemporaryDirectory() as directory:
+            source = export_bsn_scene(Path(directory) / "src" / "physics.rs", Path(directory) / "assets")
+        self.assertIn("Collider::cylinder(0.5, 2.0)", source)
+        self.assertIn("Collider::cone(1.0, 2.0)", source)
+        self.assertEqual(source.count("ColliderConstructor::ConvexHullFromMesh"), 1)
+        self.assertIn("@gravity(Vec3::new(0.0, -3.0, 0.0))", source)
+        self.assertIn("fn gravity(gravity: Vec3) -> impl Scene {", source)
 
 
 class TestValidation(unittest.TestCase):
@@ -4629,6 +5051,10 @@ class TestStaticBsnScene(unittest.TestCase):
         self.assertEqual(self.gltf["scenes"], [{"nodes": [0]}])
         self.assertIn('MeshMaterial3d::<StandardMaterial>("bsn_static/static_scene.glb#Material0 (inverted)/std")', self.source)
         self.assertFalse(self.gltf["materials"][0].get("doubleSided", False))
+
+    def test_blender_physics_reach_the_scene(self):
+        self.assertIn("@gravity(Vec3::new(0.0, -1.62, 0.0))", self.source)
+        self.assertIn("Collider::cylinder(0.5, 1.0)", self.source)
 
     def test_long_children_lists_become_list_functions(self):
         self.assertIn("            Children [\n                {children_1()}\n                --\n                {children_2()}\n            ]", self.source)

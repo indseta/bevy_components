@@ -486,4 +486,9 @@ fn static_bsn_scene_loads_without_the_gltf_node_tree() {
     assert_eq!(app.world().get::<Children>(rocks).map_or(0, |children| children.len()), STATIC_ROCKS);
     assert_eq!(cull_mode(&mut app, "statue"), Some(Face::Back));
     assert_eq!(cull_mode(&mut app, "statue_mirrored"), Some(Face::Front));
+    assert_eq!(app.world().resource::<Gravity>().0, Vec3::new(0.0, -1.62, 0.0));
+    let statue = named(app.world_mut(), "statue");
+    assert_eq!(app.world().get::<RigidBody>(statue), Some(&RigidBody::Static));
+    let cylinder = app.world().get::<Collider>(statue).expect("the statue has a collider").shape().as_cylinder().expect("a cylinder");
+    assert_eq!((cylinder.radius, cylinder.half_height), (0.5, 0.5));
 }

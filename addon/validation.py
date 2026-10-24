@@ -12,12 +12,13 @@ from .bsn import BsnError, crate_root, custom_literal, file_state, inside
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
+from .native import UNSUPPORTED_JOINTS, bounds, is_native
 from .property import AUDIO_FORMATS
 from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_order
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, asset_path, children_map, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
+from .system import MESH_TYPES, asset_path, children_map, collider_sources, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -34,6 +35,14 @@ MISSING_FILES = {
     "LIGHTMAP": "No lightmap baked yet, so the mesh gets no baked light",
 }
 TEXTURE_CACHE_LIMIT = 256
+CENTER_TOLERANCE = 1e-3
+BLENDER_SHAPE_LABELS = {
+    "CUBOID": "Box",
+    "SPHERE": "Sphere",
+    "CAPSULE": "Capsule",
+    "CYLINDER": "Cylinder",
+    "CONE": "Cone",
+}
 SHADER_MIXES = {"MIX_SHADER", "ADD_SHADER"}
 GLTF_MIXES = {"BSDF_TRANSPARENT", "LIGHT_PATH"}
 UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
@@ -338,6 +347,9 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
                     issues.append(Issue("WARNING", obj, item, f"Blender cannot set field {names}, and a tuple struct cannot leave fields out, so the game cannot insert {item.custom_type}. Name its fields, or skip that one with #[reflect(skip_serializing)]"))
                 elif not game_type.has_default:
                     issues.append(Issue("WARNING", obj, item, f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
+    constraint = getattr(obj, "rigid_body_constraint", None)
+    if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None:
+        issues.append(Issue("WARNING", obj, None, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"))
     light = light_of(obj)
     if light is not None and light.type == "AREA" and not any(item.component_type == "LIGHT" for item in obj.bevy_component_data.components):
         issues.append(Issue("WARNING", obj, None, "glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"))
@@ -485,16 +497,20 @@ def _collider_warnings(obj, item, children):
     warnings = []
     targets = [obj]
     if item.collider_shape in SHAPE_LABELS:
-        sources = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER")]
+        sources = [source for source, _matrix in collider_sources(obj, children, item)]
         if not sources:
-            warnings.append(f"No mesh on this object or under it, so no {SHAPE_LABELS[item.collider_shape]} collider is built")
+            warnings.append(f"The mesh has no faces, so no {SHAPE_LABELS[item.collider_shape]} collider is built" if getattr(item, "collider_own_mesh", False) else f"No mesh on this object or under it, so no {SHAPE_LABELS[item.collider_shape]} collider is built")
         if item.collider_shape == "TRIMESH":
             bodies = [owner for owner, body in (inherited(source, "RIGID_BODY") for source in sources) if body is not None and body.rigid_body_kind == "DYNAMIC"]
             if bodies:
                 warnings.append("Triangle meshes collide poorly on Dynamic bodies, use Convex Hull" if bodies[0] == obj else f"Triangle meshes collide poorly on Dynamic bodies such as {bodies[0].name}, use Convex Hull")
-        targets = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER", instances=False)]
-    elif item.collider_collision_only and not mesh_sources(obj, children, "COLLIDER"):
+        targets = [source for source, _matrix in collider_sources(obj, children, item, instances=False)]
+    elif item.collider_collision_only and not collider_sources(obj, children, item):
         warnings.append("Collision Only finds no mesh on this object or under it to hide")
+    if is_native(item) and item.collider_shape in BLENDER_SHAPE_LABELS:
+        size, center = bounds(obj)
+        if max(abs(value) for value in center) > CENTER_TOLERANCE * max(1.0, *size):
+            warnings.append(f"The mesh is not centered on its origin, but Blender and Bevy center the {BLENDER_SHAPE_LABELS[item.collider_shape]} shape on it. Use Set Origin > Origin to Geometry, or add a Collider component with an offset")
     for target in targets:
         ancestor = _uneven_scale_ancestor(target)
         if ancestor is not None:
@@ -509,7 +525,12 @@ def _rigid_body_warnings(obj, item, children):
         warnings.append("Dynamic body has no collider on it or under it, so it has no mass and collides with nothing")
     parent, body = inherited(obj.parent, "RIGID_BODY")
     if body is not None and body.rigid_body_kind != "STATIC":
-        warnings.append(f"Moves on its own instead of with {parent.name}. Remove this Rigid Body to make {parent.name} one compound body")
+        if not is_native(item):
+            warnings.append(f"Moves on its own instead of with {parent.name}. Remove this Rigid Body to make {parent.name} one compound body")
+        elif getattr(parent, "rigid_body", None) is not None and parent == obj.parent:
+            warnings.append(f"Moves on its own instead of with {parent.name}. Set {parent.name}'s Shape to Compound Parent to make them one body")
+        else:
+            warnings.append(f"Moves on its own instead of with {parent.name}. Only direct children of a Rigid Body with the Compound Parent shape join its body")
     if item.rigid_body_kind == "DYNAMIC" and all(item.rigid_body_lock_translation) and all(item.rigid_body_lock_rotation):
         warnings.append("Every axis is locked, so the body never moves. Use a Static or Kinematic body instead")
     return warnings
@@ -691,7 +712,7 @@ def _has_collider(obj):
     if component_of(obj, "COLLIDER") is not None:
         return True
     _owner, collider = inherited(obj, "COLLIDER")
-    return collider is not None and collider.collider_shape in SHAPE_LABELS and has_faces(obj)
+    return collider is not None and collider.collider_shape in SHAPE_LABELS and not getattr(collider, "collider_own_mesh", False) and has_faces(obj)
 
 
 def _uneven_scale_ancestor(obj):

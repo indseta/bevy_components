@@ -47,7 +47,7 @@ def sphere_lines(radius, segments=40):
     return lines
 
 
-def capsule_lines(radius, height, segments=32):
+def cylinder_lines(radius, height, segments=32):
     radius, height = max(0.0, float(radius)), max(0.0, float(height))
     half = height / 2
     lines = []
@@ -56,6 +56,22 @@ def capsule_lines(radius, height, segments=32):
     for angle in (0, pi / 2, pi, 3 * pi / 2):
         x, y = radius * cos(angle), radius * sin(angle)
         lines.append(((x, y, -half), (x, y, half)))
+    return lines
+
+
+def cone_shape_lines(radius, height, segments=32):
+    radius, height = max(0.0, float(radius)), max(0.0, float(height))
+    half = height / 2
+    lines = circle_lines(radius, "XY", segments, (0, 0, -half))
+    for angle in (0, pi / 2, pi, 3 * pi / 2):
+        lines.append(((radius * cos(angle), radius * sin(angle), -half), (0, 0, half)))
+    return lines
+
+
+def capsule_lines(radius, height, segments=32):
+    radius, height = max(0.0, float(radius)), max(0.0, float(height))
+    half = height / 2
+    lines = cylinder_lines(radius, height, segments)
     arc_segments = max(6, segments // 4)
     for plane in ("XZ", "YZ"):
         lines.extend(circle_lines(radius, plane, arc_segments, (0, 0, half), 0, pi))
@@ -200,6 +216,9 @@ def fit_shape(shape, points):
     if shape == "CAPSULE":
         radius = round(max(hypot(point[0] - center[0], point[2] - center[2]) for point in points), FIT_DIGITS)
         return {"radius": radius, "height": round(max(0.0, maximum[1] - minimum[1] - 2 * radius), FIT_DIGITS), "offset": center}
+    if shape in {"CYLINDER", "CONE"}:
+        radius = round(max(hypot(point[0] - center[0], point[2] - center[2]) for point in points), FIT_DIGITS)
+        return {"radius": radius, "height": round(maximum[1] - minimum[1], FIT_DIGITS), "offset": center}
     return {"size": _snapped(high - low for low, high in zip(minimum, maximum)), "offset": center}
 
 
