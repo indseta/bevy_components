@@ -491,7 +491,7 @@ def _remembered_exports(glb=""):
 
 
 def _open_dialog(operator_class, **values):
-    operator = SimpleNamespace(again=False, collection="", filepath="", filename_ext=operator_class.filename_ext, _settings=operator_class._settings, _target=operator_class._target, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
+    operator = SimpleNamespace(again=False, collection="", filepath="", filename_ext=operator_class.filename_ext, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
     for name, value in {**{name: None for name in addon.property.EXPORT_OPTIONS}, **values}.items():
         setattr(operator, name, value)
     operator._recall = MethodType(operator_class._recall, operator)
@@ -1757,7 +1757,7 @@ class TestPanels(unittest.TestCase):
         self.assertTrue(bpy.ops.export_scene.bevy_components_glb.poll())
         self.assertFalse(bpy.ops.bevy_components.cancel_export.poll())
         task = mock.Mock(done=3, total=8)
-        with mock.patch.dict(addon.operator._exports, {task: None}):
+        with mock.patch.dict(addon.export._exports, {task: None}):
             addon.menu.export_status(header, bpy.context)
             self.assertFalse(bpy.ops.export_scene.bevy_components_glb.poll())
             bpy.ops.bevy_components.cancel_export()
@@ -1795,16 +1795,16 @@ class TestPanels(unittest.TestCase):
     def test_unregister_stops_running_exports(self):
         task = mock.Mock()
         directory = tempfile.TemporaryDirectory()
-        addon.operator._exports[task] = (bpy.context.window_manager.event_timer_add(60.0, window=bpy.context.window), directory)
-        addon.operator.stop_exports()
+        addon.export._exports[task] = (bpy.context.window_manager.event_timer_add(60.0, window=bpy.context.window), SimpleNamespace(release=directory.cleanup))
+        addon.export.stop_exports()
         task.cancel.assert_called_once_with()
         task.wait.assert_called_once_with()
         self.assertFalse(Path(directory.name).exists())
-        self.assertEqual(addon.operator._exports, {})
+        self.assertEqual(addon.export._exports, {})
 
     def test_cancelled_dialogs_have_nothing_to_stop(self):
-        for operator_class in (addon.operator.BEVY_OT_export_glb, addon.operator.BEVY_OT_bake_lighting):
-            self.assertIsNone(operator_class.cancel(SimpleNamespace(_task=None), bpy.context))
+        self.assertIsNone(addon.operator.BEVY_OT_export_glb.cancel(SimpleNamespace(_job=None), bpy.context))
+        self.assertIsNone(addon.operator.BEVY_OT_bake_lighting.cancel(SimpleNamespace(_task=None), bpy.context))
 
     def test_export_dialog_texture_compression(self):
         properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
@@ -4069,7 +4069,7 @@ class TestExport(unittest.TestCase):
         finally:
             probe.probe_file = str(CUBEMAP)
         self.assertFalse(path.exists())
-        with mock.patch.object(addon.operator, "_read_file", side_effect=FileNotFoundError(2, "No such file or directory", str(CUBEMAP))):
+        with mock.patch.object(addon.export, "_read_file", side_effect=FileNotFoundError(2, "No such file or directory", str(CUBEMAP))):
             with self.assertRaisesRegex(RuntimeError, "Could not embed probe_cubemap.ktx2 in the scene: No such file or directory"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
         self.assertFalse(path.exists())
@@ -4169,6 +4169,44 @@ class TestExportOptions(unittest.TestCase):
         self.scene.property_unset("bevy_glb_export")
         self.directory.cleanup()
 
+    def test_scene_exports_run_without_an_operator(self):
+        add_mesh(bpy.ops.mesh.primitive_cube_add, "scripted")
+        job = addon.export.SceneExport(self.scene, self.scene.bevy_glb_export, str(self.path))
+        try:
+            messages = addon.export.start_export(job, bpy.context)
+        finally:
+            job.release()
+        self.assertEqual(messages, [({"INFO"}, f"Exported Bevy scene: {self.path}")])
+        self.assertEqual(_node_names(read_gltf(self.path)), ["scripted"])
+        self.assertEqual(self.scene.bevy_glb_export.filepath, "")
+        _broken_component(bpy.data.objects["scripted"])
+        job = addon.export.SceneExport(self.scene, self.scene.bevy_glb_export, str(self.path))
+        with self.assertRaisesRegex(addon.export.ExportError, "^Cannot export: scripted: invalid JSON in Custom Component"):
+            addon.export.start_export(job, bpy.context)
+        job.release()
+
+    def test_compressed_exports_finish_in_the_background(self):
+        add_mesh(bpy.ops.mesh.primitive_cube_add, "later")
+        self.scene.bevy_glb_export.texture_compression = "ETC1S"
+        for cancelled in (True, False):
+            job = addon.export.SceneExport(self.scene, self.scene.bevy_glb_export, str(self.path))
+            task = mock.Mock(running=False, cancelled=cancelled, error=None, results=[])
+            with mock.patch.object(addon.export, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.export, "BackgroundEncode", return_value=task):
+                self.assertIsNone(addon.export.start_export(job, bpy.context, background=True))
+            self.assertIs(addon.export.running_export(), task)
+            self.assertFalse(self.path.exists())
+            try:
+                if cancelled:
+                    with self.assertRaisesRegex(addon.export.ExportCancelled, "Cancelled the Bevy scene export"):
+                        addon.export.finish_export(job, bpy.context)
+                    self.assertFalse(self.path.exists())
+                else:
+                    self.assertEqual(addon.export.finish_export(job, bpy.context), [({"INFO"}, f"Exported Bevy scene: {self.path}")])
+            finally:
+                job.release()
+            self.assertIsNone(addon.export.running_export())
+        self.assertEqual(_node_names(read_gltf(self.path)), ["later"])
+
     def test_modifiers_are_applied_unless_turned_off(self):
         plane = add_mesh(bpy.ops.mesh.primitive_plane_add, "row")
         plane.modifiers.new("Array", "ARRAY").count = 5
@@ -4229,12 +4267,11 @@ class TestExportOptions(unittest.TestCase):
         export_sample_scene(self.path)
         self.assertEqual((self.path.read_bytes(), self.path.stat().st_mtime_ns), before)
 
-        def broken(operator, path, collection=None, directory=None):
+        def broken(job, path, collection, directory):
             Path(path).write_bytes(b"half a scene")
-            operator.report({"ERROR"}, "GLB export failed: disk full")
-            return {"CANCELLED"}
+            raise addon.export.ExportError("GLB export failed: disk full")
 
-        with mock.patch.object(addon.operator._SceneExport, "_export_gltf", broken):
+        with mock.patch.object(addon.export.SceneExport, "_export_gltf", broken):
             with self.assertRaisesRegex(RuntimeError, "GLB export failed: disk full"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path))
         self.assertEqual(self.path.read_bytes(), before[0])
@@ -4583,7 +4620,7 @@ class TestPrefabs(unittest.TestCase):
         self.directory.cleanup()
 
     def _exported_prefabs(self, **options):
-        with mock.patch.object(addon.operator, "collection_export", wraps=addon.operator.collection_export) as exported:
+        with mock.patch.object(addon.export, "collection_export", wraps=addon.export.collection_export) as exported:
             export_sample_scene(self.level, **options)
         return [call.args[0].name for call in exported.call_args_list]
 
@@ -5025,7 +5062,7 @@ class TestBakeLighting(unittest.TestCase):
         self.assertEqual(check(), ["room: Baked before the lamps changed, so the cubemap is out of date. Bake again"])
         addon.system.world_background(self.scene.world).inputs["Strength"].default_value = 0.5
         self.assertEqual(check(), ["Bevy Sky: Baked before the World changed, so the cubemap is out of date. Bake again", "room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again"])
-        self.assertIn("room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again", [addon.validation.describe(issue) for issue in addon.operator._glb_issues(_dialog(self, addon.operator.BEVY_OT_export_glb), bpy.data.objects)])
+        self.assertIn("room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again", [addon.validation.describe(issue) for issue in addon.export.scene_issues(_dialog(self, addon.operator.BEVY_OT_export_glb), bpy.data.objects, None)])
         reflection.probe_file = str(CUBEMAP)
         sky.sky_file = str(CUBEMAP)
         self.assertEqual(check(), [])
@@ -5412,7 +5449,7 @@ class TestTextureCompression(unittest.TestCase):
         cls.images = _image_state()
         cls.cache = Path(cls.directory.name) / "texture_cache"
         cls.cache.mkdir()
-        cls.cache_patch = mock.patch.object(addon.operator, "texture_cache", return_value=cls.cache)
+        cls.cache_patch = mock.patch.object(addon.export, "texture_cache", return_value=cls.cache)
         cls.cache_patch.start()
         cls.exports = {}
         for mode in ("DISABLED", "ETC1S", "UASTC", "AUTOMATIC"):
@@ -5545,14 +5582,14 @@ class TestTextureCompressionErrors(unittest.TestCase):
 
     def test_encoder_failures_keep_the_previous_file(self):
         self.path.write_bytes(b"previous scene")
-        with mock.patch.object(addon.operator, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.operator, "encode", side_effect=addon.encoder.EncoderError("KTX-Software could not encode wood_color: broken input")):
+        with mock.patch.object(addon.export, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.export, "encode", side_effect=addon.encoder.EncoderError("KTX-Software could not encode wood_color: broken input")):
             with self.assertRaisesRegex(RuntimeError, "Texture compression failed: KTX-Software could not encode wood_color: broken input"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="ETC1S")
         self.assertEqual(self.path.read_bytes(), b"previous scene")
         self.assertEqual(sorted(path.name for path in Path(self.directory.name).iterdir()), ["scene.glb"])
 
     def test_invalid_encoder_output_is_rejected(self):
-        with mock.patch.object(addon.operator, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.operator, "encode", side_effect=lambda path, jobs, *args, **options: [b"not ktx2"] * len(jobs)):
+        with mock.patch.object(addon.export, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.export, "encode", side_effect=lambda path, jobs, *args, **options: [b"not ktx2"] * len(jobs)):
             with self.assertRaisesRegex(RuntimeError, "the encoder wrote an invalid KTX2 file"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="UASTC")
         self.assertFalse(self.path.exists())

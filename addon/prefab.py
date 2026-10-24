@@ -390,25 +390,19 @@ def _drop(vtree, uuid):
 
 def instance_node(gltf2_node, obj):
     if _active is None or not isinstance(obj, bpy.types.Object) or obj.instance_type != "COLLECTION" or obj.instance_collection not in _active.prefabs:
-        return
+        return None
     collection = obj.instance_collection
     offset = collection.instance_offset
     rotation = Quaternion((gltf2_node.rotation[3], *gltf2_node.rotation[:3])) if gltf2_node.rotation else Quaternion()
     scale = gltf2_node.scale or (1.0, 1.0, 1.0)
     translation = Vector(gltf2_node.translation or (0.0, 0.0, 0.0)) + rotation @ Vector((offset.x * scale[0], offset.z * scale[1], -offset.y * scale[2]))
     gltf2_node.translation = list(translation) if any(translation) else None
-    extras = gltf2_node.extras if isinstance(gltf2_node.extras, dict) else {}
-    try:
-        data = json.loads(extras[EXTRAS_KEY])
-    except (KeyError, TypeError, ValueError):
-        data = {"version": SCHEMA_VERSION, "components": []}
     path = prefab_file(collection)
     try:
         located = relative_path(str(path), str(_active.directory)) if path is not None and _active.directory is not None else ""
     except ValueError:
         located = ""
-    data["components"].append({"type": "scene_reference", "path": located, "scene": 0, "prefab": collection.name_full})
-    gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps(data, separators=(",", ":"), ensure_ascii=False)}
+    return {"type": "scene_reference", "path": located, "scene": 0, "prefab": collection.name_full}
 
 
 def prefab_scene(gltf2_scene, blender_scene):

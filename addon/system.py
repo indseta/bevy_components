@@ -950,8 +950,8 @@ class glTF2ExportUserExtension:
     def gather_node_hook(self, gltf2_node, blender_object, export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
         _remove_extra(gltf2_node, "bevy_prefab")
-        _component_extras(gltf2_node, blender_object, export_settings)
-        instance_node(gltf2_node, blender_object)
+        reference = instance_node(gltf2_node, blender_object)
+        _component_extras(gltf2_node, blender_object, export_settings, [reference] if reference is not None else [])
 
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
@@ -969,11 +969,11 @@ class glTF2ExportUserExtension:
         gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}
 
 
-def _component_extras(gltf2_node, obj, export_settings):
+def _component_extras(gltf2_node, obj, export_settings, extra):
     if obj is None or not hasattr(obj, "bevy_component_data") or _skipped[0] is None and not export_settings.get("gltf_extras"):
         return
     with resolving():
-        components = object_components(obj, export_directory() or os.path.dirname(export_settings.get("gltf_filepath", "")) or None, _skipped[0])
+        components = object_components(obj, export_directory() or os.path.dirname(export_settings.get("gltf_filepath", "")) or None, _skipped[0]) + extra
     if components:
         extras = gltf2_node.extras if isinstance(gltf2_node.extras, dict) else {}
         gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)}

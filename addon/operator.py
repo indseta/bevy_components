@@ -2,7 +2,6 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from types import SimpleNamespace
 
 import bpy
 from bpy.app.handlers import persistent
@@ -10,23 +9,21 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, baked_sky, lighting_jobs, sky_job, unwrap_lightmap
-from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
-from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
-from .files import snake_case, write_if_changed
+from .export import PROGRESS_INTERVAL, ExportCancelled, ExportError, SceneExport, again, cancel_exports, export_path, finish_export, remembered, running_export, scene_issues, start_export
+from .files import snake_case
 from .fingerprint import bake_record
 from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command
-from .prefab import collection_export, find_collection, prefab_file, prefab_fingerprint, prefab_fresh, prefab_order, prefab_settings, remember_prefab, scene_export
-from .preferences import draw_encoder_status, encoder_path, texture_cache
-from .probe import FILE_KINDS, embed_files
+from .prefab import find_collection
+from .preferences import draw_encoder_status
+from .probe import FILE_KINDS
 from .project import game_assets, game_folder, play_target
 from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, unlink_component, viewport_view, write_component_text, write_field
-from .validation import body_kind, check_game_paths, check_objects, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, unlink_component, viewport_view, write_component_text, write_field
+from .validation import body_kind, check_objects, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
-PROGRESS_INTERVAL = 0.1
 ACCEPTED_OBJECTS = {
     "LIGHT": "light",
     "LIGHTMAP": "mesh",
@@ -42,28 +39,13 @@ PICKED_FILES = {
 }
 OUTPUT_TEXT = "Bevy Game Output"
 
-_exports = {}
-_export_results = {}
 _bakes = {}
 _games = {}
 _played = {}
 
 
-def running_export():
-    return next(iter(_exports), None)
-
-
 def running_bake():
     return next(iter(_bakes), None)
-
-
-def stop_exports():
-    for task, (timer, directory) in _exports.items():
-        task.cancel()
-        task.wait()
-        bpy.context.window_manager.event_timer_remove(timer)
-        directory.cleanup()
-    _exports.clear()
 
 
 def running_game():
@@ -125,23 +107,6 @@ def _unique(base, taken, separator):
         name = f"{base}{separator}{number}"
         number += 1
     return name
-
-
-def _export_path(filepath):
-    return Path(os.path.abspath(bpy.path.abspath(filepath))) if filepath else None
-
-
-def _read_file(path):
-    return Path(bpy.path.abspath(path)).read_bytes()
-
-
-def _has_probes(objects):
-    return any(item.component_type in FILE_KINDS for obj in objects for item in components_for(obj))
-
-
-def _embeds_sky(scene):
-    world = scene.world if scene is not None else None
-    return world is not None and hasattr(world, "bevy_sky") and world.bevy_sky.enabled and bool(world.bevy_sky.sky_file.strip())
 
 
 def _missing_uv_maps(jobs):
@@ -1059,8 +1024,7 @@ class BEVY_OT_cancel_export(bpy.types.Operator):
         return running_export() is not None
 
     def execute(self, context):
-        for task in _exports:
-            task.cancel()
+        cancel_exports()
         redraw_status_bars()
         return {"FINISHED"}
 
@@ -1134,12 +1098,6 @@ def _exported_objects(operator, context, collection=None):
     return list(collection.all_objects) if collection is not None else exported_objects(context, operator)
 
 
-def _glb_issues(operator, objects):
-    objects = list(objects)
-    destination = _export_path(operator.filepath)
-    return check_objects(objects, destination=destination, animations=operator.include_animations, modifiers=operator.apply_modifiers) + check_scene(objects) + check_game_paths(objects, destination, game_assets(bpy.context))
-
-
 def _folder_path(path):
     return os.path.join(str(path), "")
 
@@ -1166,20 +1124,25 @@ def _blend_relative(path):
         return str(path)
 
 
-class _SceneExport(ExportHelper, ExportOptions):
+def _report_all(operator, messages):
+    for kinds, message in messages:
+        operator.report(kinds, message)
+
+
+class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper, ExportOptions):
+    bl_idname = "export_scene.bevy_components_glb"
+    bl_label = "Bevy Scene (.glb)"
+    bl_description = "Export the scene and its Bevy components as one GLB file"
+    bl_options = {"REGISTER"}
+
+    filename_ext = ".glb"
+    filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
     again: BoolProperty(name="Export Again", description="Export to the file the last export wrote, with the settings it used, without the file dialog", default=False, options={"HIDDEN", "SKIP_SAVE"})
     collection: StringProperty(name="Collection", description="Collection to export instead of the scene, as Collection Properties > Exporters does", options={"HIDDEN", "SKIP_SAVE"})
 
     _interactive = False
-    _directory = None
-    _scene = None
-    _task = None
+    _job = None
     _shown = None
-    _issues = ()
-    _collection = None
-    _prefabs = ()
-    _own = None
-    _fresh_prefabs = True
 
     @classmethod
     def poll(cls, context):
@@ -1201,271 +1164,7 @@ class _SceneExport(ExportHelper, ExportOptions):
 
     @classmethod
     def remembered(cls, scene):
-        return getattr(getattr(scene, cls._settings), cls._target).strip() if scene is not None else ""
-
-    def invoke(self, context, event):
-        self._interactive = True
-        if self.again or self.collection:
-            return self.execute(context)
-        if self.remembered(context.scene) and not self.properties.is_property_set("filepath"):
-            self._recall(getattr(context.scene, self._settings))
-        elif not self.properties.is_property_set("filepath") and (default := _game_default(context, self.filename_ext)) is not None:
-            self.filepath = str(default)
-        return ExportHelper.invoke(self, context, event)
-
-    def execute(self, context):
-        if not hasattr(bpy.ops.export_scene, "gltf"):
-            self.report({"ERROR"}, "Blender glTF exporter is unavailable")
-            return {"CANCELLED"}
-        self._collection = find_collection(self.collection) if self.collection else None
-        if self.collection and self._collection is None:
-            self.report({"ERROR"}, f"No collection named {self.collection}")
-            return {"CANCELLED"}
-        if self.again and self._collection is None:
-            if not self.remembered(context.scene):
-                self.report({"ERROR"}, f"Nothing to export again yet, export the scene once with File > Export > {self.bl_label}")
-                return {"CANCELLED"}
-            self._recall(getattr(context.scene, self._settings))
-        if not self.filepath.strip():
-            self.report({"ERROR"}, "Pick a file to export the scene to")
-            return {"CANCELLED"}
-        self.filepath = str(_export_path(self.filepath))
-        if self._collection is None:
-            self._remember(getattr(context.scene, self._settings))
-        objects = _exported_objects(self, context, self._collection)
-        destination = self._destination()
-        issues = self._check(objects)
-        errors = [issue for issue in issues if issue.level == "ERROR"]
-        if errors:
-            self.report({"ERROR"}, f"Cannot export: {describe(errors[0])}")
-            return {"CANCELLED"}
-        self._issues = issues
-        encoder = None
-        if self.texture_compression != "DISABLED":
-            try:
-                encoder, _version = check_encoder(encoder_path(context))
-            except EncoderError as error:
-                self.report({"ERROR"}, f"{error}. {HINT}")
-                return {"CANCELLED"}
-        own = self._collection is not None and self._collection.bevy_prefab.enabled and prefab_file(self._collection) == destination
-        self._own = prefab_fingerprint(self._collection, prefab_settings(self), context.scene) if own else None
-        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
-        try:
-            self._prefabs = self._export_prefabs(context, objects)
-        except OSError as error:
-            self.report({"ERROR"}, self._read_error.format(name=Path(error.filename or "").name or "a probe file", reason=error.strerror))
-            self._prefabs = None
-        if self._prefabs is None or (encoder is None and not self._write_prefabs()):
-            self._release()
-            return {"CANCELLED"}
-        result = self._export_direct() if encoder is None and self._direct(objects) else self._export_scene(context, encoder)
-        if "RUNNING_MODAL" not in result:
-            self._release()
-        return result
-
-    def modal(self, context, event):
-        if self._task.running:
-            if self._task.done != self._shown:
-                self._shown = self._task.done
-                redraw_status_bars()
-            return {"PASS_THROUGH"}
-        self._stop_background(context)
-        if self._task.cancelled:
-            self.report({"INFO"}, "Cancelled the Bevy scene export")
-            result = {"CANCELLED"}
-        elif self._task.error is not None:
-            result = self._failed(self._task.error)
-        else:
-            result = self._finish(self._task.results)
-        self._release()
-        _export_results[self.bl_idname] = result
-        return result
-
-    def cancel(self, context):
-        if self._task is None:
-            return
-        self._task.cancel()
-        self._task.wait()
-        self._stop_background(context)
-        self._release()
-        _export_results[self.bl_idname] = {"CANCELLED"}
-
-    def _recall(self, settings):
-        self.filepath = str(_export_path(getattr(settings, self._target)))
-        for name in EXPORT_OPTIONS:
-            setattr(self, name, getattr(settings, name))
-
-    def _remember(self, settings):
-        setattr(settings, self._target, _blend_relative(_export_path(self.filepath)))
-        for name in EXPORT_OPTIONS:
-            setattr(settings, name, getattr(self, name))
-
-    def _export_gltf(self, path, collection=None, directory=None):
-        limited = collection is None
-        try:
-            with collection_export(collection, bpy.context.scene, directory) if collection is not None else scene_export(directory):
-                return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_active_scene=True, use_selection=limited and self.selected_only, use_visible=limited and self.visible_only, use_renderable=limited and self.renderable_only, export_apply=self.apply_modifiers, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
-        except Exception as error:
-            self.report({"ERROR"}, f"GLB export failed: {error}")
-            return {"CANCELLED"}
-
-    def _export_level(self, path):
-        destination = self._destination()
-        return self._export_gltf(path, self._collection, destination.parent if destination else None)
-
-    def _export_prefabs(self, context, objects):
-        settings = prefab_settings(self)
-        outputs = []
-        for collection in prefab_order(objects)[0]:
-            target = self._prefab_target(collection)
-            fingerprint = prefab_fingerprint(collection, settings, context.scene) if self._fresh_prefabs else None
-            if fingerprint is not None and prefab_fresh(collection, target, fingerprint):
-                continue
-            path = Path(self._directory.name) / f"prefab_{len(outputs)}.glb"
-            result = self._export_gltf(path, collection, target.parent)
-            if "FINISHED" not in result:
-                return None
-            gltf, binary = self._prepare_prefab(*read_glb(path.read_bytes()))
-            outputs.append(SimpleNamespace(collection=collection, target=target, fingerprint=fingerprint, gltf=gltf, binary=binary, jobs=[], written=False))
-        return outputs
-
-    def _prepare_prefab(self, gltf, binary):
-        return self._prepare(gltf, binary)
-
-    def _write_prefabs(self):
-        return True
-
-    def _remember_own(self):
-        if self._own is not None:
-            remember_prefab(self._collection, _export_path(self.filepath), self._own)
-
-    def _prefab_note(self):
-        return f" and {count(len(self._prefabs), 'prefab')}" if self._prefabs else ""
-
-    def _export_direct(self):
-        path = Path(self._directory.name) / "scene.glb"
-        result = self._export_level(path)
-        if "FINISHED" not in result:
-            return result
-        output = Path(self.filepath)
-        try:
-            write_if_changed(output, path.read_bytes())
-        except OSError as error:
-            self.report({"ERROR"}, f"Could not write {output}: {error}")
-            return {"CANCELLED"}
-        self._remember_own()
-        self.report({"INFO"}, f"Exported Bevy scene: {self.filepath}{self._prefab_note()}")
-        self._report_warnings()
-        return {"FINISHED"}
-
-    def _export_scene(self, context, encoder):
-        path = Path(self._directory.name) / "scene.glb"
-        result = self._export_level(path)
-        if "FINISHED" not in result:
-            return result
-        try:
-            gltf, binary = self._prepare(*read_glb(path.read_bytes()))
-        except OSError as error:
-            self.report({"ERROR"}, self._read_error.format(name=Path(error.filename or "").name or "a probe file", reason=error.strerror))
-            return {"CANCELLED"}
-        if encoder is None:
-            self._scene = (gltf, binary, [])
-            return self._finish([])
-        try:
-            jobs = plan_textures(gltf, binary, self.texture_compression, convert=image_to_png)
-            for prefab in self._prefabs:
-                prefab.jobs = plan_textures(prefab.gltf, prefab.binary, self.texture_compression, convert=image_to_png)
-        except ValueError as error:
-            return self._failed(error)
-        self._scene = (gltf, binary, jobs)
-        jobs = [job for prefab in self._prefabs for job in prefab.jobs] + jobs
-        settings = {
-            "etc1s_quality": self.etc1s_quality,
-            "etc1s_effort": self.etc1s_effort,
-            "uastc_quality": self.uastc_quality,
-            "uastc_zstd": self.uastc_zstd,
-        }
-        window_manager = context.window_manager
-        if self._interactive and context.window is not None:
-            self._task = BackgroundEncode(encoder, jobs, settings, self._directory.name, cache=texture_cache(), check=check_encoded)
-            _exports[self._task] = (window_manager.event_timer_add(PROGRESS_INTERVAL, window=context.window), self._directory)
-            window_manager.modal_handler_add(self)
-            redraw_status_bars()
-            redraw_viewports()
-            return {"RUNNING_MODAL"}
-        window_manager.progress_begin(0, max(len(jobs), 1))
-        try:
-            encoded = encode(encoder, jobs, settings, self._directory.name, progress=window_manager.progress_update, cache=texture_cache(), check=check_encoded)
-        except EncoderError as error:
-            return self._failed(error)
-        finally:
-            window_manager.progress_end()
-        return self._finish(encoded)
-
-    def _stop_background(self, context):
-        if self._task in _exports:
-            timer, _directory = _exports.pop(self._task)
-            context.window_manager.event_timer_remove(timer)
-        redraw_status_bars()
-        redraw_viewports()
-
-    def _release(self):
-        self._directory.cleanup()
-        self._directory = None
-        self._scene = None
-        self._task = None
-        self._prefabs = ()
-
-    def _report_warnings(self):
-        for issue in self._issues:
-            print("Bevy Components:", describe(issue))
-        if self._issues:
-            self.report({"WARNING"}, f"Exported with {count(len(self._issues), 'warning')}, see Validate All Objects: {describe(self._issues[0])}")
-
-    def _failed(self, error):
-        self.report({"ERROR"}, f"Texture compression failed: {error}")
-        return {"CANCELLED"}
-
-    def _finish(self, encoded):
-        gltf, binary, jobs = self._scene
-        everything = [job for prefab in self._prefabs for job in prefab.jobs] + list(jobs)
-        for job, data in zip(everything, encoded):
-            problem = check_encoded(job, data)
-            if problem:
-                return self._failed(problem)
-        before = sum(len(data) for data in {job.image: job.data for job in jobs}.values()) + sum(len(data) for prefab in self._prefabs for data in {job.image: job.data for job in prefab.jobs}.values())
-        start = 0
-        for prefab in self._prefabs:
-            prefab.gltf, prefab.binary = embed_textures(prefab.gltf, prefab.binary, prefab.jobs, encoded[start:start + len(prefab.jobs)])
-            start += len(prefab.jobs)
-        gltf, binary = embed_textures(gltf, binary, jobs, encoded[start:])
-        if not self._write_prefabs():
-            return {"CANCELLED"}
-        summary = self._write(gltf, binary)
-        if summary is None:
-            return {"CANCELLED"}
-        resized = sorted({job.name for job in everything if job.resized})
-        if resized:
-            self.report({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need")
-        if everything:
-            self.report({"INFO"}, f"Exported Bevy scene with {len(everything)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {summary}")
-        else:
-            self.report({"INFO"}, f"Exported Bevy scene: {summary}")
-        self._report_warnings()
-        return {"FINISHED"}
-
-
-class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
-    bl_idname = "export_scene.bevy_components_glb"
-    bl_label = "Bevy Scene (.glb)"
-    bl_description = "Export the scene and its Bevy components as one GLB file"
-    bl_options = {"REGISTER"}
-
-    filename_ext = ".glb"
-    filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
-    _read_error = "Could not embed {name} in the scene: {reason}"
-    _settings = "bevy_glb_export"
-    _target = "filepath"
+        return remembered(scene)
 
     def draw(self, context):
         layout = self.layout
@@ -1476,45 +1175,92 @@ class BEVY_OT_export_glb(bpy.types.Operator, _SceneExport):
             layout.prop(self, "export_on_save")
         _draw_include(self, layout, collection is None)
         _draw_compression(self, layout, context)
-        _draw_checks(self, layout, context, (*_export_key(self), collection), lambda: _glb_issues(self, _exported_objects(self, context, collection)))
+        _draw_checks(self, layout, context, (*_export_key(self), collection), lambda: scene_issues(self, _exported_objects(self, context, collection), export_path(self.filepath)))
 
-    def _destination(self):
-        return _export_path(self.filepath)
+    def invoke(self, context, event):
+        self._interactive = True
+        if self.again or self.collection:
+            return self.execute(context)
+        if self.remembered(context.scene) and not self.properties.is_property_set("filepath"):
+            self._recall(context.scene.bevy_glb_export)
+        elif not self.properties.is_property_set("filepath") and (default := _game_default(context, self.filename_ext)) is not None:
+            self.filepath = str(default)
+        return ExportHelper.invoke(self, context, event)
 
-    def _prefab_target(self, collection):
-        return prefab_file(collection)
-
-    def _write_prefabs(self):
-        for prefab in self._prefabs:
-            if prefab.written:
-                continue
-            try:
-                write_if_changed(prefab.target, write_glb(prefab.gltf, prefab.binary))
-            except OSError as error:
-                self.report({"ERROR"}, f"Could not write {prefab.target}: {error}")
-                return False
-            remember_prefab(prefab.collection, prefab.target, prefab.fingerprint)
-            prefab.written = True
-        return True
-
-    def _check(self, objects):
-        return _glb_issues(self, objects)
-
-    def _direct(self, objects):
-        return not _has_probes(objects) and not _embeds_sky(bpy.context.scene)
-
-    def _prepare(self, gltf, binary):
-        return embed_files(gltf, binary, read=_read_file)
-
-    def _write(self, gltf, binary):
-        output = Path(self.filepath)
+    def execute(self, context):
+        collection = find_collection(self.collection) if self.collection else None
+        if self.collection and collection is None:
+            self.report({"ERROR"}, f"No collection named {self.collection}")
+            return {"CANCELLED"}
+        if self.again and collection is None:
+            if not self.remembered(context.scene):
+                self.report({"ERROR"}, f"Nothing to export again yet, export the scene once with File > Export > {self.bl_label}")
+                return {"CANCELLED"}
+            self._recall(context.scene.bevy_glb_export)
+        if not self.filepath.strip():
+            self.report({"ERROR"}, "Pick a file to export the scene to")
+            return {"CANCELLED"}
+        self.filepath = str(export_path(self.filepath))
+        if collection is None:
+            self._remember(context.scene.bevy_glb_export)
+        self._job = SceneExport(context.scene, self, self.filepath, collection)
         try:
-            write_if_changed(output, write_glb(gltf, binary))
-        except OSError as error:
-            self.report({"ERROR"}, f"Could not write {output}: {error}")
-            return None
-        self._remember_own()
-        return f"{self.filepath}{self._prefab_note()}"
+            messages = start_export(self._job, context, self._interactive)
+        except ExportError as error:
+            return self._failed(error)
+        if messages is None:
+            context.window_manager.modal_handler_add(self)
+            return {"RUNNING_MODAL"}
+        return self._finish(messages)
+
+    def modal(self, context, event):
+        task = self._job.task
+        if task.running:
+            if task.done != self._shown:
+                self._shown = task.done
+                redraw_status_bars()
+            return {"PASS_THROUGH"}
+        try:
+            messages = finish_export(self._job, context)
+        except ExportCancelled as error:
+            self._job.release()
+            self.report({"INFO"}, str(error))
+            return {"CANCELLED"}
+        except ExportError as error:
+            return self._failed(error)
+        return self._finish(messages)
+
+    def cancel(self, context):
+        task = self._job.task if self._job is not None else None
+        if task is None:
+            return
+        task.cancel()
+        task.wait()
+        try:
+            finish_export(self._job, context)
+        except ExportError:
+            pass
+        self._job.release()
+
+    def _recall(self, settings):
+        self.filepath = str(export_path(settings.filepath))
+        for name in EXPORT_OPTIONS:
+            setattr(self, name, getattr(settings, name))
+
+    def _remember(self, settings):
+        settings.filepath = _blend_relative(export_path(self.filepath))
+        for name in EXPORT_OPTIONS:
+            setattr(settings, name, getattr(self, name))
+
+    def _failed(self, error):
+        self._job.release()
+        self.report({"ERROR"}, str(error))
+        return {"CANCELLED"}
+
+    def _finish(self, messages):
+        self._job.release()
+        _report_all(self, messages)
+        return {"FINISHED"}
 
 
 class BEVY_OT_export_all_scenes(bpy.types.Operator):
@@ -1540,15 +1286,19 @@ class BEVY_OT_export_all_scenes(bpy.types.Operator):
         failed = []
         try:
             for scene in bpy.data.scenes:
-                if not BEVY_OT_export_glb.remembered(scene):
+                if not remembered(scene):
                     skipped.append(scene.name)
                     continue
                 window.scene = scene
+                job = again(scene)
                 try:
-                    bpy.ops.export_scene.bevy_components_glb(again=True)
-                except RuntimeError as error:
-                    failed.append((scene.name, str(error).removeprefix("Error: ").strip()))
+                    for _kinds, message in start_export(job, context):
+                        print(f"Bevy Components: {scene.name}: {message}")
+                except ExportError as error:
+                    failed.append((scene.name, str(error)))
                     continue
+                finally:
+                    job.release()
                 exported.append(scene.name)
         finally:
             window.scene = active
@@ -1581,7 +1331,7 @@ def export_on_save(path):
     scene = bpy.context.scene
     if path != bpy.data.filepath or scene is None or not hasattr(scene, "bevy_glb_export"):
         return
-    if not scene.bevy_glb_export.export_on_save or not BEVY_OT_export_glb.remembered(scene):
+    if not scene.bevy_glb_export.export_on_save or not remembered(scene):
         return
     try:
         bpy.ops.export_scene.bevy_components_glb("INVOKE_DEFAULT", again=True)
@@ -1901,8 +1651,7 @@ class BEVY_OT_play(bpy.types.Operator):
     _interactive = False
     _timer = None
     _task = None
-    _pending = ()
-    _waiting = None
+    _job = None
     _folder = None
     _command = ""
     _view = None
@@ -1925,18 +1674,15 @@ class BEVY_OT_play(bpy.types.Operator):
         except PlayError as error:
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
-        exports = [operator for operator in (BEVY_OT_export_glb,) if operator.remembered(context.scene)]
-        if not exports:
+        if not remembered(context.scene):
             self.report({"ERROR"}, "Export the scene once with File > Export > Bevy Scene (.glb), then Play exports it again each time")
             return {"CANCELLED"}
         for task in _games:
             task.stop()
         self._view = viewport_view(context)
-        self._pending = exports
-        result = self._export_next(context)
-        if result is not None:
-            return result
-        if self._waiting is None and not self._start(context):
+        if not self._export(context):
+            return {"CANCELLED"}
+        if self._job is None and not self._start(context):
             return {"CANCELLED"}
         if not self._interactive:
             self.report({"INFO"}, f"Started {self._task.name}: {self._command}")
@@ -1949,18 +1695,11 @@ class BEVY_OT_play(bpy.types.Operator):
 
     def modal(self, context, event):
         if self._task is None:
-            if running_export() is not None:
+            if self._job.task.running:
                 return {"PASS_THROUGH"}
-            if "CANCELLED" in _export_results.get(self._waiting.bl_idname, {"CANCELLED"}):
+            if not self._exported(context):
                 self._stop_timer(context)
-                self.report({"ERROR"}, "Play stopped because the export did not finish")
                 return {"CANCELLED"}
-            result = self._export_next(context)
-            if result is not None:
-                self._stop_timer(context)
-                return result
-            if self._waiting is not None:
-                return {"PASS_THROUGH"}
             if not self._start(context):
                 self._stop_timer(context)
                 return {"CANCELLED"}
@@ -1985,33 +1724,53 @@ class BEVY_OT_play(bpy.types.Operator):
         return {"FINISHED"}
 
     def cancel(self, context):
+        if self._job is not None and self._job.task is not None:
+            self._job.task.cancel()
+            self._job.task.wait()
+            try:
+                finish_export(self._job, context)
+            except ExportError:
+                pass
+            self._job.release()
+            self._job = None
         if self._task is not None:
             self._task.stop()
             _games.pop(self._task, None)
         self._stop_timer(context)
 
-    def _export_next(self, context):
-        self._waiting = None
-        while self._pending:
-            operator, *self._pending = self._pending
-            _export_results.pop(operator.bl_idname, None)
-            export = getattr(bpy.ops.export_scene, operator.bl_idname.split(".")[1])
-            try:
-                result = export("INVOKE_DEFAULT" if self._interactive else "EXEC_DEFAULT", again=True)
-            except RuntimeError as error:
-                self.report({"ERROR"}, f"Play stopped because the export failed: {str(error).removeprefix('Error: ').strip()}")
-                return {"CANCELLED"}
-            if "CANCELLED" in result:
-                self.report({"ERROR"}, "Play stopped because the export failed")
-                return {"CANCELLED"}
-            if "RUNNING_MODAL" in result:
-                self._waiting = operator
-                return None
-        return None
+    def _export(self, context):
+        job = again(context.scene)
+        try:
+            messages = start_export(job, context, self._interactive)
+        except ExportError as error:
+            job.release()
+            self.report({"ERROR"}, f"Play stopped because the export failed: {error}")
+            return False
+        if messages is None:
+            self._job = job
+            return True
+        job.release()
+        _report_all(self, messages)
+        return True
+
+    def _exported(self, context):
+        job, self._job = self._job, None
+        try:
+            messages = finish_export(job, context)
+        except ExportCancelled:
+            self.report({"ERROR"}, "Play stopped because the export did not finish")
+            return False
+        except ExportError as error:
+            self.report({"ERROR"}, f"Play stopped because the export failed: {error}")
+            return False
+        finally:
+            job.release()
+        _report_all(self, messages)
+        return True
 
     def _start(self, context):
-        glb = BEVY_OT_export_glb.remembered(context.scene)
-        scene = _export_path(glb) if glb else None
+        glb = remembered(context.scene)
+        scene = export_path(glb) if glb else None
         name = self._folder.name if self._command != VIEWER_COMMAND else "The viewer"
         environment = {VIEW_VARIABLE: self._view} if self._view else {}
         try:
