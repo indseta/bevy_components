@@ -61,6 +61,7 @@ impl ColliderShape {
 pub struct ShadowSettings {
     pub cast: bool,
     pub receive: bool,
+    pub own_mesh: bool,
 }
 
 #[derive(Clone, Debug)]

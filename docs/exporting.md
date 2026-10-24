@@ -42,14 +42,15 @@ Warnings point out setups that behave differently in Bevy than they look in Blen
 - levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
 - Custom Component type paths that aren't Rust paths, or that repeat on one object, game components with fields Blender cannot set but no `#[reflect(Default)]`, and game tuple structs with such fields, which the game cannot insert
 - Shadows with no mesh on or under its object, and Navigation with no mesh or collider on or under its object
-- an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
+- an Audio Player or Speaker with no sound, a path outside the `assets` folder, a sound packed into the .blend file, or a file type Bevy cannot play
 - a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported scene itself (a file on another drive than the exported scene is an error)
 - a prefab with no objects or a GLB file outside the `assets` folder (two prefabs with one file, a prefab writing the exported scene's own file, or a Scene Reference on a prefab instance is an error)
 - an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
-- a Fog Volume with a density of 0, and a Reflection Probe, Irradiance Volume or Bevy Sky with no file
+- a Fog Volume with a density of 0, and a Reflection Probe, Irradiance Volume, light probe or Bevy Sky with no file
+- a fog box with another volume shader than Principled Volume, textures plugged into its inputs, Emission or Blackbody, more than one material, a mesh that is not a box or not centered on its origin, and Plane light probes, which Bevy has no equivalent for
 - Bevy Ambient Light from the World color next to the Bevy Sky's Environment Light, which light the scene twice
 - a lightmap, light probe or sky baked before the meshes, lamps or World it lights changed, so it needs another bake
-- an area light without a Light component, which glTF leaves out, a disk or ellipse area light or a square spot light, which Bevy cannot draw, and a Volumetric light without shadows
+- a disk or ellipse area light or a square spot light, which Bevy cannot draw, and a Volumetric light without shadows
 - a light probe file in a block-compressed format, which only loads on GPUs that support it
 - a material that glTF flattens: one that mixes shaders, has no Principled BSDF, or drives Principled BSDF inputs with procedural nodes instead of images
 - shape keys on a mesh with modifiers while **Apply Modifiers** is on

@@ -83,7 +83,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     let axis = axis.map(Vec3::from).and_then(Vec3::try_normalize).unwrap_or(Vec3::Y);
                     joint = Some(JointSpec { kind, body1, body2, axis, angle_limits, distance_limits, swing_limit, linear_damping: linear_damping.unwrap_or_default(), angular_damping: angular_damping.unwrap_or_default(), collide });
                 }
-                ExportedComponent::Shadows { cast, receive } => components.shadows = Some(ShadowSettings { cast, receive }),
+                ExportedComponent::Shadows { cast, receive, own_mesh } => components.shadows = Some(ShadowSettings { cast, receive, own_mesh: own_mesh.unwrap_or_default() }),
                 ExportedComponent::Navigation { kind, cost } => {
                     let cost = match cost {
                         Some(value) if value <= 0.0 => {
@@ -102,7 +102,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         }
                     };
                 }
-                ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance } => {
+                ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance, speed } => {
                     if path.is_empty() {
                         warn!("{}: Audio Player has no sound file", object_name(name));
                     } else if audio_sources.is_none() {
@@ -110,7 +110,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     } else {
                         let mode = if looping { PlaybackMode::Loop } else { PlaybackMode::Once };
                         let spatial_scale = (spatial && distance > 0.0).then(|| SpatialScale::new(1.0 / distance));
-                        audio = Some((AudioPlayer::new(asset_server.load(path)), PlaybackSettings { mode, volume: Volume::Linear(volume.max(0.0)), paused: !autoplay, spatial, spatial_scale, ..PlaybackSettings::ONCE }));
+                        audio = Some((AudioPlayer::new(asset_server.load(path)), PlaybackSettings { mode, volume: Volume::Linear(volume.max(0.0)), speed: speed.unwrap_or(1.0).max(0.0), paused: !autoplay, spatial, spatial_scale, ..PlaybackSettings::ONCE }));
                     }
                 }
                 ExportedComponent::Light(light) => {
@@ -374,7 +374,7 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
                     collider = Some(spec.collider.clone().filter(|collider| !collider.own_mesh || Some(current) == owner));
                 }
                 if shadows.is_none() {
-                    shadows = spec.shadows;
+                    shadows = spec.shadows.filter(|shadows| !shadows.own_mesh || Some(current) == owner);
                 }
                 if visibility.is_some() && collider.is_some() && shadows.is_some() {
                     break;

@@ -12,13 +12,13 @@ from .bsn import BsnError, crate_root, custom_literal, file_state, inside
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
-from .native import UNSUPPORTED_JOINTS, bounds, is_native
+from .native import MESH_TYPES, PRINCIPLED_VOLUME, UNSUPPORTED_JOINTS, asset_path, bounds, fog_source, is_native, sound_file
 from .property import AUDIO_FORMATS
 from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_order
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, asset_path, children_map, collider_sources, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
+from .system import children_map, collider_sources, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
@@ -43,6 +43,8 @@ BLENDER_SHAPE_LABELS = {
     "CYLINDER": "Cylinder",
     "CONE": "Cone",
 }
+FOG_INPUTS = ("Color", "Density", "Anisotropy", "Absorption Color")
+GLOW_INPUTS = ("Emission Strength", "Blackbody Intensity")
 SHADER_MIXES = {"MIX_SHADER", "ADD_SHADER"}
 GLTF_MIXES = {"BSDF_TRANSPARENT", "LIGHT_PATH"}
 UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
@@ -317,7 +319,7 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
         elif item.component_type == "NAVIGATION":
             issues.extend(Issue("WARNING", obj, item, message) for message in _navigation_warnings(obj, item, children))
         elif item.component_type == "AUDIO_PLAYER":
-            issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item, assets))
+            issues.extend(Issue("WARNING", obj, item, message) for message in (_speaker_warnings(obj) if is_native(item) else []) + _audio_warnings(item, assets))
         elif item.component_type == "JOINT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _joint_warnings(obj, item, exported))
         elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
@@ -350,9 +352,7 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
     constraint = getattr(obj, "rigid_body_constraint", None)
     if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None:
         issues.append(Issue("WARNING", obj, None, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"))
-    light = light_of(obj)
-    if light is not None and light.type == "AREA" and not any(item.component_type == "LIGHT" for item in obj.bevy_component_data.components):
-        issues.append(Issue("WARNING", obj, None, "glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"))
+    issues.extend(_data_issues(obj))
     shape_keys = obj.data.shape_keys if obj.type == "MESH" else None
     if modifiers and len(obj.modifiers) and shape_keys is not None and len(shape_keys.key_blocks) > 1:
         issues.append(Issue("WARNING", obj, None, "glTF leaves out the shape keys of meshes with modifiers. Apply the modifiers, or turn off Apply Modifiers"))
@@ -493,6 +493,47 @@ def _file_check(filepath, kind, library):
     return _texture_checks[key]
 
 
+def _data_issues(obj):
+    issues = []
+    if obj.type == "LIGHT_PROBE" and obj.data.type == "PLANE" and not any(component_of(obj, kind) is not None for kind in FILE_KINDS):
+        issues.append(Issue("WARNING", obj, None, "Bevy has no planar reflections, so the game leaves this Light Probe out"))
+    if obj.type == "SPEAKER" and not obj.data.muted and component_of(obj, "AUDIO_PLAYER") is None:
+        issues.append(Issue("WARNING", obj, None, "No sound picked, so nothing plays"))
+    source = fog_source(obj)
+    item = component_of(obj, "FOG_VOLUME")
+    if source is not None and (item is None or is_native(item)):
+        issues.extend(Issue("WARNING", obj, item, message) for message in _fog_warnings(obj, *source))
+    return issues
+
+
+def _speaker_warnings(obj):
+    sound = obj.data.sound
+    if sound.packed_file is not None:
+        return ["The sound is packed into the .blend, but the game loads it from its assets folder. Unpack it there"]
+    if asset_path(sound_file(sound))[1] is None:
+        return [f"{Path(sound_file(sound)).name} is not in an assets folder, so the game looks for it at the top of its assets folder"]
+    return []
+
+
+def _fog_warnings(obj, material, node):
+    if node.bl_idname != PRINCIPLED_VOLUME:
+        return [f"Bevy fog reads only the Principled Volume shader, so the game leaves out {material.name}"]
+    warnings = []
+    if len({slot.material for slot in obj.material_slots if slot.material is not None}) > 1:
+        warnings.append(f"Bevy fills the box with one fog, so the game uses {material.name} only")
+    linked = [name for name in FOG_INPUTS if node.inputs[name].is_linked]
+    if linked:
+        warnings.append(f"Bevy fog is even throughout, so the game takes the {' and '.join(linked)} value{'s' if len(linked) > 1 else ''} and ignores what is plugged in")
+    if any(node.inputs[name].is_linked or node.inputs[name].default_value > 0 for name in GLOW_INPUTS):
+        warnings.append("Bevy fog does not glow, so the game leaves out Emission and Blackbody")
+    size, center = bounds(obj)
+    if max(abs(value) for value in center) > CENTER_TOLERANCE * max(1.0, *size):
+        warnings.append("The mesh is not centered on its origin, but Bevy centers the fog box on it. Use Set Origin > Origin to Geometry")
+    if len(obj.data.vertices) != 8:
+        warnings.append("Bevy fog fills a box, so the game fills this mesh's bounding box")
+    return warnings
+
+
 def _collider_warnings(obj, item, children):
     warnings = []
     targets = [obj]
@@ -577,7 +618,7 @@ def _visibility_range_warnings(obj, item, children):
 
 
 def _shadows_warnings(obj, item, children):
-    if not mesh_sources(obj, children, "SHADOWS"):
+    if not getattr(item, "shadows_own_mesh", False) and not mesh_sources(obj, children, "SHADOWS"):
         return ["No mesh on this object or under it to cast or receive shadows"]
     return []
 

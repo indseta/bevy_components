@@ -1041,10 +1041,10 @@ class _Generator:
             found.append([f"Mesh3d({_string(self._label('Mesh', mesh) + f'/Primitive{position}')})", f"MeshMaterial3d::<StandardMaterial>({_string(self._label(label, ''))})"])
         return found
 
-    def _inherited(self, index, kind):
+    def _inherited(self, index, kind, skip_owned=False):
         for ancestor in self._ancestors(index):
             component = _first(self.components[ancestor], kind)
-            if component is not None:
+            if component is not None and not (skip_owned and ancestor != index and component.get("own_mesh")):
                 return component
         return None
 
@@ -1071,7 +1071,7 @@ class _Generator:
             entries.append("Visibility::Hidden")
         if collider is not None and collider.get("shape") in MESH_SHAPES:
             entries.extend(self._collider_settings(collider, True))
-        shadows = self._inherited(index, "shadows")
+        shadows = self._inherited(index, "shadows", True)
         if shadows is not None:
             if not shadows.get("cast", True):
                 entries.append("NotShadowCaster")
@@ -1354,6 +1354,9 @@ class _Generator:
         if _single(volume) != 1.0:
             fields.append(f"volume: Volume::Linear({_float(volume)})")
             self._use("Volume")
+        speed = component.get("speed", 1.0)
+        if _numeric(speed) and speed >= 0.0 and _single(speed) != 1.0:
+            fields.append(f"speed: {_float(speed)}")
         if not component.get("autoplay", True):
             fields.append("paused: true")
         if component.get("spatial"):

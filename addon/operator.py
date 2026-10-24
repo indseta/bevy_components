@@ -17,7 +17,7 @@ from .fingerprint import bake_record
 from .convert import convert_objects
 from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
-from .native import rest_frame
+from .native import asset_path, rest_frame
 from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command, needs_scene
 from .prefab import collection_export, find_collection, prefab_file, prefab_fingerprint, prefab_fresh, prefab_order, prefab_settings, remember_prefab, scene_export
 from .preferences import draw_encoder_status, encoder_path, texture_cache
@@ -25,7 +25,7 @@ from .probe import FILE_KINDS, embed_files
 from .project import game_assets, game_folder, play_target
 from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, viewport_view, write_component_text, write_field
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, viewport_view, write_component_text, write_field
 from .validation import body_kind, check_bsn, check_game_paths, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
@@ -1053,8 +1053,8 @@ class BEVY_OT_validate(bpy.types.Operator):
 
 class BEVY_OT_convert_to_native(bpy.types.Operator):
     bl_idname = "bevy_components.convert_to_native"
-    bl_label = "Convert Physics to Blender"
-    bl_description = "Replace Collider, Rigid Body and Joint components with Blender's Rigid Body and Rigid Body Constraint wherever the game gets the same physics, and keep the other components"
+    bl_label = "Convert Components to Blender"
+    bl_description = "Replace components with Blender's own data wherever the game gets the same result: physics with Rigid Bodies and Constraints, Light, Shadows and Animation with the light, object and action settings, Audio Player, Fog Volume and probes with Speaker, fog box and Light Probe child objects. Keeps the other components"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -1064,17 +1064,17 @@ class BEVY_OT_convert_to_native(bpy.types.Operator):
     def execute(self, context):
         converted, kept = convert_objects(context, context.scene.objects)
         for obj, reason in kept:
-            print(f"Bevy Components: kept the physics components of {obj.name} because {reason}")
+            print(f"Bevy Components: kept components on {obj.name} because {reason}")
         if not converted and not kept:
-            self.report({"INFO"}, "No Collider, Rigid Body or Joint components to convert")
+            self.report({"INFO"}, "No components that Blender data can replace")
             return {"CANCELLED"}
         if kept and context.window is not None and not bpy.app.background:
             rows = [("WARNING", obj.name, f"kept because {reason}") for obj, reason in kept]
-            context.window_manager.popup_menu(lambda menu, _context: draw_issues(menu.layout, rows, 20, "in the system console", select=True), title=f"Converted {count(len(converted), 'object')}, kept {count(len(kept), 'object')}", icon="INFO")
+            context.window_manager.popup_menu(lambda menu, _context: draw_issues(menu.layout, rows, 20, "in the system console", select=True), title=f"Converted {count(len(converted), 'object')}, kept components on {count(len(set(obj for obj, _reason in kept)), 'object')}", icon="INFO")
         if kept:
-            self.report({"WARNING"}, f"Converted {count(len(converted), 'object')}, kept components on {count(len(kept), 'object')}: {kept[0][0].name} because {kept[0][1]}")
+            self.report({"WARNING"}, f"Converted {count(len(converted), 'object')}, kept components on {count(len(set(obj for obj, _reason in kept)), 'object')}: {kept[0][0].name} because {kept[0][1]}")
         else:
-            self.report({"INFO"}, f"Converted {count(len(converted), 'object')} to Blender physics")
+            self.report({"INFO"}, f"Converted {count(len(converted), 'object')} to Blender data")
         redraw_properties()
         redraw_viewports()
         return {"FINISHED"}
@@ -2072,9 +2072,13 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
                     stored.append(job)
                 continue
             obj = bpy.data.objects.get(job["object"])
-            items = obj.bevy_component_data.components if obj is not None and obj.library is None else ()
+            usable = obj is not None and obj.library is None
+            items = obj.bevy_component_data.components if usable else ()
             matching = [item for item in items if FILE_KINDS.get(item.component_type) == job["kind"]]
-            item = items[job["index"]] if job["index"] < len(items) and items[job["index"]] in matching else matching[0] if len(matching) == 1 else None
+            if job["index"] < 0:
+                item = obj.bevy_object if usable else None
+            else:
+                item = items[job["index"]] if job["index"] < len(items) and items[job["index"]] in matching else matching[0] if len(matching) == 1 else None
             if item is not None:
                 item.probe_file = job["file"]
                 item.bake_fingerprint = job.get("fingerprint", "")

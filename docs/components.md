@@ -1,6 +1,6 @@
 # Components
 
-Add components with **Add Component** in **Properties > Object > Components** or **3D Viewport > N > Bevy**. Physics comes from Blender's own Rigid Body, see [Physics](#physics). Physics, Rendering and Lighting components sit in submenus, and typing searches them all. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
+Add components with **Add Component** in **Properties > Object > Components** or **3D Viewport > N > Bevy**. Physics, lights, shadows, speakers, light probes, fog and animation come from Blender's own settings, see [Physics](#physics), [Lighting](lighting.md) and below, and the Components panel lists what each object gets from them. Physics, Rendering and Lighting components sit in submenus, and typing searches them all. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
 
 ## Working with components
 
@@ -44,21 +44,19 @@ The **Collider**, **Rigid Body** and **Joint** components cover what Blender's p
 
 **Joint** connects two bodies with an Avian Fixed, Hinge, Slider or Ball joint. Put it on an empty at the pivot, or on one of the bodies, and pick Body 1 and Body 2 from objects with a Rigid Body or Collider. Leave one empty to pin the other to that spot in the scene. The object's position and its Axis set the pivot, and limits count from where the bodies sit in Blender.
 
-### Converting older files
-
-**Bevy Components > Convert Physics to Blender** in the 3D Viewport's Object and right-click menus replaces Collider, Rigid Body and Joint components with Blender's Rigid Body and Rigid Body Constraint wherever the game gets the same physics. It keeps the components it cannot replace and lists those objects with the reason, such as a collider offset or a hinge on another axis. A collider on the default layers moves to Collision Collection 0, unless another collider in the scene relies on touching it from another layer; then it keeps those layers under Bevy Layers.
-
 ## Rendering
 
 **Visibility Range** fades the meshes on and under the object in and out by camera distance, for levels of detail. Its LOD0, LOD1 and LOD2 presets set fades that crossfade with the neighbouring levels, and handles in the viewport drag the distances.
 
-**Shadows** stops the meshes on and under an object from casting or receiving shadows.
+**Shadows** follow **Properties > Object > Visibility**: a mesh whose Ray Visibility **Shadow** is off casts no shadows in the game, and one with **Bevy > Receive Shadows** off receives none. The **Shadows** component (under Rendering) turns them off for every mesh on and under an object.
 
 ## Audio, animation and scenes
 
-**Audio Player** plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
+A **Speaker** plays its sound in the game. Keep the sound file in your game's `assets` folder, since the game loads it from its path there, such as `sounds/fire.ogg`. Volume, Pitch (the playback speed) and Distance Reference carry over, a muted speaker is left out, and **Properties > Speaker > Bevy** sets Loop, Autoplay and Spatial. Spatial sounds play at full volume within their distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
 
-**Animation** plays an action when the scene loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
+The **Audio Player** component plays a sound on any object, and its folder button fills in the path from a picked file.
+
+**Autoplay** in the Components panel plays the object's active action when the scene loads, at a Speed where 1 matches Blender. **Loop** next to it sets the action's Cyclic Animation, which makes the game repeat it. The **Animation** component plays another clip, such as one that animates the object's children. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
 
 **Scene Reference** spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. [Prefabs](exporting.md#prefabs) do the same for collection instances and export the prop for you.
 
@@ -78,3 +76,11 @@ The viewport draws the faces of walkable ground that slope less than 45° and th
 - **bevy_landmass** uses a navmesh from one of these, and its type index costs can come from `NavigationWalkable::cost`.
 
 See the [importer README](../importer/README.md) for exactly what each component becomes in Bevy.
+
+## Converting older files
+
+**Bevy Components > Convert Components to Blender** in the 3D Viewport's Object and right-click menus replaces components with Blender's own settings wherever the game gets the same result. It keeps the components it cannot replace and lists those objects with the reason, such as a collider offset or a hinge on another axis.
+
+- Collider, Rigid Body and Joint become Blender's Rigid Body and Rigid Body Constraint. A collider on the default layers moves to Collision Collection 0, unless another collider in the scene relies on touching it from another layer; then it keeps those layers under Bevy Layers.
+- Light, Shadows and Animation move to the light's Bevy settings, the mesh's Shadow and Receive Shadows, and Autoplay with the action's Cyclic Animation. A light keeps its component when other lights share its light data.
+- Audio Player, Fog Volume, Reflection Probe and Irradiance Volume become a Speaker, a box with a Principled Volume, or a Light Probe, added as a child of the object. A Speaker needs the sound in the game's `assets` folder and a volume up to 1. The fog box's density and absorption can differ from the component's, while the light it scatters and dims stays the same.
