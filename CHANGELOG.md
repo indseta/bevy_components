@@ -8,6 +8,8 @@
 - **Blender lighting and audio**: every light exports its Bevy settings from **Properties > Light > Bevy**, Speakers become Audio Players (Pitch is the playback speed), Sphere and Volume Light Probes become Reflection Probes and Irradiance Volumes that bake from their Bevy panel, and meshes whose material is only a Principled Volume become fog volumes. Ray Visibility's **Shadow** and a new **Receive Shadows** setting under Visibility control mesh shadows, and **Autoplay** plays an object's active action, looping when the action is Cyclic. See [Lighting](docs/lighting.md) and [Components](docs/components.md#audio-animation-and-scenes).
 - **Convert Components to Blender** replaces Collider, Rigid Body, Joint, Light, Shadows and Animation components with Blender's own settings, and Audio Player, Fog Volume and probe components with Speaker, fog box and Light Probe child objects, wherever the game gets the same result, and lists what it kept.
 - **Collection components**: **Properties > Collection > Game Components** gives custom and game components, Navigation and Visibility Range to every object in the collection and the collections inside it. A component on the object, or from a collection inside, replaces the collection's, and the Components panel lists what each object gets from its collections. Collections linked from another .blend file bring their components along. See [Collections](docs/components.md#collections).
+- **Leave Out of Bevy** on an object or a collection exports it as plain glTF, without what Blender's physics, light, speaker, light probe and fog settings and collection components would add, for helper and reference objects. Components added by hand still export.
+- **Copy Components**, **Paste Components**, **Copy All to Selected** and presets carry Blender's Rigid Body and Rigid Body Constraint with their Bevy settings, shadows, Autoplay and the Bevy settings of lights, speakers and light probes, so a crate preset keeps its physics. **Object > Rigid Body > Copy from Active with Bevy Settings** copies a Rigid Body with the Bevy settings that Blender's Copy from Active leaves out.
 - Cylinder and Cone colliders, for Collider components and Blender's shapes.
 - New checks: objects that get the same component from two unrelated collections with different settings, Blender shapes on meshes that are not centered on their origin, constraint types Avian has no joint for, speakers without a sound or with a packed one, Plane light probes, and fog boxes that use another shader, textures or emission, or are off center.
 
@@ -19,6 +21,10 @@
 - Importer: shadow settings from Blender's Visibility apply only to the object's own mesh, and Audio Players read an optional playback speed.
 - The Components panel is now **Game Components**. **Add Component** lists your game's components, Navigation, Visibility Range, Lightmap and Scene Reference, and the built-in components that replace Blender's settings moved to **Add Component > Advanced**.
 - Scene Overview and **Select by Bevy Component** include what objects get from Blender's settings and from collections.
+
+### Removed
+
+- The **BSN export** (**File > Export > Bevy Scene (BSN)**) is gone, so the addon writes GLB files only and the importer is the one way into Bevy. Its settings, the **Enum Type** of enum fields in **Bevy Custom Components** and the `enums` entry in custom component extras, which only that export read, went with it. Files that used it still open and export their GLB.
 
 ## 0.5.0 (2026-10-24)
 

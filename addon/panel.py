@@ -3,10 +3,10 @@ from fnmatch import fnmatchcase
 
 import bpy
 
-from .collection import collection_entries, from_collection
+from .collection import collection_entries, from_collection, left_out_by
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, cascades_invalid, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_collection, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_collection, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
 from .native import JOINTS, MESH_TYPES, NATIVE_SOURCES, PRINCIPLED_VOLUME, PROBE_KINDS, UNSUPPORTED_JOINTS, active_action, asset_path, compound_parent, is_native, native_components, rigid_body_kind, sound_file, volume_shader
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
 from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
@@ -488,11 +488,36 @@ def draw_components(layout, context, obj):
     owner = prefab_owner(obj)
     if owner is not None:
         draw_message(layout, f"Part of prefab {owner.name}, so it exports to the prefab's GLB file and not with the scene", icon="INFO", width=width)
-    _draw_autoplay(layout, obj, issues, width)
-    _draw_native(layout, context, obj, issues, width)
-    _draw_inherited(layout, obj, issues, width)
+    if not _draw_leave_out(layout, obj, width):
+        _draw_autoplay(layout, obj, issues, width)
+        _draw_native(layout, context, obj, issues, width)
+        _draw_inherited(layout, obj, issues, width)
     for index, item in enumerate(obj.bevy_component_data.components):
         _draw_component(layout, context, obj, index, item, issues)
+
+
+def _left_out_text(source):
+    if isinstance(source, bpy.types.Collection):
+        return f"Left out of Bevy by collection {source.name}"
+    return "Left out of Bevy in Object > Game Components"
+
+
+def _draw_leave_out(layout, obj, width):
+    source = left_out_by(obj)
+    if source is None and not any(is_native(item) or from_collection(item) for item in components_for(obj)):
+        return False
+    column = layout.column(align=True)
+    column.prop(obj.bevy_component_data, "leave_out")
+    if source is None:
+        return False
+    if isinstance(source, bpy.types.Collection):
+        row = column.row(align=True)
+        row.label(text=_left_out_text(source), icon="INFO")
+        row.operator(BEVY_OT_show_collection.bl_idname, text="", icon="OUTLINER_COLLECTION", emboss=False).collection = source.name_full
+    note = column.column(align=True)
+    note.active = False
+    draw_message(note, "Exports as plain glTF, without components from Blender's settings or collections", icon="BLANK1" if isinstance(source, bpy.types.Collection) else "INFO", width=width)
+    return True
 
 
 def _issue_icon(issues, icon):
@@ -535,14 +560,25 @@ def draw_collection_components(layout, context, collection):
     items = collection.bevy_component_data.components
     if collection.library is not None:
         draw_message(layout, f"Linked from {collection.library.name}, so edit its components in that file", icon="LIBRARY_DATA_DIRECT", width=width)
+    leave_out = collection.bevy_component_data.leave_out
+    column = layout.column(align=True)
+    column.enabled = collection.library is None
+    column.prop(collection.bevy_component_data, "leave_out")
+    if leave_out:
+        note = column.column(align=True)
+        note.active = False
+        draw_message(note, f"Every object in this collection and the collections inside it exports as plain glTF, without components from Blender's settings or collections{', also the ones below' if len(items) else ''}. Components on the objects themselves still export", icon="INFO", width=width)
     if not len(items):
-        draw_message(layout, "Every object in this collection and the collections inside it gets the components added here. Link objects to it with Ctrl+L > Link to Collection, so they stay in their other collections", icon="INFO", width=width)
+        if not leave_out:
+            draw_message(layout, "Every object in this collection and the collections inside it gets the components added here. Link objects to it with Ctrl+L > Link to Collection, so they stay in their other collections", icon="INFO", width=width)
         return
     members = len(collection.all_objects)
-    draw_message(layout, f"{count(members, 'object')} {'gets' if members == 1 else 'get'} these components, unless the object or a collection inside this one sets its own", icon="INFO", width=width)
+    if not leave_out:
+        draw_message(layout, f"{count(members, 'object')} {'gets' if members == 1 else 'get'} these components, unless the object or a collection inside this one sets its own", icon="INFO", width=width)
     issues = collection_issues(collection)
     column = layout.column()
     column.enabled = collection.library is None
+    column.active = not leave_out
     for index, item in enumerate(items):
         _draw_component(column, context, collection, index, item, issues)
 
@@ -593,6 +629,10 @@ def _card_of(obj, kind):
 
 def _draw_native_checks(layout, context, obj, kind):
     width = context.region.width if context.region else 300
+    source = left_out_by(obj)
+    if source is not None:
+        draw_message(layout, f"{_left_out_text(source)}, so the game gets none of these settings", icon="INFO", width=width)
+        return False
     if _card_of(obj, kind) is not None:
         draw_message(layout, f"The {COMPONENT_LABELS[kind][0]} component in Object > Game Components replaces these settings in Bevy", icon="INFO", width=width)
         return False
@@ -734,7 +774,7 @@ def draw_visibility(self, context):
     if obj is None or obj.type not in MESH_TYPES or not hasattr(obj, "bevy_object"):
         return
     column = self.layout.column(heading="Bevy")
-    column.active = _card_of(obj, "SHADOWS") is None
+    column.active = _card_of(obj, "SHADOWS") is None and left_out_by(obj) is None
     column.prop(obj.bevy_object, "receive_shadows")
 
 
@@ -984,12 +1024,9 @@ class BEVY_PT_view_export(bpy.types.Panel):
         draw_export_again(column, context.scene)
         draw_export_all(column)
         column.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Scene (.glb)...", icon="EXPORT")
-        column.operator(BEVY_OT_export_bsn.bl_idname, text="Bevy Scene (BSN)...", icon="EXPORT")
-        exports = [(operator, label) for operator, label in ((BEVY_OT_export_glb, "GLB"), (BEVY_OT_export_bsn, "BSN")) if operator.remembered(context.scene)]
-        if exports:
+        if BEVY_OT_export_glb.remembered(context.scene):
             column.separator()
-        for operator, label in exports:
-            column.prop(getattr(context.scene, operator._settings), "export_on_save", text="Export on Save" if len(exports) == 1 else f"Export {label} on Save")
+            column.prop(context.scene.bevy_glb_export, "export_on_save", text="Export on Save")
 
 
 def _draw_play_target(layout, context, width):
@@ -1002,7 +1039,7 @@ def _draw_play_target(layout, context, width):
         layout.operator("preferences.addon_show", text="Open Preferences", icon="PREFERENCES").module = __package__
         return
     layout.label(text="Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", icon="CONSOLE")
-    if not any(operator.remembered(context.scene) for operator in (BEVY_OT_export_glb, BEVY_OT_export_bsn)):
+    if not BEVY_OT_export_glb.remembered(context.scene):
         draw_message(layout, "Export the scene once, then Play exports it again each time", "INFO", width)
 
 
@@ -1116,7 +1153,6 @@ class BEVY_PT_scene_definitions(bpy.types.Panel):
         body.prop(field, "field_type")
         if field.field_type == "ENUM":
             body.prop(field, "variants")
-            body.prop(field, "rust_type", text="Enum Type")
         body.prop(field, _field_property(field), text="Default")
 
 

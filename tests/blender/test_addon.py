@@ -3,7 +3,6 @@ import importlib.util
 import json
 import math
 import os
-import re
 import struct
 import subprocess
 import sys
@@ -20,7 +19,7 @@ import gpu
 import numpy
 from mathutils import Matrix, Quaternion, Vector
 
-from sample_scene import BSN_ASSETS, BSN_FIXTURE, COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, SOUNDS, STATIC_ASSETS, STATIC_FIXTURE, STATIC_ROCKS, add_component, add_empty, add_instance, add_light, add_material, add_mesh, add_prefab, animate, apply_lod_preset, build_sample_scene, build_static_scene, clear_scene, define_component, export_bsn_scene, export_props, export_sample_scene, install_addon, layers, move_to, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
+from sample_scene import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, SOUNDS, add_component, add_empty, add_instance, add_light, add_material, add_mesh, add_prefab, animate, apply_lod_preset, build_sample_scene, clear_scene, define_component, export_props, export_sample_scene, install_addon, layers, move_to, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -79,7 +78,7 @@ EXPECTED_COMPONENTS = {
     "enemy_spawn": [
         {"type": "custom", "type_path": "my_game::EnemySpawn", "data": {}},
         {"type": "custom", "type_path": "my_game::Wave", "data": {"count": 3, "delay": 1.5}},
-        {"type": "custom", "type_path": "my_game::Patrol", "data": {"speed": 2.5, "mode": "PingPong", "offset": [1.0, -0.5], "stops": 3}, "enums": {"mode": "my_game::PatrolMode"}},
+        {"type": "custom", "type_path": "my_game::Patrol", "data": {"speed": 2.5, "mode": "PingPong", "offset": [1.0, -0.5], "stops": 3}},
         {"type": "custom", "type_path": "my_game::Reward", "data": [7, 1.5]},
     ],
     "lamp": [
@@ -481,20 +480,18 @@ def _menu_context(obj=None, item=None):
 
 
 @contextmanager
-def _remembered_exports(glb="", bsn=""):
-    glb_settings = bpy.context.scene.bevy_glb_export
-    bsn_settings = bpy.context.scene.bevy_bsn_export
-    before = (glb_settings.filepath, bsn_settings.rust_file)
-    glb_settings.filepath = glb
-    bsn_settings.rust_file = bsn
+def _remembered_exports(glb=""):
+    settings = bpy.context.scene.bevy_glb_export
+    before = settings.filepath
+    settings.filepath = glb
     try:
         yield
     finally:
-        glb_settings.filepath, bsn_settings.rust_file = before
+        settings.filepath = before
 
 
 def _open_dialog(operator_class, **values):
-    operator = SimpleNamespace(again=False, collection="", filepath="", assets_folder="", prefab_functions=True, filename_ext=operator_class.filename_ext, _settings=operator_class._settings, _target=operator_class._target, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
+    operator = SimpleNamespace(again=False, collection="", filepath="", filename_ext=operator_class.filename_ext, _settings=operator_class._settings, _target=operator_class._target, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
     for name, value in {**{name: None for name in addon.property.EXPORT_OPTIONS}, **values}.items():
         setattr(operator, name, value)
     operator._recall = MethodType(operator_class._recall, operator)
@@ -550,13 +547,14 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.World, "bevy_sky"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_bake_settings"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_glb_export"))
-        self.assertTrue(hasattr(bpy.types.Scene, "bevy_bsn_export"))
+        self.assertFalse(hasattr(bpy.types.Scene, "bevy_bsn_export"))
+        self.assertFalse(_operator_exists("export_scene.bevy_components_bsn"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_game"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_prefab"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_component_data"))
-        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "bevy_components.show_collection"):
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "bevy_components.show_collection", "bevy_components.copy_physics"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_advanced", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_components", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
@@ -573,6 +571,7 @@ class TestRegistration(unittest.TestCase):
         for menu in (bpy.types.VIEW3D_MT_object, bpy.types.VIEW3D_MT_object_context_menu):
             self.assertIn(addon.menu.object_menu, menu._dyn_ui_initialize())
         self.assertIn(addon.menu.select_menu, bpy.types.VIEW3D_MT_select_object._dyn_ui_initialize())
+        self.assertIn(addon.menu.rigid_body_menu, bpy.types.VIEW3D_MT_object_rigid_body._dyn_ui_initialize())
         self.assertIn(addon.menu.text_header, bpy.types.TEXT_HT_header._dyn_ui_initialize())
         for name in ("depsgraph_update_post", "undo_post", "redo_post", "load_post"):
             self.assertIn(addon.system.problems_changed, getattr(bpy.app.handlers, name))
@@ -1245,11 +1244,11 @@ class TestPanels(unittest.TestCase):
         menu = FakePanel(self)
         with _remembered_exports():
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.convert_to_native", "bevy_components.bake_lighting", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
+        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.convert_to_native", "bevy_components.bake_lighting", "export_scene.bevy_components_glb"])
         menu = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
-        self.assertEqual(_again_buttons(menu.layout)[-3:], [("Export Bevy Scene (.glb)...", False), ("Export Bevy Scene (BSN)...", False), ("Export Again (level.glb)", True)])
+        self.assertEqual(_again_buttons(menu.layout)[-2:], [("Export Bevy Scene (.glb)...", False), ("Export Again (level.glb)", True)])
 
     def test_sidebar_without_active_object(self):
         select()
@@ -1701,28 +1700,25 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         with _remembered_exports():
             addon.menu.export_menu(panel, bpy.context)
-        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
+        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb"])
         panel = FakePanel(self)
-        with _remembered_exports(glb="//level.glb", bsn="//src/level.rs"):
+        with _remembered_exports(glb="//level.glb"):
             addon.menu.export_menu(panel, bpy.context)
-        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn"])
-        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)", False), ("Bevy Scene (BSN)", False), ("Export Again (level.glb)", True), ("Export Again (level.rs)", True)])
+        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_components_glb", "export_scene.bevy_components_glb"])
+        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)", False), ("Export Again (level.glb)", True)])
 
     def test_sidebar_export_panel(self):
         panel = FakePanel(self)
         with _remembered_exports():
             addon.panel.BEVY_PT_view_export.draw(panel, bpy.context)
-        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)...", False), ("Bevy Scene (BSN)...", False)])
+        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)...", False)])
+        self.assertEqual([name for name, bound, layout in panel.layout.calls if name == "prop"], [])
         panel = FakePanel(self)
-        with _remembered_exports(bsn="//src/level.rs"):
+        with _remembered_exports(glb="//level.glb"):
             addon.panel.BEVY_PT_view_export.draw(panel, bpy.context)
-        self.assertEqual(_again_buttons(panel.layout), [("Export Again (level.rs)", True), ("Bevy Scene (.glb)...", False), ("Bevy Scene (BSN)...", False)])
-        self.assertEqual(panel.layout.operators()[0], "export_scene.bevy_components_bsn")
-        self.assertEqual([(bound["data"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop"], [(bpy.context.scene.bevy_bsn_export, "Export on Save")])
-        panel = FakePanel(self)
-        with _remembered_exports(glb="//level.glb", bsn="//src/level.rs"):
-            addon.panel.BEVY_PT_view_export.draw(panel, bpy.context)
-        self.assertEqual([(bound["data"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop"], [(bpy.context.scene.bevy_glb_export, "Export GLB on Save"), (bpy.context.scene.bevy_bsn_export, "Export BSN on Save")])
+        self.assertEqual(_again_buttons(panel.layout), [("Export Again (level.glb)", True), ("Bevy Scene (.glb)...", False)])
+        self.assertEqual(panel.layout.operators()[0], "export_scene.bevy_components_glb")
+        self.assertEqual([(bound["data"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop"], [(bpy.context.scene.bevy_glb_export, "Export on Save")])
 
     def test_export_all_scenes_needs_more_than_one_scene(self):
         menu = FakePanel(self)
@@ -1749,7 +1745,7 @@ class TestPanels(unittest.TestCase):
         with _remembered_exports(glb="//level.glb"):
             self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene again to //level.glb with the settings the last export used, without the file dialog")
         with _remembered_exports():
-            self.assertEqual(addon.operator.BEVY_OT_export_bsn.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene once with File > Export > Bevy Scene (BSN), then export it again here with one click")
+            self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene once with File > Export > Bevy Scene (.glb), then export it again here with one click")
         self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False, collection="lamp_post", filepath="/game/assets/props/lamp_post.glb")), "Export lamp_post to lamp_post.glb, with the prefabs inside it, using the scene's export settings")
         again = bpy.ops.export_scene.bevy_components_glb.get_rna_type().properties["again"]
         self.assertTrue(again.is_hidden and again.is_skip_save)
@@ -1807,7 +1803,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(addon.operator._exports, {})
 
     def test_cancelled_dialogs_have_nothing_to_stop(self):
-        for operator_class in (addon.operator.BEVY_OT_export_glb, addon.operator.BEVY_OT_export_bsn, addon.operator.BEVY_OT_bake_lighting):
+        for operator_class in (addon.operator.BEVY_OT_export_glb, addon.operator.BEVY_OT_bake_lighting):
             self.assertIsNone(operator_class.cancel(SimpleNamespace(_task=None), bpy.context))
 
     def test_export_dialog_texture_compression(self):
@@ -2120,7 +2116,7 @@ class TestGameComponents(unittest.TestCase):
         self.assertIn(("BEVY_MT_component_add_game", "my_game"), [(bound["menu"], bound.get("text")) for name, bound, layout in menu.layout.calls if name == "menu"])
         item = add_component(self.obj, "CUSTOM", type_path="my_game::Patrol")
         self.assertEqual([(field.name, field.field_type, field.rust_type) for field in item.fields], [("speed", "FLOAT", "f32"), ("mode", "ENUM", "my_game::PatrolMode"), ("offset", "VECTOR2", "glam::Vec2"), ("stops", "INT", "u8")])
-        self.assertEqual(_stored(self.obj)["components"], [{"type": "custom", "type_path": "my_game::Patrol", "data": {"speed": 2.0, "mode": "Loop", "offset": [0.0, 0.0], "stops": 1}, "enums": {"mode": "my_game::PatrolMode"}}])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "custom", "type_path": "my_game::Patrol", "data": {"speed": 2.0, "mode": "Loop", "offset": [0.0, 0.0], "stops": 1}}])
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_game.draw(menu, _menu_context(self.obj))
         self.assertEqual([(text, properties.type_path, enabled) for text, properties, enabled in menu.layout.buttons()], [("Patrol", "my_game::Patrol", False), ("Reward", "my_game::Reward", True)])
@@ -2147,7 +2143,6 @@ class TestGameComponents(unittest.TestCase):
             self.addCleanup(use_game_schema, None)
             add_component(self.obj, "CUSTOM", type_path="my_game::Spawn")
             self.assertEqual([issue.message for issue in addon.validation.check_object(self.obj, bpy.data.objects)], ["Blender cannot set field 1, and a tuple struct cannot leave fields out, so the game cannot insert my_game::Spawn. Name its fields, or skip that one with #[reflect(skip_serializing)]"])
-            self.assertEqual([(issue.level, issue.message) for issue in addon.validation.check_bsn([self.obj], Path(folder))], [("ERROR", "my_game::Spawn is a tuple struct with fields Blender cannot set, so the BSN export cannot write it")])
 
     def test_tuple_structs_export_their_values_in_order(self):
         use_game_schema()
@@ -2207,21 +2202,18 @@ class TestGameComponents(unittest.TestCase):
         issues = addon.validation.check_object(self.obj, bpy.data.objects)
         self.assertEqual([(issue.level, issue.message) for issue in issues], [("ERROR", "count must be from 0 to 255 to fit u8"), ("WARNING", "Blender cannot set timer, so the game needs #[reflect(Default)] on game::Spawner to fill them in")])
 
-    def test_bsn_needs_enum_types_from_scene_definitions(self):
+    def test_scene_definition_enums_export_the_variant(self):
         definition = define_component("game::Door", ("side", "STRING", "Left"))
         field = definition.fields[0]
         field.variants = "Left, Right"
         field.field_type = "ENUM"
         item = add_component(self.obj, "CUSTOM", type_path="game::Door")
         self.assertEqual((item.fields[0].field_type, item.fields[0].string_value), ("ENUM", "Left"))
-        root = Path(self.directory.name)
-        self.assertEqual([issue.message for issue in addon.validation.check_bsn([self.obj], root)], ["Set the Enum Type of side in Properties > Scene > Bevy Custom Components, which the BSN export needs to write the variant"])
-        field.rust_type = "game::Side"
-        self.assertEqual(addon.validation.check_bsn([self.obj], root), [])
-        self.assertEqual(_stored(self.obj)["components"], [{"type": "custom", "type_path": "game::Door", "data": {"side": "Left"}, "enums": {"side": "game::Side"}}])
+        self.assertEqual(addon.validation.check_object(self.obj, bpy.data.objects), [])
+        self.assertEqual(_stored(self.obj)["components"], [{"type": "custom", "type_path": "game::Door", "data": {"side": "Left"}}])
         panel = FakePanel(self)
         addon.panel.BEVY_PT_scene_definitions.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), ["field_type", "variants", "rust_type", "enum_value"])
+        self.assertEqual(panel.layout.props(), ["field_type", "variants", "enum_value"])
 
     def test_schema_is_found_above_the_saved_blend_file(self):
         root = Path(self.directory.name)
@@ -3074,6 +3066,75 @@ class TestWorkflow(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(addon.system.presets(), [])
 
+    def test_copy_paste_and_presets_carry_blender_settings(self):
+        crate = self.obj
+        _rigid_body(crate, shape="BOX")
+        crate.rigid_body.mass = 4.0
+        crate.rigid_body.friction = 0.9
+        crate.bevy_physics.gravity_scale = 0.5
+        crate.bevy_physics.sensor = True
+        crate.bevy_physics.events = False
+        crate.visible_shadow = False
+        add_component(crate, "CUSTOM", type_path="my_game::Crate", custom_json="{}")
+        expected = _native(crate)
+        clipboard = SimpleNamespace(clipboard="")
+        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_components, _clipboard_context(crate, crate, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Copied 3 components")]))
+        self.assertEqual(sorted(json.loads(clipboard.clipboard)["blender"]), ["bevy_physics", "rigid_body", "shadows"])
+        target = add_mesh(bpy.ops.mesh.primitive_cube_add, "target", location=(3, 0, 0))
+        _rigid_body(target, "PASSIVE", "SPHERE")
+        target.bevy_physics.ccd = "ALL"
+        marker = add_empty("marker", (6, 0, 0))
+        result = _execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(target, target, marker, clipboard=clipboard))
+        self.assertEqual(result, ({"FINISHED"}, [({"INFO"}, "Added 3 components from the clipboard to 2 objects")]))
+        self.assertEqual((target.rigid_body.type, target.rigid_body.collision_shape, target.rigid_body.mass), ("ACTIVE", "BOX", 4.0))
+        self.assertEqual((target.bevy_physics.ccd, target.bevy_physics.sensor, target.bevy_physics.events), ("DEFAULT", True, False))
+        self.assertFalse(target.visible_shadow)
+        self.assertEqual(_native(target), expected)
+        self.assertIsNone(marker.rigid_body)
+        self.assertEqual(_stored(marker)["components"], [{"type": "custom", "type_path": "my_game::Crate", "data": {}}])
+        rocks = [add_mesh(bpy.ops.mesh.primitive_cube_add, f"rock_{index}", location=(index * 3, 4, 0)) for index in range(2)]
+        context = SimpleNamespace(object=crate, selected_objects=[crate, *rocks], mode="OBJECT")
+        self.assertTrue(addon.operator.BEVY_OT_copy_physics.poll(context))
+        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_physics, context), ({"FINISHED"}, [({"INFO"}, "Copied subject's Rigid Body to 2 objects")]))
+        for rock in rocks:
+            self.assertEqual((rock.rigid_body.mass, rock.bevy_physics.gravity_scale, rock.bevy_physics.sensor), (4.0, 0.5, True))
+            self.assertTrue(rock.visible_shadow)
+            self.assertEqual(len(rock.bevy_component_data.components), 0)
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", location=(0, 8, 0))
+        _rigid_body(frame, "PASSIVE", "BOX")
+        hinge = add_empty("hinge", (0, 10, 0))
+        constraint = _constraint(hinge, "HINGE", frame, hinge)
+        constraint.use_limit_ang_z = True
+        hinge.bevy_physics.joint_angular_damping = 2.0
+        door = add_empty("door", (0, 12, 0))
+        select(hinge, door)
+        bpy.context.view_layer.objects.active = hinge
+        self.assertEqual(bpy.ops.bevy_components.copy_to_selected(), {"FINISHED"})
+        self.assertEqual((door.rigid_body_constraint.type, door.rigid_body_constraint.object1, door.rigid_body_constraint.object2, door.rigid_body_constraint.use_limit_ang_z), ("HINGE", frame, door, True))
+        self.assertEqual(door.bevy_physics.joint_angular_damping, 2.0)
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(addon.system, "preset_folder", lambda create=False: Path(folder)):
+            select(hinge)
+            self.assertEqual(bpy.ops.bevy_components.save_preset(name="Hinge"), {"FINISHED"})
+            data = json.loads((Path(folder) / "hinge.json").read_text(encoding="utf-8"))
+            self.assertEqual((data["components"], data["blender"]["rigid_body_constraint"]["object1"]), ([], None))
+            gate = add_empty("gate", (0, 14, 0))
+            select(gate)
+            self.assertEqual(bpy.ops.bevy_components.apply_preset(filepath=str(Path(folder) / "hinge.json")), {"FINISHED"})
+            self.assertEqual((gate.rigid_body_constraint.type, gate.rigid_body_constraint.object1, gate.bevy_physics.joint_angular_damping), ("HINGE", None, 2.0))
+
+    def test_copy_and_paste_carry_light_settings(self):
+        lamp = add_light("lamp", "POINT", (0, 0, 3))
+        lamp.data.bevy_light.light_volumetric = True
+        clipboard = SimpleNamespace(clipboard="")
+        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_components, _clipboard_context(lamp, lamp, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Copied 1 component")]))
+        other = add_light("other", "SPOT", (4, 0, 3))
+        twin = bpy.data.objects.new("twin", other.data)
+        bpy.context.scene.collection.objects.link(twin)
+        self.assertEqual(_execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(other, other, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Added 1 component from the clipboard to 1 object")]))
+        self.assertTrue(other.data.bevy_light.light_volumetric)
+        self.assertTrue(_by_type(_stored(twin)["components"])["light"]["volumetric"])
+        self.assertEqual(_execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(self.obj, self.obj, clipboard=clipboard)), ({"CANCELLED"}, [({"WARNING"}, "None of the components in the clipboard fit the selected objects")]))
+
     def test_preset_names_become_snake_case_files(self):
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(addon.system, "preset_folder", lambda create=False: Path(folder)):
             self.assertEqual(addon.system.preset_file("  Enemy Spawner 2 ").name, "enemy_spawner_2.json")
@@ -3697,25 +3758,6 @@ class TestNativePhysics(unittest.TestCase):
         finally:
             settings.property_unset("scope")
 
-    def test_bsn_export_writes_blender_physics(self):
-        pillar = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "pillar", radius=0.5, depth=2)
-        _rigid_body(pillar, "PASSIVE", "CYLINDER")
-        cone = add_mesh(bpy.ops.mesh.primitive_cone_add, "cone", radius1=1, depth=2, location=(4, 0, 0))
-        _rigid_body(cone, "PASSIVE", "CONE")
-        hull = add_mesh(bpy.ops.mesh.primitive_cube_add, "hull", size=1, location=(8, 0, 0))
-        _rigid_body(hull, "PASSIVE", "CONVEX_HULL")
-        chimney = add_mesh(bpy.ops.mesh.primitive_cube_add, "chimney", size=0.2, location=(8, 0, 1))
-        chimney.parent = hull
-        chimney.matrix_parent_inverse = hull.matrix_world.inverted()
-        bpy.context.scene.gravity = (0.0, 0.0, -3.0)
-        with tempfile.TemporaryDirectory() as directory:
-            source = export_bsn_scene(Path(directory) / "src" / "physics.rs", Path(directory) / "assets")
-        self.assertIn("Collider::cylinder(0.5, 2.0)", source)
-        self.assertIn("Collider::cone(1.0, 2.0)", source)
-        self.assertEqual(source.count("ColliderConstructor::ConvexHullFromMesh"), 1)
-        self.assertIn("@gravity(Vec3::new(0.0, -3.0, 0.0))", source)
-        self.assertIn("fn gravity(gravity: Vec3) -> impl Scene {", source)
-
 
 POINT_LIGHT = {**DEFAULT_LIGHT, "kind": "point", "radius": 0.25}
 
@@ -3807,10 +3849,6 @@ class TestNativeLighting(unittest.TestCase):
         lid = add_mesh(bpy.ops.mesh.primitive_cube_add, "lid", size=0.5, location=(0, 0, 1))
         lid.parent = chest
         self.assertEqual([source.name for source, _matrix in addon.system.mesh_sources(room, addon.system.children_map(bpy.data.objects), "SHADOWS")], ["lid"])
-        with tempfile.TemporaryDirectory() as directory:
-            source = export_bsn_scene(Path(directory) / "src" / "shadows.rs", Path(directory) / "assets", prefab_functions=False)
-        chest_entries, lid_entries = source.split("#chest")[1].split("#lid")[0], source.split("#lid")[1].split("]")[0]
-        self.assertEqual([name in entries for entries in (chest_entries, lid_entries) for name in ("NotShadowCaster", "NotShadowReceiver")], [True, False, False, True], source)
 
     def test_speakers_export_as_audio_players(self):
         speaker = _add_object(bpy.ops.object.speaker_add, location=(0, 0, 1))
@@ -4222,6 +4260,141 @@ class TestCollectionComponents(unittest.TestCase):
         self.assertNotEqual(addon.prefab.prefab_fingerprint(crate, settings, bpy.context.scene), before)
 
 
+class TestLeaveOut(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+
+    def tearDown(self):
+        clear_scene()
+
+    def _messages(self):
+        bpy.context.view_layer.update()
+        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.data.objects)]
+
+    def _context(self, obj, **values):
+        return SimpleNamespace(**{"object": obj, "scene": bpy.context.scene, "region": None, "space_data": None, "view_layer": bpy.context.view_layer, "selected_objects": [], **values})
+
+    def _texts(self, obj):
+        panel = FakePanel(self)
+        addon.panel.draw_components(panel.layout, self._context(obj), obj)
+        return panel.layout
+
+    def test_objects_left_out_export_only_their_own_components(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
+        _rigid_body(crate, shape="BOX")
+        crate.visible_shadow = False
+        add_component(crate, "CUSTOM", type_path="my_game::Helper", custom_json="{}")
+        _add_to(_collection("Ground", crate), "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
+        self.assertEqual([component["type"] for component in _native(crate)], ["custom", "rigid_body", "collider", "shadows", "navigation"])
+        self.assertNotIn("leave_out", self._texts(add_mesh(bpy.ops.mesh.primitive_cube_add, "plain", size=1, location=(4, 0, 0))).props())
+        layout = self._texts(crate)
+        self.assertIn("leave_out", layout.props())
+        self.assertIn("Collider from Physics", layout.texts())
+        crate.bevy_component_data.leave_out = True
+        self.assertEqual(_stored(crate)["components"], [{"type": "custom", "type_path": "my_game::Helper", "data": {}}])
+        layout = self._texts(crate)
+        self.assertIn("leave_out", layout.props())
+        self.assertNotIn("Collider from Physics", layout.texts())
+        self.assertNotIn("Navigation from Ground", layout.texts())
+        self.assertIn("Exports as plain glTF, without components from Blender's settings or collections", " ".join(layout.texts()))
+        self.assertIn("Helper", layout.texts())
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_rigid_body.draw(panel, self._context(crate))
+        self.assertIn("Left out of Bevy in Object > Game Components, so the game gets none of these settings", " ".join(panel.layout.texts()))
+        self.assertNotIn("gravity_scale", panel.layout.props())
+        panel = FakePanel(self)
+        addon.panel.draw_visibility(panel, SimpleNamespace(object=crate))
+        self.assertFalse(_prop_layout(panel.layout, "receive_shadows").active)
+        self.assertEqual(self._messages(), [])
+        with tempfile.TemporaryDirectory() as directory:
+            gltf = export_sample_scene(Path(directory) / "left_out.glb")
+        node = next(node for node in gltf["nodes"] if node["name"] == "crate")
+        self.assertEqual(_extras(gltf, node)["components"], [{"type": "custom", "type_path": "my_game::Helper", "data": {}}])
+        crate.bevy_component_data.leave_out = False
+        self.assertEqual(len(_stored(crate)["components"]), 5)
+
+    def test_left_out_data_objects_export_as_plain_glTF(self):
+        fog = add_mesh(bpy.ops.mesh.primitive_cube_add, "fog", size=2)
+        fog.data.materials.append(_volume_material("haze", {"Density": 0.5})[0])
+        lamp = add_light("lamp", "POINT", (0, 0, 3))
+        mirror = _add_object(bpy.ops.object.lightprobe_add, type="PLANE", location=(4, 0, 0))
+        speaker = _add_object(bpy.ops.object.speaker_add, location=(0, 4, 0))
+        hinge = add_empty("hinge", (0, 0, 0))
+        _constraint(hinge, "MOTOR")
+        self.assertEqual(sorted(self._messages()), sorted([
+            "hinge: Bevy has no Motor joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider",
+            f"{mirror.name}: Bevy has no planar reflections, so the game leaves this Light Probe out",
+            f"{speaker.name}: No sound picked, so nothing plays",
+        ]))
+        for obj in (fog, lamp, mirror, speaker, hinge):
+            obj.bevy_component_data.leave_out = True
+        self.assertEqual(self._messages(), [])
+        self.assertEqual(_native(fog), [])
+        self.assertEqual(_native(lamp), [])
+        with tempfile.TemporaryDirectory() as directory:
+            gltf = export_sample_scene(Path(directory) / "plain.glb")
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertIn("mesh", nodes["fog"])
+        self.assertNotIn("bevy_components", nodes["fog"].get("extras") or {})
+        self.assertNotIn("bevy_components", nodes["lamp"].get("extras") or {})
+        fog.bevy_component_data.leave_out = False
+        self.assertEqual([component["type"] for component in _native(fog)], ["fog_volume"])
+
+    def test_collections_leave_out_every_member(self):
+        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
+        _rigid_body(rock, "PASSIVE", "MESH")
+        pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
+        ground = _collection("Ground", rock, pebble)
+        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
+        reference = _collection("Reference")
+        blockout = _collection("Blockout", rock, parent=reference)
+        self.assertEqual([component["type"] for component in _native(rock)], ["rigid_body", "collider", "navigation"])
+        reference.bevy_component_data.leave_out = True
+        self.assertEqual(_components(rock), [])
+        self.assertNotIn("bevy_components", rock)
+        self.assertEqual(_components(pebble), [WALKABLE])
+        layout = self._texts(rock)
+        self.assertIn("Left out of Bevy by collection Reference", layout.texts())
+        self.assertIn("Reference", [getattr(properties, "collection", None) for text, properties, enabled in layout.buttons()])
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_collisions.draw(panel, self._context(rock))
+        self.assertIn("Left out of Bevy by collection Reference, so the game gets none of these settings", " ".join(panel.layout.texts()))
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_collection_components.draw(panel, self._context(rock, collection=reference))
+        self.assertIn("leave_out", panel.layout.props())
+        self.assertIn("Every object in this collection and the collections inside it exports as plain glTF", " ".join(panel.layout.texts()))
+        self.assertNotIn("Link objects to it with Ctrl+L", " ".join(panel.layout.texts()))
+        blockout.bevy_component_data.leave_out = True
+        reference.bevy_component_data.leave_out = False
+        self.assertEqual(_components(rock), [])
+        blockout.objects.unlink(rock)
+        bpy.context.view_layer.update()
+        self.assertEqual([component["type"] for component in _components(rock)], ["rigid_body", "collider", "navigation"])
+
+    def test_left_out_compound_parents_free_their_children(self):
+        cart = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart", size=1)
+        _rigid_body(cart, shape="COMPOUND")
+        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel", radius=0.5, depth=0.2, location=(0, 0, -0.5))
+        wheel.parent = cart
+        _rigid_body(wheel, shape="CYLINDER")
+        self.assertEqual([component["type"] for component in _native(wheel)], ["collider"])
+        self.assertFalse(addon.panel.BEVY_PT_physics_rigid_body.poll(self._context(wheel)))
+        cart.bevy_component_data.leave_out = True
+        self.assertEqual([component["type"] for component in _native(wheel)], ["rigid_body", "collider"])
+        self.assertTrue(addon.panel.BEVY_PT_physics_rigid_body.poll(self._context(wheel)))
+        self.assertEqual(self._messages(), [])
+
+    def test_convert_keeps_components_on_left_out_objects(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
+        add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2))
+        crate.bevy_component_data.leave_out = True
+        converted, kept = addon.convert.convert_objects(bpy.context, [crate])
+        self.assertEqual(converted, [])
+        self.assertEqual(kept, [(crate, "it is left out of Bevy, so Blender's settings would not reach the game")])
+        self.assertIsNone(crate.rigid_body)
+        self.assertEqual([component["type"] for component in _stored(crate)["components"]], ["collider"])
+
+
 class TestValidation(unittest.TestCase):
     def setUp(self):
         clear_scene()
@@ -4631,8 +4804,6 @@ class TestValidation(unittest.TestCase):
                 bpy.ops.bevy_components.validate()
             with self.assertRaisesRegex(RuntimeError, "Cannot export: Bevy Sky: ground_lightmap.ktx2 is not a cubemap"):
                 bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
-            with self.assertRaisesRegex(RuntimeError, "Cannot export: Bevy Sky: ground_lightmap.ktx2 is not a cubemap"):
-                bpy.ops.export_scene.bevy_components_bsn(filepath=str(Path(directory) / "src" / "scene.rs"))
             self.assertFalse(path.exists())
             world.bevy_sky.sky_file = str(Path(directory) / "missing.ktx2")
             self.assertEqual(check(), [("ERROR", "Bevy Sky: Cubemap file missing.ktx2 was not found")])
@@ -4954,7 +5125,6 @@ class TestExportOptions(unittest.TestCase):
             if scene != self.scene:
                 bpy.data.scenes.remove(scene)
         self.scene.property_unset("bevy_glb_export")
-        self.scene.property_unset("bevy_bsn_export")
         self.directory.cleanup()
 
     def test_modifiers_are_applied_unless_turned_off(self):
@@ -5030,34 +5200,35 @@ class TestExportOptions(unittest.TestCase):
 
     def test_export_on_save(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "saved")
-        rust_file = Path(self.directory.name) / "src" / "level.rs"
         export_sample_scene(self.path)
-        source = export_bsn_scene(rust_file, Path(self.directory.name) / "assets")
         self.path.unlink()
-        rust_file.unlink()
         addon.operator.export_on_save(bpy.data.filepath)
-        self.assertFalse(self.path.exists() or rust_file.exists())
+        self.assertFalse(self.path.exists())
         self.scene.bevy_glb_export.export_on_save = True
         addon.operator.export_on_save(bpy.data.filepath)
-        self.assertEqual((_node_names(read_gltf(self.path)), rust_file.exists()), (["saved"], False))
-        self.scene.bevy_bsn_export.export_on_save = True
+        self.assertEqual(_node_names(read_gltf(self.path)), ["saved"])
         bpy.ops.object.duplicate()
         addon.operator.export_on_save(bpy.data.filepath)
         self.assertEqual(_node_names(read_gltf(self.path)), ["saved", "saved.001"])
-        self.assertNotEqual(rust_file.read_text(encoding="utf-8"), source)
         self.assertTrue(self.scene.bevy_glb_export.export_on_save)
 
-    def test_export_on_save_finishes_the_glb_before_the_bsn_export(self):
+    def test_export_on_save_runs_in_the_background(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "saved")
         export_sample_scene(self.path)
-        export_bsn_scene(Path(self.directory.name) / "src" / "level.rs", Path(self.directory.name) / "assets")
         self.scene.bevy_glb_export.export_on_save = True
-        self.scene.bevy_bsn_export.export_on_save = True
         calls = []
-        exports = SimpleNamespace(**{name: lambda mode, name=name, **options: calls.append((name, mode, options)) for name in ("bevy_components_glb", "bevy_components_bsn")})
+        exports = SimpleNamespace(bevy_components_glb=lambda mode, **options: calls.append((mode, options)))
         with mock.patch.object(bpy.ops, "export_scene", exports):
             addon.operator.export_on_save(bpy.data.filepath)
-        self.assertEqual(calls, [("bevy_components_glb", "EXEC_DEFAULT", {"again": True}), ("bevy_components_bsn", "INVOKE_DEFAULT", {"again": True})])
+        self.assertEqual(calls, [("INVOKE_DEFAULT", {"again": True})])
+
+    def test_files_from_the_bsn_export_keep_its_settings_out_of_the_glb(self):
+        add_mesh(bpy.ops.mesh.primitive_cube_add, "kept")
+        self.scene["bevy_bsn_export"] = {"rust_file": "//src/level.rs", "assets_folder": "", "export_on_save": 1}
+        try:
+            self.assertEqual([list(scene.get("extras", {})) for scene in export_sample_scene(self.path)["scenes"]], [["bevy_components"]])
+        finally:
+            del self.scene["bevy_bsn_export"]
 
     def test_saving_a_copy_does_not_export(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "copied")
@@ -5121,23 +5292,6 @@ class TestExportOptions(unittest.TestCase):
         materials = {material["name"]: material.get("pbrMetallicRoughness", {}) for material in export_sample_scene(self.path)["materials"]}
         self.assertNotIn("baseColorTexture", materials["noisy"])
         self.assertEqual(materials["diffuse"].get("baseColorFactor", [1.0, 1.0, 1.0, 1.0]), [1.0, 1.0, 1.0, 1.0])
-
-
-def _bsn_lines(source):
-    source = re.sub(r"#Mesh\d+/", "#Mesh/", source.partition("\n")[2])
-    return sorted(re.sub(r"#Material\d+", "#Material", source).splitlines())
-
-
-def _bsn_operator(rust_file, **values):
-    return SimpleNamespace(**{"filepath": str(rust_file), "assets_folder": "", "include_animations": True, "apply_modifiers": True, **values})
-
-
-def _file_issues(rust_file, **values):
-    return [(issue.level, issue.message) for issue in addon.operator._bsn_issues(_bsn_operator(rust_file, **values), bpy.data.objects) if issue.obj is None]
-
-
-def _modified(folder):
-    return {path: path.stat().st_mtime_ns for path in Path(folder).rglob("*") if path.is_file()}
 
 
 GAME = """
@@ -5269,11 +5423,10 @@ class TestPlay(unittest.TestCase):
         self.assertEqual([text for text in panel.layout.alerts() if str(other) in text], [f"{other} has no Cargo.toml, pick the folder of your game's Cargo project", f"{other} has no viewer example, pick the bevy_components_importer folder"])
 
     def test_exports_default_into_the_game_project(self):
-        name = addon.bsn.snake_case(bpy.context.scene.name)
+        name = addon.files.snake_case(bpy.context.scene.name)
         self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb).filepath, "")
         self.preferences.game_folder = str(self.project)
         self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb).filepath, str(self.project / "assets" / "levels" / f"{name}.glb"))
-        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_bsn).filepath, str(self.project / "src" / f"{name}.rs"))
         self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb, filepath=str(self.glb)).filepath, str(self.glb))
 
     def test_file_pickers_start_in_the_game_assets(self):
@@ -5348,229 +5501,6 @@ class TestPlay(unittest.TestCase):
         self.assertLess((Quaternion((values[6], *values[3:6])) @ Vector((0, 0, -1)) - Vector((0, 0, -1))).length, 1e-5)
 
 
-class TestBsnExport(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.directory.name)
-        cls.assets = cls.root / "tests" / "assets"
-        export_props(cls.assets)
-        build_sample_scene(cls.assets)
-        cls.rust_file = cls.root / "tests" / "bsn" / "sample_scene.rs"
-        cls.source = export_bsn_scene(cls.rust_file, cls.assets / "bsn")
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.directory.cleanup()
-
-    def test_fixture_is_current(self):
-        message = "importer/tests/bsn is out of date, run tests/blender/sample_scene.py to regenerate it"
-        self.assertTrue(BSN_FIXTURE.is_file(), f"Missing {BSN_FIXTURE}, run tests/blender/sample_scene.py to create it")
-        self.assertEqual(_bsn_lines(BSN_FIXTURE.read_text(encoding="utf-8")), _bsn_lines(self.source), message)
-        self.assertEqual(_node_summary(read_gltf(BSN_ASSETS / "sample_scene.glb")), _node_summary(read_gltf(self.assets / "bsn" / "sample_scene.glb")), message)
-        self.assertEqual(sorted(path.name for path in BSN_ASSETS.iterdir()), sorted(path.name for path in (self.assets / "bsn").iterdir()), message)
-
-    def test_files_land_in_the_assets_folder(self):
-        folder = self.assets / "bsn"
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "probe_cubemap.ktx2", "sample_scene.glb"])
-        self.assertEqual((folder / "probe_cubemap.ktx2").read_bytes(), CUBEMAP.read_bytes())
-        self.assertIn('Mesh3d("bsn/sample_scene.glb#Mesh', self.source)
-        self.assertIn('environment_map: "bsn/probe_cubemap.ktx2"', self.source)
-        self.assertIn('WorldAssetRoot("props/windmill.glb#Scene0")', self.source)
-        self.assertIn("my_game::Pickup {", self.source)
-        self.assertEqual(self.source.count("@object_windmill()"), 2)
-
-    def test_scene_glb_holds_no_components(self):
-        gltf = read_gltf(self.assets / "bsn" / "sample_scene.glb")
-        self.assertTrue(all("bevy_components" not in item.get("extras", {}) for item in gltf["nodes"] + gltf["scenes"]))
-        self.assertNotIn(str(CUBEMAP.parent), json.dumps(gltf))
-        self.assertEqual(sorted(node["name"] for node in gltf["nodes"]), sorted(node["name"] for node in read_gltf(FIXTURE)["nodes"]))
-
-    def test_unchanged_scene_rewrites_nothing(self):
-        before = {**_modified(self.assets / "bsn"), self.rust_file: self.rust_file.stat().st_mtime_ns}
-        self.assertEqual(export_bsn_scene(self.rust_file, self.assets / "bsn"), self.source)
-        self.assertEqual({**_modified(self.assets / "bsn"), self.rust_file: self.rust_file.stat().st_mtime_ns}, before)
-
-    def test_cargo_projects_get_default_paths(self):
-        project = self.root / "my_game"
-        (project / "src").mkdir(parents=True)
-        (project / "Cargo.toml").write_text('[package]\nname = "my_game"\nversion = "0.1.0"\n')
-        source = export_bsn_scene(project / "src" / "level.rs")
-        folder = project / "assets" / "scenes" / "level"
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "level.glb", "probe_cubemap.ktx2", "windmill.glb"])
-        self.assertEqual((folder / "windmill.glb").read_bytes(), (self.assets / PROP).read_bytes())
-        self.assertIn('Mesh3d("scenes/level/level.glb#Mesh', source)
-        self.assertIn('WorldAssetRoot("scenes/level/windmill.glb#Scene0")', source)
-        self.assertIn("crate::Pickup {", source)
-        self.assertNotIn("my_game::", source)
-        self.assertIn("#level\n", source)
-
-    def test_prefab_functions_can_be_turned_off(self):
-        source = export_bsn_scene(self.root / "flat" / "flat.rs", self.root / "flat" / "assets", prefab_functions=False)
-        self.assertNotIn("object_", source)
-        self.assertEqual(source.count('WorldAssetRoot("windmill.glb#Scene0")'), 2)
-
-    def test_settings_are_remembered(self):
-        path = self.root / "remembered" / "remembered.rs"
-        export_bsn_scene(path, self.root / "remembered" / "assets", prefab_functions=False, include_lights=False)
-        settings = bpy.context.scene.bevy_bsn_export
-        self.assertEqual((_resolved(settings.rust_file), _resolved(settings.assets_folder), settings.prefab_functions, settings.include_lights), (path, self.root / "remembered" / "assets", False, False))
-        dialog = _open_dialog(addon.operator.BEVY_OT_export_bsn)
-        self.assertEqual((Path(dialog.filepath), _resolved(dialog.assets_folder), dialog.prefab_functions, dialog.include_lights), (path, self.root / "remembered" / "assets", False, False))
-        source = path.read_text(encoding="utf-8")
-        path.unlink()
-        self.assertEqual(bpy.ops.export_scene.bevy_components_bsn(again=True), {"FINISHED"})
-        self.assertEqual(path.read_text(encoding="utf-8"), source)
-        self.assertTrue((self.root / "remembered" / "assets" / "remembered.glb").is_file())
-        path.write_text(source + "// tuned by hand\n", encoding="utf-8")
-        with self.assertRaisesRegex(RuntimeError, "remembered.rs was edited since the last export"):
-            bpy.ops.export_scene.bevy_components_bsn(again=True)
-        self.assertTrue(path.read_text(encoding="utf-8").endswith("// tuned by hand\n"))
-        export_bsn_scene(path)
-        self.assertEqual(settings.assets_folder, "")
-
-    def test_values_rust_cannot_hold_block_export(self):
-        path = self.root / "nested" / "nested.rs"
-        obj = bpy.data.objects["lamp"]
-        item = add_component(obj, "CUSTOM", custom_type="my_game::Nested", custom_json='{"inner": {"a": 1}}')
-        try:
-            with self.assertRaisesRegex(RuntimeError, "my_game::Nested holds"):
-                export_bsn_scene(path)
-            export_sample_scene(self.root / "nested.glb")
-        finally:
-            select(obj)
-            bpy.ops.bevy_components.remove(index=list(obj.bevy_component_data.components).index(item))
-        self.assertFalse(path.exists())
-
-    def test_crate_roots_block_export(self):
-        project = self.root / "roots"
-        (project / "src").mkdir(parents=True)
-        (project / "Cargo.toml").write_text('[package]\nname = "roots"\nversion = "0.1.0"\n')
-        main = project / "src" / "main.rs"
-        main.write_text("fn main() {}\n")
-        for rust_file in (main, project / "src" / "lib.rs"):
-            self.assertEqual(_file_issues(rust_file), [("ERROR", f"{rust_file.name} is a crate root, so exporting would replace your game's code. Pick a file of its own, such as src/scene.rs")])
-            with self.assertRaises(RuntimeError):
-                export_bsn_scene(rust_file)
-        self.assertEqual(main.read_text(), "fn main() {}\n")
-        self.assertFalse((project / "src" / "lib.rs").exists())
-        self.assertFalse((project / "assets").exists())
-
-    def test_hand_written_and_edited_files_warn(self):
-        folder = self.root / "guarded"
-        rust_file = folder / "src" / "scenes" / "mod.rs"
-        rust_file.parent.mkdir(parents=True)
-        rust_file.write_text("pub mod forest;\n")
-        self.assertEqual(_file_issues(rust_file), [("WARNING", "mod.rs was not written by the BSN export, so exporting replaces the module declarations of its folder")])
-        self.assertEqual(_file_issues(rust_file, again=True), [("ERROR", "mod.rs was not written by the BSN export, so exporting replaces the module declarations of its folder. Export from File > Export > Bevy Scene (BSN) to replace it")])
-        source = export_bsn_scene(rust_file, folder / "assets")
-        self.assertEqual(_file_issues(rust_file), [])
-        rust_file.write_text(source.replace("Visibility\n", "Visibility::Hidden\n", 1))
-        self.assertEqual(_file_issues(rust_file), [("WARNING", "mod.rs was edited since the last export, which replaces those edits")])
-        self.assertEqual(export_bsn_scene(rust_file, folder / "assets"), source)
-        level = rust_file.with_name("level.rs")
-        level.write_text("pub fn spawn_player() {}\n")
-        self.assertEqual(_file_issues(level), [("WARNING", "level.rs was not written by the BSN export, so exporting replaces its code")])
-        level.write_text(" \n")
-        self.assertEqual(_file_issues(level), [])
-
-    def test_files_from_earlier_exports_are_removed(self):
-        folder = self.root / "stale" / "assets"
-        rust_file = self.root / "stale" / "stale.rs"
-        item = next(item for item in bpy.data.objects["ground"].bevy_component_data.components if item.component_type == "LIGHTMAP")
-        renamed = self.root / "stale" / "baked" / "floor_lightmap.ktx2"
-        renamed.parent.mkdir(parents=True)
-        renamed.write_bytes(LIGHTMAP.read_bytes())
-        user_file = folder / "notes.txt"
-        try:
-            export_bsn_scene(rust_file, folder)
-            user_file.write_text("mine")
-            self.assertIn("ground_lightmap.ktx2", [path.name for path in folder.iterdir()])
-            item.probe_file = str(renamed)
-            source = export_bsn_scene(rust_file, folder)
-        finally:
-            item.probe_file = str(LIGHTMAP)
-        self.assertIn('Lightmap { image: "floor_lightmap.ktx2"', source)
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "notes.txt", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
-        record = json.loads(bpy.context.scene.bevy_bsn_export.written_files)
-        self.assertEqual(sorted(record["files"]), ["floor_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "probe_cubemap.ktx2", "stale.glb", "windmill.glb"])
-        export_bsn_scene(self.root / "stale" / "renamed.rs", folder)
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["ground_lightmap.ktx2", "irradiance_volume.ktx2", "lamp_post.glb", "lantern.glb", "notes.txt", "probe_cubemap.ktx2", "renamed.glb", "windmill.glb"])
-
-    def test_library_projects_get_crate_paths(self):
-        project = self.root / "library_game"
-        (project / "src").mkdir(parents=True)
-        (project / "Cargo.toml").write_text('[package]\nname = "my_game"\nversion = "0.1.0"\n')
-        (project / "src" / "lib.rs").write_text("pub mod level;\n")
-        (project / "src" / "main.rs").write_text("fn main() {}\n")
-        self.assertIn("crate::Pickup {", export_bsn_scene(project / "src" / "level.rs"))
-        (project / "src" / "lib.rs").write_text("")
-        (project / "src" / "main.rs").write_text("mod level;\nfn main() {}\n")
-        source = export_bsn_scene(project / "src" / "level.rs")
-        self.assertIn("my_game::Pickup {", source)
-        self.assertNotIn("crate::", source)
-
-    def test_animated_scenes_keep_the_gltf_node_tree(self):
-        gltf = read_gltf(self.assets / "bsn" / "sample_scene.glb")
-        self.assertTrue(gltf["animations"])
-        self.assertEqual(len(gltf["nodes"]), len(read_gltf(FIXTURE)["nodes"]))
-        export_bsn_scene(self.root / "still" / "still.rs", self.root / "still" / "assets", include_animations=False)
-        gltf = read_gltf(self.root / "still" / "assets" / "still.glb")
-        self.assertEqual([key for key in ("animations", "nodes", "scenes", "scene") if key in gltf], [])
-        self.assertEqual(len(gltf["meshes"]), len(read_gltf(self.assets / "bsn" / "sample_scene.glb")["meshes"]))
-
-    def test_dialog_shows_where_the_game_loads_the_scene(self):
-        properties = bpy.ops.export_scene.bevy_components_bsn.get_rna_type()
-        operator = _dialog(self, addon.operator.BEVY_OT_export_bsn, filepath=str(self.rust_file), assets_folder=str(self.assets / "bsn"), prefab_functions=True, include_animations=True)
-        addon.operator.BEVY_OT_export_bsn.draw(operator, bpy.context)
-        self.assertEqual(operator.layout.props()[:3], ["export_on_save", "assets_folder", "prefab_functions"])
-        self.assertIn("The game loads the GLB as bsn/sample_scene.glb", " ".join(operator.layout.texts()))
-        operator = SimpleNamespace(**{**vars(operator), "layout": FakeLayout(self), "assets_folder": str(self.root / "loose")})
-        addon.operator.BEVY_OT_export_bsn.draw(operator, bpy.context)
-        self.assertIn("loose is not inside an assets folder", " ".join(operator.layout.texts()))
-        operator = SimpleNamespace(**{**vars(operator), "layout": FakeLayout(self), "filepath": str(self.root / "src" / "main.rs")})
-        addon.operator.BEVY_OT_export_bsn.draw(operator, bpy.context)
-        self.assertIn("main.rs is a crate root", " ".join(operator.layout.texts()))
-
-
-class TestStaticBsnScene(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.directory = tempfile.TemporaryDirectory()
-        cls.root = Path(cls.directory.name)
-        build_static_scene()
-        cls.assets = cls.root / "tests" / "assets" / "bsn_static"
-        cls.source = export_bsn_scene(cls.root / "tests" / "bsn" / "static_scene.rs", cls.assets)
-        cls.gltf = read_gltf(cls.assets / "static_scene.glb")
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.directory.cleanup()
-
-    def test_fixture_is_current(self):
-        message = "importer/tests/bsn/static_scene.rs is out of date, run tests/blender/sample_scene.py to regenerate it"
-        self.assertTrue(STATIC_FIXTURE.is_file(), f"Missing {STATIC_FIXTURE}, run tests/blender/sample_scene.py to create it")
-        self.assertEqual(_bsn_lines(STATIC_FIXTURE.read_text(encoding="utf-8")), _bsn_lines(self.source), message)
-        fixture = read_gltf(STATIC_ASSETS / "static_scene.glb")
-        self.assertEqual([(node.get("scale"), fixture["meshes"][node["mesh"]]["name"]) for node in fixture["nodes"]], [(node.get("scale"), self.gltf["meshes"][node["mesh"]]["name"]) for node in self.gltf["nodes"]], message)
-        self.assertEqual(sorted(path.name for path in STATIC_ASSETS.iterdir()), sorted(path.name for path in self.assets.iterdir()), message)
-
-    def test_only_mirrored_meshes_keep_a_node(self):
-        self.assertEqual([(node.get("scale"), self.gltf["meshes"][node["mesh"]]["name"]) for node in self.gltf["nodes"]], [([-1.0, 1.0, 1.0], "statue")])
-        self.assertEqual(self.gltf["scenes"], [{"nodes": [0]}])
-        self.assertIn('MeshMaterial3d::<StandardMaterial>("bsn_static/static_scene.glb#Material0 (inverted)/std")', self.source)
-        self.assertFalse(self.gltf["materials"][0].get("doubleSided", False))
-
-    def test_blender_physics_reach_the_scene(self):
-        self.assertIn("@gravity(Vec3::new(0.0, -1.62, 0.0))", self.source)
-        self.assertIn("Collider::cylinder(0.5, 1.0)", self.source)
-
-    def test_long_children_lists_become_list_functions(self):
-        self.assertIn("            Children [\n                {children_1()}\n                --\n                {children_2()}\n            ]", self.source)
-        self.assertIn("fn children_2() -> impl SceneList {\n    return bsn_list! {\n", self.source)
-        self.assertEqual(self.source.count('Name("rock.'), STATIC_ROCKS)
-
-
 def _scene_components(node):
     return json.loads(node["extras"]["bevy_components"])["components"]
 
@@ -5586,7 +5516,6 @@ class TestPrefabs(unittest.TestCase):
     def setUp(self):
         clear_scene()
         bpy.context.scene.property_unset("bevy_glb_export")
-        bpy.context.scene.property_unset("bevy_bsn_export")
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.assets = self.root / "assets"
@@ -5609,7 +5538,6 @@ class TestPrefabs(unittest.TestCase):
     def tearDown(self):
         clear_scene()
         bpy.context.scene.property_unset("bevy_glb_export")
-        bpy.context.scene.property_unset("bevy_bsn_export")
         self.directory.cleanup()
 
     def _exported_prefabs(self, **options):
@@ -5767,17 +5695,6 @@ class TestPrefabs(unittest.TestCase):
         with _remembered_exports(glb=str(self.level)):
             collection.bevy_prefab.enabled = True
         self.assertEqual(_resolved(collection.bevy_prefab.filepath), self.assets / "prefabs" / "street_lamp.glb")
-
-    def test_bsn_export_calls_prefab_functions(self):
-        folder = self.assets / "scenes" / "street"
-        source = export_bsn_scene(self.root / "src" / "lamp_post.rs", folder)
-        self.assertEqual(sorted(path.name for path in folder.iterdir()), ["lamp_post.glb", "lamp_post_2.glb", "lantern.glb"])
-        self.assertEqual([source.count(text) for text in ("pub fn prefab_lamp_post() -> impl Scene", "pub fn prefab_lantern() -> impl Scene", "@prefab_lamp_post()", "@prefab_lantern()")], [1, 1, 2, 1])
-        self.assertIn('@preload("scenes/street/lamp_post_2.glb")', source)
-        self.assertIn('Mesh3d("scenes/street/lantern.glb#Mesh0/Primitive0")', source)
-        self.assertNotIn("WorldAssetRoot", source)
-        self.assertFalse((self.assets / "props").exists())
-        self.assertNotIn("extras", json.dumps(read_gltf(folder / "lamp_post_2.glb")))
 
 
 def _fake_blender(directory):
@@ -6106,12 +6023,12 @@ class TestBakeLighting(unittest.TestCase):
         addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
         self.assertIn("export_again", operator.layout.props())
         self.assertNotIn("Nothing to export again yet", " ".join(operator.layout.texts()))
-        self.settings.export_again = "BSN"
-        with _remembered_exports(glb=str(path)):
+        self.settings.export_again = "GLB"
+        with _remembered_exports():
             operator = _bake_operator(layout=FakeLayout(self))
             addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
-            self.assertIn("Nothing to export again yet, export the scene once with File > Export > Bevy Scene (BSN)", " ".join(operator.layout.texts()))
-            self.settings.export_again = "GLB"
+            self.assertIn("Nothing to export again yet, export the scene once with File > Export > Bevy Scene (.glb)", " ".join(operator.layout.texts()))
+        with _remembered_exports(glb=str(path)):
             operator = _bake_operator(layout=FakeLayout(self))
             addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
             self.assertNotIn("Nothing to export again yet", " ".join(operator.layout.texts()))

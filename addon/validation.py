@@ -8,11 +8,11 @@ from pathlib import Path, PurePosixPath
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
-from .bsn import BsnError, crate_root, custom_literal, file_state, inside
-from .collection import COLLECTION_KINDS, collection_entries, collections_changed, from_collection
+from .files import inside
+from .collection import COLLECTION_KINDS, collection_entries, collections_changed, from_collection, left_out
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
-from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
+from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, visibility_range_problems
 from .native import MESH_TYPES, PRINCIPLED_VOLUME, UNSUPPORTED_JOINTS, asset_path, bounds, fog_source, is_native, sound_file
 from .property import AUDIO_FORMATS, COMPONENT_LABELS
 from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_order
@@ -152,10 +152,10 @@ def draw_problem_count(layout, scene):
         row.operator("bevy_components.validate", text=str(warnings), icon="ERROR")
 
 
-def check_objects(objects, destination=None, animations=True, modifiers=True, prefab_files=True):
+def check_objects(objects, destination=None, animations=True, modifiers=True):
     objects = list(objects)
     collections_changed()
-    return _check_list(objects, destination, animations, modifiers) + _prefab_issues(objects, destination, animations, modifiers, prefab_files)
+    return _check_list(objects, destination, animations, modifiers) + _prefab_issues(objects, destination, animations, modifiers)
 
 
 def _check_list(objects, destination, animations, modifiers):
@@ -214,7 +214,7 @@ def _item_issues(item, custom_types):
     return issues
 
 
-def check_object(obj, objects, modifiers=True, prefab_files=True):
+def check_object(obj, objects, modifiers=True):
     objects = list(objects)
     issues = _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers, assets=game_assets(bpy.context)) + _visibility_range_issues(objects, obj)
     collection = prefab_of(obj)
@@ -223,7 +223,7 @@ def check_object(obj, objects, modifiers=True, prefab_files=True):
     _order, cycles = prefab_order([obj])
     issues.extend(_cycle_issue(obj, chain) for _instance, chain in cycles[:1])
     issues.extend(_instance_issues(obj, collection))
-    issues.extend(_prefab_problems(collection, obj, prefab_files))
+    issues.extend(_prefab_problems(collection, obj))
     return issues
 
 
@@ -238,22 +238,22 @@ def _instance_issues(obj, collection):
     return [Issue("ERROR", obj, reference, f"Spawns prefab {collection.name}, so it cannot also spawn a Scene Reference. Move the Scene Reference to a child object")]
 
 
-def _prefab_problems(collection, obj, files):
+def _prefab_problems(collection, obj):
     issues = []
     if not len(collection.all_objects):
         issues.append(Issue("WARNING", obj, None, f"Prefab {collection.name} has no objects, so its instances spawn nothing"))
-    if files and prefab_file(collection) is None:
+    if prefab_file(collection) is None:
         issues.append(Issue("ERROR", obj, None, f"Prefab {collection.name} has no GLB file. Set one in Properties > Collection > Bevy Prefab"))
     return issues
 
 
-def _prefab_issues(objects, destination, animations, modifiers, files):
+def _prefab_issues(objects, destination, animations, modifiers):
     order, cycles = prefab_order(objects)
     issues = [_cycle_issue(instance, chain) for instance, chain in cycles]
     users = {collection: [(obj, destination) for obj in found] for collection, found in instances(objects).items()}
     for parent in order:
         for collection, found in instances(parent.all_objects).items():
-            users.setdefault(collection, []).extend((obj, prefab_file(parent) if files else destination) for obj in found)
+            users.setdefault(collection, []).extend((obj, prefab_file(parent)) for obj in found)
     targets = {}
     level = Path(os.path.abspath(destination)) if destination is not None else None
     for collection in order:
@@ -261,8 +261,8 @@ def _prefab_issues(objects, destination, animations, modifiers, files):
         first = found[0][0] if found else None
         for obj, _referrer in found:
             issues.extend(_instance_issues(obj, collection))
-        issues.extend(_prefab_problems(collection, first, files))
-        path = prefab_file(collection) if files else None
+        issues.extend(_prefab_problems(collection, first))
+        path = prefab_file(collection)
         if path is not None and path == level:
             issues.append(Issue("ERROR", first, None, f"Prefab {collection.name} exports to {path.name}, the scene's own file"))
         elif path is not None and path in targets:
@@ -270,7 +270,7 @@ def _prefab_issues(objects, destination, animations, modifiers, files):
         elif path is not None:
             targets[path] = collection
             issues.extend(_prefab_location(collection, path, first, {referrer for _obj, referrer in found if referrer is not None}))
-        issues.extend(_check_list(list(collection.all_objects), path if files else destination, animations, modifiers))
+        issues.extend(_check_list(list(collection.all_objects), path, animations, modifiers))
     return issues
 
 
@@ -297,58 +297,6 @@ def check_game_paths(objects, destination, assets):
             if item.component_type == "SCENE_REFERENCE" and item.scene_file.strip() and not inside(file_path(item.scene_file), assets):
                 issues.append(Issue("WARNING", obj, item, f"{file_path(item.scene_file).name} is outside the game's assets folder, so the game cannot load it"))
     return issues
-
-
-def check_bsn(objects, root):
-    issues = []
-    for obj in objects:
-        for item in components_for(obj):
-            if item.component_type == "CUSTOM" and not component_errors(item):
-                component = serialize_component(item)
-                game_type = game_types().get(item.custom_type) if item.use_fields else None
-                if game_type is not None and game_type.tuple_struct and game_type.others:
-                    issues.append(Issue("ERROR", obj, item, f"{item.custom_type} is a tuple struct with fields Blender cannot set, so the BSN export cannot write it"))
-                    continue
-                untyped = [field.name for field in item.fields if item.use_fields and field.field_type == "ENUM" and not field.rust_type.strip()]
-                if untyped:
-                    issues.append(Issue("ERROR", obj, item, f"Set the Enum Type of {', '.join(untyped)} in Properties > Scene > Bevy Custom Components, which the BSN export needs to write the variant"))
-                    continue
-                try:
-                    custom_literal(component["type_path"], component["data"], enums=component.get("enums"))
-                except BsnError as error:
-                    issues.append(Issue("ERROR", obj, item, str(error)))
-            elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
-                path = file_path(item.scene_file)
-                if path.suffix.lower() != ".glb" and not inside(path, root):
-                    issues.append(Issue("ERROR", obj, item, f"{path.name} is outside {root.name}, and the export only copies .glb files in. Move it into {root.name}"))
-        if obj.type == "MESH" and any(modifier.type == "ARMATURE" for modifier in obj.modifiers):
-            issues.append(Issue("WARNING", obj, None, "BSN scenes leave out skins, so the mesh does not follow its armature"))
-        shape_keys = getattr(obj.data, "shape_keys", None) if obj.type == "MESH" else None
-        if shape_keys is not None and len(shape_keys.key_blocks) > 1:
-            issues.append(Issue("WARNING", obj, None, "BSN scenes leave out shape key weights"))
-    return issues
-
-
-def check_rust_file(rust_file, strict=False):
-    name = rust_file.name
-    if crate_root(rust_file):
-        return [Issue("ERROR", None, None, f"{name} is a crate root, so exporting would replace your game's code. Pick a file of its own, such as src/scene.rs")]
-    try:
-        state = file_state(rust_file.read_text(encoding="utf-8"))
-    except FileNotFoundError:
-        return []
-    except (OSError, UnicodeDecodeError):
-        state = "foreign"
-    if state == "foreign":
-        holds = "the module declarations of its folder" if name.lower() == "mod.rs" else "its code"
-        message = f"{name} was not written by the BSN export, so exporting replaces {holds}"
-    elif state == "edited":
-        message = f"{name} was edited since the last export, which replaces those edits"
-    else:
-        return []
-    if strict:
-        return [Issue("ERROR", None, None, f"{message}. Export from File > Export > Bevy Scene (BSN) to replace it")]
-    return [Issue("WARNING", None, None, message)]
 
 
 def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, materials=None, assets=None):
@@ -391,7 +339,7 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
             name = component_name(entry.item)
             issues.append(Issue("WARNING", obj, entry.item, f"{entry.collection.name} and {', '.join(rival.name for rival in entry.rivals)} both give it {name} with different settings, so it uses {entry.collection.name}'s. Put one collection inside the other to choose"))
     constraint = getattr(obj, "rigid_body_constraint", None)
-    if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None:
+    if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None and not left_out(obj):
         issues.append(Issue("WARNING", obj, None, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"))
     issues.extend(_data_issues(obj))
     shape_keys = obj.data.shape_keys if obj.type == "MESH" else None
@@ -536,6 +484,8 @@ def _file_check(filepath, kind, library):
 
 def _data_issues(obj):
     issues = []
+    if left_out(obj):
+        return issues
     if obj.type == "LIGHT_PROBE" and obj.data.type == "PLANE" and not any(component_of(obj, kind) is not None for kind in FILE_KINDS):
         issues.append(Issue("WARNING", obj, None, "Bevy has no planar reflections, so the game leaves this Light Probe out"))
     if obj.type == "SPEAKER" and not obj.data.muted and component_of(obj, "AUDIO_PLAYER") is None:

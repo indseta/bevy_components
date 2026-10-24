@@ -291,7 +291,7 @@ class TestMetadata(unittest.TestCase):
         fields = [field("mode", "ENUM", "PingPong", "Loop, PingPong", "my_game::PatrolMode"), field("offset", "VECTOR2", (1.0, 0.10000000149011612)), field("stops", "INT", 3, rust_type="u8")]
         component = item(component_type="CUSTOM", custom_type="my_game::Patrol", custom_json="{}", use_fields=True, fields=fields)
         self.assertEqual(metadata.validate_items([component]), [])
-        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "custom", "type_path": "my_game::Patrol", "data": {"mode": "PingPong", "offset": [1.0, 0.1], "stops": 3}, "enums": {"mode": "my_game::PatrolMode"}})
+        self.assertEqual(json.loads(metadata.serialize_items([component]))["components"][0], {"type": "custom", "type_path": "my_game::Patrol", "data": {"mode": "PingPong", "offset": [1.0, 0.1], "stops": 3}})
         component.fields[0].rust_type = " "
         self.assertNotIn("enums", json.loads(metadata.serialize_items([component]))["components"][0])
 

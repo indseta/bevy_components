@@ -134,7 +134,7 @@ def shape_values(shape, size):
 def compound_parent(obj):
     parent = obj.parent
     body = getattr(parent, "rigid_body", None)
-    return parent if body is not None and body.collision_shape == "COMPOUND" else None
+    return parent if body is not None and body.collision_shape == "COMPOUND" and not _left_out(parent) else None
 
 
 def rigid_body_kind(body):
@@ -279,7 +279,7 @@ def volume_shader(material):
 
 
 def fog_source(obj):
-    if getattr(obj, "type", None) != "MESH":
+    if getattr(obj, "type", None) != "MESH" or _left_out(obj):
         return None
     materials = [slot.material for slot in obj.material_slots if slot.material is not None]
     shaders = [volume_shader(material) for material in materials]
@@ -340,9 +340,14 @@ def _data_components(obj):
     return found
 
 
+def _left_out(obj):
+    from .collection import left_out
+    return left_out(obj)
+
+
 def native_components(obj):
     physics = getattr(obj, "bevy_physics", None)
-    if physics is None or getattr(obj, "bevy_object", None) is None:
+    if physics is None or getattr(obj, "bevy_object", None) is None or _left_out(obj):
         return []
     found = []
     body = getattr(obj, "rigid_body", None)
