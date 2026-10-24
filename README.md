@@ -9,7 +9,7 @@ Requires Blender 4.2+, Bevy 0.20 and Avian 0.8.
 1. Download `bevy_components_<version>.zip` from the [latest release](https://github.com/indseta/bevy_components/releases/latest).
 2. In Blender, open **Edit > Preferences > Get Extensions**, then **Install from Disk...** and pick the ZIP.
 3. Enable **Bevy Components** if it isn't enabled already.
-4. Find it under **Properties > Object > Components**, **3D Viewport > N > Bevy** or **3D Viewport > Object > Bevy Components**.
+4. Find it under **Properties > Object > Game Components**, **3D Viewport > N > Bevy** or **3D Viewport > Object > Bevy Components**.
 
 ## Install the importer
 
@@ -52,7 +52,7 @@ The importer's warnings start with the Blender object's name, such as `crate: In
 
 ## Usage
 
-1. Select an object, press **Add Component** and pick a component, or start typing to search.
+1. Set up physics, lights, speakers and light probes with Blender's own tools. For your game's components, select an object, press **Add Component** in **Properties > Object > Game Components** and pick one, or start typing to search.
 2. Export with **File > Export > Bevy Scene (.glb)**. After that, **Export Again** writes the same file with the same settings, without the file dialog.
 3. Put the GLB in your game's `assets/` folder and load it as above. Or set your game's folder as the **Game Project** and press **Play** in **3D Viewport > N > Bevy** to export and run the game in one click.
 
@@ -76,7 +76,7 @@ Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the run
 | Navigation | `NavigationWalkable` and `NavigationObstacle` tags for a navmesh crate |
 | Custom Component | Any of your game's components, as JSON or with typed fields read from your game |
 
-The World properties add **Bevy Sky** and **Bevy Ambient Light**. In the Collection properties, **Bevy Components** gives custom components, Navigation and Visibility Range to every object in the collection, and **Bevy Prefab** turns it into a prefab with its own GLB.
+The World properties add **Bevy Sky** and **Bevy Ambient Light**. In the Collection properties, **Game Components** gives custom components, Navigation and Visibility Range to every object in the collection, and **Bevy Prefab** turns it into a prefab with its own GLB.
 
 ## Guides
 

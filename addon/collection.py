@@ -40,7 +40,7 @@ def _value(item):
 
 
 def _refresh():
-    key = (CHANGES[0], len(bpy.data.collections), len(bpy.data.objects))
+    key = (CHANGES[0], len(bpy.data.collections))
     if _index["key"] == key:
         return _index
     members = {}

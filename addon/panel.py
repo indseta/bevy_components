@@ -13,10 +13,11 @@ from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
 from .project import game_folder, play_target
 from .property import COMPONENT_LABELS, FIELD_LABELS, JOINT_LABELS, LAYER_COUNT
 from .schema import short_name
-from .system import ambient_light, component_index, components_for, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
+from .system import ambient_light, component_index, components_for, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, problem_changes, sky_lights_scene, world_background, world_color
 from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, collection_issues, component_name, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
+_overview = {"key": None, "objects": {}}
 BODY_LABELS = {
     "STATIC": "Static",
     "DYNAMIC": "Dynamic",
@@ -593,7 +594,7 @@ def _card_of(obj, kind):
 def _draw_native_checks(layout, context, obj, kind):
     width = context.region.width if context.region else 300
     if _card_of(obj, kind) is not None:
-        draw_message(layout, f"The {COMPONENT_LABELS[kind][0]} component in Object > Components replaces these settings in Bevy", icon="INFO", width=width)
+        draw_message(layout, f"The {COMPONENT_LABELS[kind][0]} component in Object > Game Components replaces these settings in Bevy", icon="INFO", width=width)
         return False
     settings = export_settings(context.scene)
     for issue in check_object(obj, exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers):
@@ -874,7 +875,7 @@ class BEVY_PT_material_fog(bpy.types.Panel):
 
 
 class BEVY_PT_object_properties(bpy.types.Panel):
-    bl_label = "Components"
+    bl_label = "Game Components"
     bl_idname = "BEVY_PT_object_properties"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
@@ -912,6 +913,17 @@ class BEVY_PT_view_sidebar(bpy.types.Panel):
         draw_components(self.layout, context, context.object)
 
 
+def _overview_entry(obj):
+    version = problem_changes()[0]
+    if _overview["key"] != version:
+        _overview.update(key=version, objects={})
+    pointer = obj.as_pointer()
+    if pointer not in _overview["objects"]:
+        items = components_for(obj)
+        _overview["objects"][pointer] = (list(dict.fromkeys(item.component_type for item in items)), [item.custom_type for item in items if item.component_type == "CUSTOM"])
+    return _overview["objects"][pointer]
+
+
 class BEVY_UL_objects(bpy.types.UIList):
     bl_idname = "BEVY_UL_objects"
 
@@ -920,7 +932,7 @@ class BEVY_UL_objects(bpy.types.UIList):
         split.prop(item, "name", text="", emboss=False, icon_value=layout.icon(item))
         icons = split.row(align=True)
         icons.alignment = "RIGHT"
-        kinds = list(dict.fromkeys(component.component_type for component in item.bevy_component_data.components if component.component_type))
+        kinds, _type_paths = _overview_entry(item)
         for kind in kinds[:OVERVIEW_ICONS]:
             icons.label(text="", icon=COMPONENT_LABELS[kind][1])
         if len(kinds) > OVERVIEW_ICONS:
@@ -932,11 +944,10 @@ class BEVY_UL_objects(bpy.types.UIList):
         pattern = f"*{self.filter_name.lower()}*" if self.filter_name else ""
         flags = []
         for obj in objects:
-            items = obj.bevy_component_data.components
-            listed = len(items) > 0 and (shown == "ALL" or any(item.component_type == shown for item in items))
+            kinds, type_paths = _overview_entry(obj)
+            listed = len(kinds) > 0 and (shown == "ALL" or shown in kinds)
             if listed and pattern:
-                names = [obj.name] + [item.custom_type for item in items if item.component_type == "CUSTOM"]
-                listed = any(fnmatchcase(name.lower(), pattern) for name in names) != self.use_filter_invert
+                listed = any(fnmatchcase(name.lower(), pattern) for name in [obj.name, *type_paths]) != self.use_filter_invert
             flags.append(self.bitflag_filter_item if listed else 0)
         return flags, bpy.types.UI_UL_list.sort_items_by_name(objects, "name") if self.use_filter_sort_alpha else []
 
@@ -1148,7 +1159,7 @@ class BEVY_PT_scene_collision_layers(bpy.types.Panel):
 
 
 class BEVY_PT_collection_components(bpy.types.Panel):
-    bl_label = "Bevy Components"
+    bl_label = "Game Components"
     bl_idname = "BEVY_PT_collection_components"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"

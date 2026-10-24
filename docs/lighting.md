@@ -8,7 +8,7 @@ Every light exports as a Bevy light. glTF carries its color, power, spot cone an
 - **Volumetric** for light shafts through fog, and **Baked** to bake the light into lightmaps, so it only adds reflections on lightmapped meshes
 - an **Intensity** in Bevy's lumens or lux, in place of Blender's watts at 683 lm/W
 
-Lights that share their light data share these settings. A **Light** component (under Lighting) on a light replaces them for that light only.
+Lights that share their light data share these settings. A **Light** component (under Add Component > Advanced) on a light replaces them for that light only.
 
 Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` feature and cast no shadows. Contact shadows need `ContactShadows` and a depth prepass on the camera. The viewport draws how far each light reaches, 20 m unless Custom Distance is on, and dragging its arrow sets Custom Distance.
 
@@ -26,7 +26,7 @@ Fog and light probes come from Blender's own objects:
 - **Light Probe > Sphere** becomes a Reflection Probe, a box as wide as its Influence Distance, so set its Influence to Box to see it. Its Falloff carries over, and **Properties > Light Probe > Bevy** sets the intensity, parallax correction, bake size and cubemap file.
 - **Light Probe > Volume** becomes an Irradiance Volume that fills the probe's box. Its Intensity carries over, and its Resolution sets how many light samples the bake takes.
 
-Bevy has no planar reflections, so Plane probes are left out. The **Fog Volume**, **Reflection Probe** and **Irradiance Volume** components (under Lighting) do the same on any object, with their size set on Bevy's axes or by dragging the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
+Bevy has no planar reflections, so Plane probes are left out. The **Fog Volume**, **Reflection Probe** and **Irradiance Volume** components (under Advanced) do the same on any object, with their size set on Bevy's axes or by dragging the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
 
 - Bevy only draws fog for cameras with `VolumetricFog`, such as `commands.spawn((Camera3d::default(), VolumetricFog::default()))`, and once a light in the scene has **Volumetric** on.
 - A Reflection Probe gives the meshes in its box reflections and soft light from a cubemap. Bevy filters the cubemap when the scene loads, so it needs six square faces whose size is a power of two, and no mipmaps. **Bake** makes one (see [Baked lighting](#baked-lighting)), or KTX-Software from six renders: `ktx create --format R16G16B16A16_SFLOAT --cubemap px.exr nx.exr py.exr ny.exr pz.exr nz.exr room.ktx2`.
@@ -38,7 +38,7 @@ The export embeds each probe's `.ktx2` file in the GLB, so the scene stays one f
 
 The addon bakes lightmaps, Reflection Probes, Irradiance Volumes and the Bevy Sky with Cycles.
 
-1. Add a **Lightmap** (under Lighting) to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or its light samples along X, Y and Z.
+1. Add a **Lightmap** component to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or its light samples along X, Y and Z.
 2. Click **Bake** on a component or in a Light Probe's Bevy panel to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default, and **Export Again** exports the scene to the GLB or BSN file of its last export once the bake finishes.
 
 A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; bakes that already finished keep their new files. Each component's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.

@@ -1,6 +1,6 @@
 # Components
 
-Add components with **Add Component** in **Properties > Object > Components** or **3D Viewport > N > Bevy**, or give them to every object in a collection, see [Collections](#collections). Physics, lights, shadows, speakers, light probes, fog and animation come from Blender's own settings, see [Physics](#physics), [Lighting](lighting.md) and below, and the Components panel lists what each object gets from them. Physics, Rendering and Lighting components sit in submenus, and typing searches them all. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
+Physics, lights, shadows, speakers, light probes, fog and animation come from Blender's own settings, see [Physics](#physics), [Lighting](lighting.md) and below. **Properties > Object > Game Components** lists what each object gets from them, and its **Add Component** adds the rest: your game's components, **Navigation**, **Visibility Range**, **Lightmap** and **Scene Reference**, which Blender has no setting for. The same panel sits in **3D Viewport > N > Bevy**, and collections can give components to every object in them, see [Collections](#collections). **Add Component > Physics** adds Blender's Rigid Body and Rigid Body Constraint, and **Advanced** holds the built-in components that replace Blender's settings on one object, such as a collider with its own size. Typing searches every menu. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
 
 ## Working with components
 
@@ -12,16 +12,16 @@ Each component works like a modifier: collapse it, untick it to leave it out of 
 
 ## Collections
 
-**Properties > Collection > Bevy Components** gives its components to every object in the collection and in the collections inside it, also objects added later. Collections take custom and game components, **Navigation** and **Visibility Range**: a Walkable collection tags all the ground meshes in it, and a LOD1 collection fades its meshes alike. Navigation and Visibility Range go to the meshes, curves, text and empties in the collection, custom components to every object.
+**Properties > Collection > Game Components** gives its components to every object in the collection and in the collections inside it, also objects added later. Collections take custom and game components, **Navigation** and **Visibility Range**: a Walkable collection tags all the ground meshes in it, and a LOD1 collection fades its meshes alike. Navigation and Visibility Range go to the meshes, curves, text and empties in the collection, custom components to every object.
 
 - Link objects to a collection with **Ctrl+L > Link to Collection** instead of moving them, so they stay in their other collections. Hiding or excluding a collection also hides the objects that are only in it.
 - A component on the object replaces the collection's, and so does one from a collection inside it. Custom components count as the same when their type path is. When two collections that are not inside one another give an object the same component with different settings, it uses the one from the first collection by name and the checks warn.
-- The object's Components panel lists what it gets from which collection, and the button next to each row shows that collection.
+- The object's Game Components panel lists what it gets from which collection, and the button next to each row shows that collection.
 - A collection linked from another .blend file brings its components along. Edit them in that file.
 
 ## Viewport previews
 
-Previews are editor-only and are not exported. Set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded.
+Previews are editor-only and are not exported. Set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Game Components** panel in Properties is expanded.
 
 Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull Collider components are built from every mesh on or under the object, Blender's Mesh and Convex Hull shapes from the object's own mesh, and Convex Hull previews draw the hull the game gets, one per material. Blender's Rigid Body shapes show in the same colors as Collider components.
 
@@ -41,7 +41,7 @@ The export writes bodies where the simulation starts, also when the timeline is 
 
 ### Physics components
 
-The **Collider**, **Rigid Body** and **Joint** components cover what Blender's physics cannot: an empty that holds child colliders, a collider with an offset or another size than the mesh, a mesh collider that covers child meshes, or joints along other axes. A component replaces Blender's setting of the same kind on that object.
+The **Collider**, **Rigid Body** and **Joint** components, under **Add Component > Advanced**, cover what Blender's physics cannot: an empty that holds child colliders, a collider with an offset or another size than the mesh, a mesh collider that covers child meshes, or joints along other axes. A component replaces Blender's setting of the same kind on that object.
 
 **Collider** adds an Avian cuboid, sphere, capsule, cylinder, cone, convex hull or triangle mesh collider, or a sensor. Sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider.
 
@@ -57,7 +57,7 @@ The **Collider**, **Rigid Body** and **Joint** components cover what Blender's p
 
 **Visibility Range** fades the meshes on and under the object in and out by camera distance, for levels of detail. Its LOD0, LOD1 and LOD2 presets set fades that crossfade with the neighbouring levels, and handles in the viewport drag the distances.
 
-**Shadows** follow **Properties > Object > Visibility**: a mesh whose Ray Visibility **Shadow** is off casts no shadows in the game, and one with **Bevy > Receive Shadows** off receives none. The **Shadows** component (under Rendering) turns them off for every mesh on and under an object.
+**Shadows** follow **Properties > Object > Visibility**: a mesh whose Ray Visibility **Shadow** is off casts no shadows in the game, and one with **Bevy > Receive Shadows** off receives none. The **Shadows** component (under Advanced) turns them off for every mesh on and under an object.
 
 ## Audio, animation and scenes
 
@@ -65,7 +65,7 @@ A **Speaker** plays its sound in the game. Keep the sound file in your game's `a
 
 The **Audio Player** component plays a sound on any object, and its folder button fills in the path from a picked file.
 
-**Autoplay** in the Components panel plays the object's active action when the scene loads, at a Speed where 1 matches Blender. **Loop** next to it sets the action's Cyclic Animation, which makes the game repeat it. The **Animation** component plays another clip, such as one that animates the object's children. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
+**Autoplay** in the Game Components panel plays the object's active action when the scene loads, at a Speed where 1 matches Blender. **Loop** next to it sets the action's Cyclic Animation, which makes the game repeat it. The **Animation** component plays another clip, such as one that animates the object's children. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
 
 **Scene Reference** spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. [Prefabs](exporting.md#prefabs) do the same for collection instances and export the prop for you.
 

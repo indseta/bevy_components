@@ -373,7 +373,7 @@ class BEVY_PG_prefab(bpy.types.PropertyGroup):
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
-    enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport while the Components panel in Properties is expanded, never exported", default=True, update=redraw_viewports)
+    enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport while the Game Components panel in Properties is expanded, never exported", default=True, update=redraw_viewports)
     scope: EnumProperty(name="Draw On", items=[
         ("SELECTED", "Selected", "Draw previews for selected objects only"),
         ("ALL", "All", "Draw previews for every visible object with Bevy components"),

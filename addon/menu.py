@@ -3,7 +3,7 @@ import bpy
 from .operator import BEVY_OT_add_component, BEVY_OT_add_constraint, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_convert_to_native, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_export, running_game
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
 from .schema import short_name
-from .system import TEXT_COMPONENT, accepts, component_index, game_types, preset_folder, presets, scene_definition
+from .system import TEXT_COMPONENT, accepts, component_index, components_for, game_types, preset_folder, presets, scene_definition
 
 
 def _owner(context, layout):
@@ -64,11 +64,10 @@ class BEVY_MT_component_add(bpy.types.Menu):
         if isinstance(owner, bpy.types.Collection):
             _draw_add_items(layout, owner, ("NAVIGATION", "VISIBILITY_RANGE"))
             return
-        layout.menu(BEVY_MT_component_add_physics.bl_idname)
-        layout.menu(BEVY_MT_component_add_rendering.bl_idname)
-        layout.menu(BEVY_MT_component_add_lighting.bl_idname)
+        _draw_add_items(layout, owner, ("NAVIGATION", "VISIBILITY_RANGE", "LIGHTMAP", "SCENE_REFERENCE"))
         layout.separator()
-        _draw_add_items(layout, context.object, ("AUDIO_PLAYER", "ANIMATION", "SCENE_REFERENCE", "NAVIGATION"))
+        layout.menu(BEVY_MT_component_add_physics.bl_idname)
+        layout.menu(BEVY_MT_component_add_advanced.bl_idname)
         layout.separator()
         layout.menu(BEVY_MT_component_add_presets.bl_idname, icon="PRESET")
 
@@ -105,27 +104,19 @@ class BEVY_MT_component_add_physics(bpy.types.Menu):
         column = layout.column()
         column.enabled = obj is not None and obj.rigid_body_constraint is None
         column.operator(BEVY_OT_add_constraint.bl_idname, text="Rigid Body Constraint", icon="RIGID_BODY_CONSTRAINT")
-        layout.separator()
-        layout.label(text="Components")
-        _draw_add_items(layout, obj, ("COLLIDER", "RIGID_BODY", "JOINT"))
 
 
-class BEVY_MT_component_add_rendering(bpy.types.Menu):
-    bl_idname = "BEVY_MT_component_add_rendering"
-    bl_label = "Rendering"
+class BEVY_MT_component_add_advanced(bpy.types.Menu):
+    bl_idname = "BEVY_MT_component_add_advanced"
+    bl_label = "Advanced"
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("VISIBILITY_RANGE", "SHADOWS"))
-
-
-class BEVY_MT_component_add_lighting(bpy.types.Menu):
-    bl_idname = "BEVY_MT_component_add_lighting"
-    bl_label = "Lighting"
-    bl_options = {"SEARCH_ON_KEY_PRESS"}
-
-    def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("LIGHT", "LIGHTMAP", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "FOG_VOLUME"))
+        layout = self.layout
+        layout.label(text="In place of Blender's settings")
+        for kinds in (("COLLIDER", "RIGID_BODY", "JOINT"), ("LIGHT", "SHADOWS", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME"), ("AUDIO_PLAYER", "ANIMATION")):
+            layout.separator()
+            _draw_add_items(layout, context.object, kinds)
 
 
 class BEVY_MT_component_add_presets(bpy.types.Menu):
@@ -240,7 +231,7 @@ class BEVY_MT_select_by_component(bpy.types.Menu):
         kinds = set()
         type_paths = set()
         for obj in context.view_layer.objects if context.view_layer else ():
-            for item in obj.bevy_component_data.components:
+            for item in components_for(obj):
                 kinds.add(item.component_type)
                 if item.component_type == "CUSTOM" and item.custom_type.strip():
                     type_paths.add(item.custom_type)
