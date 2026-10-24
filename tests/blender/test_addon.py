@@ -558,12 +558,12 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_component_data"))
         for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "bevy_components.show_collection"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_components", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_advanced", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_components", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
-        self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Components", "object"))
+        self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Game Components", "object"))
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.menu.bake_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
@@ -589,7 +589,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(_operator_exists("bevy_components.add"))
 
     def test_add_menus_search_on_key_press(self):
-        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_lighting, addon.menu.BEVY_MT_component_add_presets):
+        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_advanced, addon.menu.BEVY_MT_component_add_presets):
             self.assertEqual(menu.bl_options, {"SEARCH_ON_KEY_PRESS"})
 
     def test_disable_and_enable_keeps_components(self):
@@ -1200,10 +1200,10 @@ class TestPanels(unittest.TestCase):
         add_component(self.obj, "CUSTOM")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets"])
-        self.assertEqual([text for text, properties, enabled in menu.layout.buttons()], ["Custom Component", "Audio Player", "Animation", "Scene Reference", "Navigation"])
+        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_advanced", "BEVY_MT_component_add_presets"])
+        self.assertEqual([text for text, properties, enabled in menu.layout.buttons()], ["Custom Component", "Navigation", "Visibility Range", "Lightmap", "Scene Reference"])
         found = {}
-        for menu_type, kinds in ((addon.menu.BEVY_MT_component_add, None), (addon.menu.BEVY_MT_component_add_physics, ["COLLIDER", "RIGID_BODY", "JOINT"]), (addon.menu.BEVY_MT_component_add_rendering, ["VISIBILITY_RANGE", "SHADOWS"]), (addon.menu.BEVY_MT_component_add_lighting, ["LIGHT", "LIGHTMAP", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "FOG_VOLUME"])):
+        for menu_type, kinds in ((addon.menu.BEVY_MT_component_add, None), (addon.menu.BEVY_MT_component_add_advanced, ["COLLIDER", "RIGID_BODY", "JOINT", "LIGHT", "SHADOWS", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "AUDIO_PLAYER", "ANIMATION"])):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
             buttons = {properties.component_type: enabled for text, properties, enabled in menu.layout.buttons() if hasattr(properties, "component_type")}
@@ -1213,16 +1213,19 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "LIGHT": False, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "LIGHTMAP": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True, "NAVIGATION": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
+        addon.menu.BEVY_MT_component_add_advanced.draw(menu, _menu_context(self.obj))
         self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Audio Player"])
+        self.assertEqual(menu.layout.texts()[0], "In place of Blender's settings")
         lamp = add_light("lamp", "POINT", (0, 0, 0))
         menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_lighting.draw(menu, _menu_context(lamp))
+        addon.menu.BEVY_MT_component_add_advanced.draw(menu, _menu_context(lamp))
         self.assertTrue(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Light"])
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(lamp))
         self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Lightmap"])
         add_component(lamp, "LIGHT")
         menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_lighting.draw(menu, _menu_context(lamp))
+        addon.menu.BEVY_MT_component_add_advanced.draw(menu, _menu_context(lamp))
         self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Light"])
 
     def test_component_context_menu_targets_its_component(self):
@@ -2077,7 +2080,7 @@ class TestCustomFields(unittest.TestCase):
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
         buttons = [(text, properties.component_type, getattr(properties, "type_path", ""), enabled) for text, properties, enabled in menu.layout.buttons()]
         self.assertEqual(buttons[:3], [("Custom Component", "CUSTOM", "", True), ("game::Health", "CUSTOM", "game::Health", False), ("game::Wave", "CUSTOM", "game::Wave", True)])
-        self.assertEqual(buttons[-1], ("Navigation", "NAVIGATION", "", True))
+        self.assertEqual([button[1] for button in buttons[3:]], ["NAVIGATION", "VISIBILITY_RANGE", "LIGHTMAP", "SCENE_REFERENCE"])
 
     def test_component_context_menu_edits_defined_fields(self):
         define_component("game::Health", ("amount", "INT", 100))
@@ -3464,7 +3467,7 @@ class TestNativePhysics(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_physics_collisions.draw(panel, bpy.context)
         self.assertEqual(panel.layout.props(), [])
-        self.assertIn("The Collider component in Object > Components replaces these settings in Bevy", " ".join(panel.layout.texts()))
+        self.assertIn("The Collider component in Object > Game Components replaces these settings in Bevy", " ".join(panel.layout.texts()))
 
     def test_scene_gravity_is_exported_when_it_changes(self):
         scene = bpy.context.scene
@@ -3663,7 +3666,7 @@ class TestNativePhysics(unittest.TestCase):
         crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add_physics.draw(menu, _menu_context(crate))
-        self.assertEqual(menu.layout.operators(), ["rigidbody.object_add", "bevy_components.add_constraint", "bevy_components.add", "bevy_components.add", "bevy_components.add"])
+        self.assertEqual(menu.layout.operators(), ["rigidbody.object_add", "bevy_components.add_constraint"])
         self.assertEqual([enabled for text, properties, enabled in menu.layout.buttons()][:2], [True, True])
         _rigid_body(crate)
         _constraint(crate, "FIXED")
@@ -3772,7 +3775,7 @@ class TestNativeLighting(unittest.TestCase):
         self.assertIn("light_volumetric", layout.props())
         self.assertIn("Volumetric needs Shadows, or the light makes no light shafts", " ".join(layout.texts()))
         add_component(lamp, "LIGHT")
-        self.assertIn("The Light component in Object > Components replaces these settings in Bevy", " ".join(self._panel(addon.panel.BEVY_PT_light, context).texts()))
+        self.assertIn("The Light component in Object > Game Components replaces these settings in Bevy", " ".join(self._panel(addon.panel.BEVY_PT_light, context).texts()))
         with tempfile.TemporaryDirectory() as directory:
             gltf = export_sample_scene(Path(directory) / "lights.glb")
         lights = gltf["extensions"]["KHR_lights_punctual"]["lights"]
@@ -4020,6 +4023,28 @@ class TestCollectionComponents(unittest.TestCase):
 
     def _context(self, obj, **values):
         return SimpleNamespace(**{"object": obj, "scene": bpy.context.scene, "region": None, "space_data": None, "view_layer": bpy.context.view_layer, "selected_objects": [], **values})
+
+    def test_overview_and_select_include_blender_and_collection_components(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
+        _rigid_body(crate)
+        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1, location=(3, 0, 0))
+        add_mesh(bpy.ops.mesh.primitive_cube_add, "plain", size=1, location=(6, 0, 0))
+        _add_to(_collection("Ground", rock), "CUSTOM", type_path="my_game::Ground")
+        bpy.context.view_layer.update()
+        ui_list = SimpleNamespace(filter_name="", use_filter_invert=False, use_filter_sort_alpha=False, bitflag_filter_item=1 << 30)
+        self.assertEqual(_shown_in_overview(ui_list), ["crate", "rock"])
+        ui_list.filter_name = "ground"
+        self.assertEqual(_shown_in_overview(ui_list), ["rock"])
+        row = FakeLayout(self)
+        addon.panel.BEVY_UL_objects.draw_item(ui_list, bpy.context, row, bpy.context.scene, crate, 0, bpy.context.scene.bevy_component_overview, "active")
+        self.assertIn(addon.property.COMPONENT_LABELS["RIGID_BODY"][1], [bound.get("icon") for name, bound, layout in row.calls if name == "label"])
+        self.assertEqual(bpy.ops.bevy_components.select_by_component(component_type="RIGID_BODY"), {"FINISHED"})
+        self.assertEqual(bpy.context.selected_objects, [crate])
+        self.assertEqual(bpy.ops.bevy_components.select_by_component(component_type="CUSTOM", type_path="my_game::Ground"), {"FINISHED"})
+        self.assertEqual(bpy.context.selected_objects, [rock])
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_select_by_component.draw(menu, bpy.context)
+        self.assertIn(("CUSTOM", "my_game::Ground"), [(properties.component_type, getattr(properties, "type_path", "")) for text, properties, enabled in menu.layout.buttons()])
 
     def test_collections_give_their_components_to_every_member(self):
         rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)

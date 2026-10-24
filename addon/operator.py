@@ -1008,7 +1008,7 @@ class BEVY_OT_select_by_component(bpy.types.Operator):
         return {"FINISHED"}
 
     def _matches(self, obj):
-        items = obj.bevy_component_data.components
+        items = components_for(obj)
         if self.component_type == "ALL":
             return len(items) > 0
         return any(item.component_type == self.component_type and (not self.type_path or item.custom_type == self.type_path) for item in items)
