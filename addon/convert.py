@@ -7,7 +7,7 @@ from .metadata import MESH_SHAPES, WATTS_TO_LUMENS, serialize_component
 from .native import BLENDER_JOINTS, BLENDER_LAYERS, BLENDER_SHAPES, FOG_SETTINGS, JOINT_AXES, LIGHT_SETTINGS, MESH_TYPES, NATIVE_KINDS, NATIVE_SOURCES, PRINCIPLED_VOLUME, SPEAKER_SETTINGS, active_action, asset_path, blender_axes, blender_vector, compound_parent, fog_source, linear, native_components
 from .project import game_assets
 from .property import EVENTS_KEY, LAYER_COUNT
-from .system import children_map, component_of, components_for, data_users, inherited, mesh_sources, owns_mesh, sync_object
+from .system import children_map, component_of, components_for, data_users, inherited, mesh_sources, owns_mesh, touch_object
 
 TOLERANCE = 1e-3
 PHYSICS_KINDS = ("COLLIDER", "RIGID_BODY", "JOINT")
@@ -306,7 +306,7 @@ def _convert_light(obj, card):
     if changed is not None:
         _restore(settings, LIGHT_SETTINGS, saved)
         for user in users:
-            sync_object(user)
+            touch_object(user)
         return "Blender's light would change what the game gets" if changed == obj else f"{changed.name} shares its light data and would get these Light settings too"
     return None
 
@@ -349,7 +349,7 @@ def _convert_animation(obj, card):
         if action.use_cyclic != cyclic:
             action.use_cyclic = cyclic
         for user in users:
-            sync_object(user)
+            touch_object(user)
         return "Blender's action would change what the game gets" if changed == obj else f"{changed.name} also plays {action.name}, so its Cyclic setting would change for it too"
     return None
 
@@ -472,7 +472,7 @@ def _convert_child(context, obj, kind, card):
     if found is None or not _same(_effective(serialize_component(card)), _effective(found, (child.scale.x, child.scale.z, child.scale.y))):
         bpy.data.batch_remove([child, data, *getattr(data, "materials", ())])
         return f"a {NATIVE_SOURCES[kind][0]} would change what the game gets from its {_label(kind)} component"
-    sync_object(child)
+    touch_object(child)
     return None
 
 
@@ -528,7 +528,7 @@ def convert_objects(context, objects):
             components = obj.bevy_component_data.components
             for index in reversed([index for index, item in enumerate(components) if any(item == card for card in done)]):
                 components.remove(index)
-            sync_object(obj)
+            touch_object(obj)
             converted.append(obj)
     finally:
         context.view_layer.objects.active = previous

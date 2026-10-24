@@ -11,6 +11,7 @@
 - **Leave Out of Bevy** on an object or a collection exports it as plain glTF, without what Blender's physics, light, speaker, light probe and fog settings and collection components would add, for helper and reference objects. Components added by hand still export.
 - **Copy Components**, **Paste Components**, **Copy All to Selected** and presets carry Blender's Rigid Body and Rigid Body Constraint with their Bevy settings, shadows, Autoplay and the Bevy settings of lights, speakers and light probes, so a crate preset keeps its physics. **Object > Rigid Body > Copy from Active with Bevy Settings** copies a Rigid Body with the Bevy settings that Blender's Copy from Active leaves out.
 - Cylinder and Cone colliders, for Collider components and Blender's shapes.
+- **Bevy glTF export**: **File > Export > Bevy glTF (.glb/.gltf)** is Blender's glTF export with the same dialog and options, made for Bevy. It always writes the Bevy components and physics without ticking Custom Properties, so single objects and props export with their colliders. It also works as a collection exporter. See [Exporting](docs/exporting.md).
 - New checks: objects that get the same component from two unrelated collections with different settings, Blender shapes on meshes that are not centered on their origin, constraint types Avian has no joint for, speakers without a sound or with a packed one, Plane light probes, and fog boxes that use another shader, textures or emission, or are off center.
 
 ### Changed
@@ -21,6 +22,8 @@
 - Importer: shadow settings from Blender's Visibility apply only to the object's own mesh, and Audio Players read an optional playback speed.
 - The Components panel is now **Game Components**. **Add Component** lists your game's components, Navigation, Visibility Range, Lightmap and Scene Reference, and the built-in components that replace Blender's settings moved to **Add Component > Advanced**.
 - Scene Overview and **Select by Bevy Component** include what objects get from Blender's settings and from collections.
+- Objects no longer keep a copy of their components in a `bevy_components` custom property. The export builds them when it runs, so renamed joint bodies and other edits always reach the file, and saving removes the old property from older files.
+- The viewport previews and labels redraw much faster in big scenes: with 2000 objects, a redraw where nothing changed takes about 8 ms instead of 430 ms, and only objects that changed are rebuilt.
 
 ### Removed
 

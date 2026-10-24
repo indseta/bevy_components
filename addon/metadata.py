@@ -2,7 +2,6 @@ import functools
 import json
 import math
 import os
-import re
 import struct
 import tomllib
 from pathlib import Path
