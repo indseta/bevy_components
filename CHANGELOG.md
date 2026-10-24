@@ -10,6 +10,7 @@
 
 - Objects no longer keep a copy of their components in a `bevy_components` custom property. The export builds them when it runs, so renamed joint bodies and other edits always reach the file, and saving removes the old property from older files.
 - The viewport previews and labels redraw much faster in big scenes: with 2000 objects, a redraw where nothing changed takes about 8 ms instead of 430 ms, and only objects that changed are rebuilt.
+- The checks behind the problem count, each component's warnings, Validate All Objects and the export run again only for objects that changed, so with 2000 objects they take about 15 ms instead of 180 ms when little changed. Adding, duplicating or deleting an object no longer makes every check or preview start over.
 
 ### Removed
 

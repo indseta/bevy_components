@@ -2258,6 +2258,49 @@ class TestGameComponents(unittest.TestCase):
         self.assertIn("schema_path", panel.layout.props())
 
 
+class TestChanges(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+
+    def test_revisions_follow_real_changes_only(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate")
+        rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", location=(3, 0, 0))
+        objects = (crate, rock)
+        bpy.context.view_layer.update()
+        seen = {obj.session_uid: addon.changes.revision(obj) for obj in objects}
+
+        def changed():
+            bpy.context.view_layer.update()
+            found = sorted(obj.name for obj in objects if addon.changes.revision(obj) != seen[obj.session_uid])
+            seen.update({obj.session_uid: addon.changes.revision(obj) for obj in objects})
+            return found
+
+        self.assertEqual(changed(), [])
+        helper = bpy.data.objects.new("helper", None)
+        bpy.context.scene.collection.objects.link(helper)
+        self.assertEqual(changed(), [])
+        rock.location.x = 5
+        self.assertEqual(changed(), ["rock"])
+        crate.name = "box"
+        self.assertEqual(changed(), ["box"])
+        rock.data.materials.append(bpy.data.materials.new("stone"))
+        self.assertEqual(changed(), ["rock"])
+        group = bpy.data.collections.new("group")
+        bpy.context.scene.collection.children.link(group)
+        group.objects.link(crate)
+        self.assertEqual(changed(), ["box"])
+        rock.parent = crate
+        self.assertEqual(changed(), ["box", "rock"])
+        bpy.data.objects.remove(helper)
+        self.assertEqual(changed(), [])
+        addon.system.touch_object(rock)
+        self.assertEqual(changed(), ["box", "rock"])
+        epoch = addon.changes.change_count()[0]
+        addon.changes.forget_revisions()
+        self.assertEqual(addon.changes.change_count()[0], epoch + 1)
+        self.assertEqual(changed(), ["box", "rock"])
+
+
 class TestViewport(unittest.TestCase):
     def setUp(self):
         clear_scene()
@@ -3331,6 +3374,42 @@ class TestValidation(unittest.TestCase):
     def test_sample_scene_is_clean(self):
         build_sample_scene()
         self.assertEqual(self._messages(), [])
+
+    def test_checks_run_again_only_for_objects_that_changed(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate")
+        add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", location=(4, 0, 0))
+        add_component(rock, "COLLIDER", collider_shape="CONVEX")
+        hinge = add_empty("hinge", (2, 0, 0))
+        joint = add_component(hinge, "JOINT")
+        joint.joint_body1 = rock
+        bpy.context.view_layer.update()
+        with mock.patch.object(addon.validation, "_caching", lambda: True), mock.patch.object(addon.validation, "_object_issues", wraps=addon.validation._object_issues) as checked:
+            checked_names = lambda: sorted(call.args[0].name for call in checked.call_args_list)
+            first = self._messages()
+            self.assertEqual(checked_names(), ["crate", "hinge", "rock"])
+            self.assertEqual(first, ["crate: Dynamic body has no collider on it or under it, so it has no mass and collides with nothing", "hinge: rock is static, so pinning it does nothing"])
+            checked.reset_mock()
+            issues = addon.validation.check_objects(bpy.data.objects)
+            self.assertEqual(checked_names(), [])
+            self.assertEqual([addon.validation.describe(issue) for issue in issues], first)
+            self.assertEqual([issue.item.component_type for issue in issues], ["RIGID_BODY", "JOINT"])
+            rock.location.x = 6
+            self.assertEqual(self._messages(), first)
+            self.assertEqual(checked_names(), ["hinge", "rock"])
+            checked.reset_mock()
+            add_component(crate, "COLLIDER", collider_shape="CUBOID")
+            self.assertEqual(self._messages(), first[1:])
+            self.assertEqual(checked_names(), ["crate"])
+            checked.reset_mock()
+            self.assertEqual(self._messages(hinge), first[1:])
+            self.assertEqual(checked_names(), [])
+            self.assertEqual(self._messages(hinge, modifiers=False), first[1:])
+            self.assertEqual(checked_names(), ["hinge"])
+            checked.reset_mock()
+            addon.changes.forget_revisions()
+            self.assertEqual(self._messages(), first[1:])
+            self.assertEqual(checked_names(), ["crate", "hinge", "rock"])
 
     def test_mesh_colliders_need_a_mesh(self):
         holder = add_empty("holder", (0, 0, 0))

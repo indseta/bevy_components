@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 import bpy
 from mathutils import Matrix, Quaternion, Vector
 
+from .changes import flush_changes, revision
 from .files import inside
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
@@ -17,9 +18,10 @@ from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_or
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, asset_path, children_map, component_kinds, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
+from .system import MESH_TYPES, asset_path, children_map, component_kinds, component_of, components_for, export_settings, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
+CheckOptions = namedtuple("CheckOptions", ("destination", "animations", "modifiers", "assets", "key"))
 TextureCheck = namedtuple("TextureCheck", ("level", "message", "voxels"))
 
 TYPE_PATH = re.compile(r"[A-Za-z_]\w*(::[A-Za-z_]\w*)*(<.+>)?")
@@ -40,9 +42,12 @@ UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
 PROCEDURAL_NODES = {"AMBIENT_OCCLUSION", "BEVEL", "CAMERA", "FRESNEL", "HAIR_INFO", "LAYER_WEIGHT", "LIGHT_PATH", "NEW_GEOMETRY", "OBJECT_INFO", "PARTICLE_INFO", "POINT_INFO", "SCRIPT", "TANGENT", "TEX_COORD", "WIREFRAME"}
 AMBIENT_WITH_SKY = "Bevy Ambient Light takes the World color, which the Bevy Sky's environment light already gives, so meshes get the World's light twice"
 PROBLEM_DELAY = 0.5
+ISSUE_CACHE_LIMIT = 16384
+UNCACHED_KINDS = {"SCENE_REFERENCE", "LIGHTMAP", "AUDIO_PLAYER", "ANIMATION", *FILE_KINDS}
 
 _texture_checks = {}
 _problem_counts = {}
+_issue_cache = {}
 
 
 def describe(issue):
@@ -89,6 +94,7 @@ def problem_count(scene):
 
 
 def count_problems(scenes):
+    _flush()
     version, _changed = problem_changes()
     changed = False
     members = prefab_members()
@@ -120,6 +126,7 @@ def stop_problem_counts():
     if bpy.app.timers.is_registered(_recount_problems):
         bpy.app.timers.unregister(_recount_problems)
     _problem_counts.clear()
+    _issue_cache.clear()
 
 
 def draw_problem_count(layout, scene):
@@ -140,6 +147,7 @@ def draw_problem_count(layout, scene):
 
 @resolved
 def check_objects(objects, destination=None, animations=True, modifiers=True):
+    _flush()
     objects = list(objects)
     return _check_list(objects, destination, animations, modifiers) + _prefab_issues(objects, destination, animations, modifiers)
 
@@ -149,17 +157,76 @@ def _check_list(objects, destination, animations, modifiers):
     exported = set(objects)
     materials = set()
     assets = game_assets(bpy.context)
+    options = _check_options(destination, animations, modifiers, assets)
     issues = []
     for obj in objects:
-        issues.extend(_object_issues(obj, children, exported, destination, animations, modifiers, materials, assets))
+        issues.extend(_cached_issues(obj, children, exported, options))
+        issues.extend(Issue("WARNING", obj, None, message) for message in material_warnings(obj, materials))
     issues.extend(_visibility_range_issues(objects))
+    return issues
+
+
+def _check_options(destination, animations, modifiers, assets):
+    return CheckOptions(destination, animations, modifiers, assets, (str(destination), animations, modifiers, str(assets), game_schema()["key"]))
+
+
+def _descendants(obj, children):
+    found = []
+    pending = list(children.get(obj, ()))
+    while pending:
+        child = pending.pop()
+        found.append(child.session_uid)
+        pending.extend(children.get(child, ()))
+    return tuple(found)
+
+
+def _caching():
+    return not bpy.app.background
+
+
+def _flush():
+    if _caching():
+        flush_changes()
+
+
+def _has_kinds(obj, kinds):
+    if _caching():
+        return not component_kinds(obj).isdisjoint(kinds)
+    return any(item.component_type in kinds for item in components_for(obj))
+
+
+def _cached_issues(obj, children, exported, options):
+    if not _caching() or _has_kinds(obj, UNCACHED_KINDS):
+        return _object_issues(obj, children, exported, *options[:4])
+    kinds = component_kinds(obj)
+    joint = component_of(obj, "JOINT") if "JOINT" in kinds else None
+    signature = (revision(obj), _descendants(obj, children), tuple((body.session_uid, revision(body), body in exported) for body in (joint.joint_body1, joint.joint_body2) if body is not None) if joint is not None else None)
+    key = (obj.session_uid, options.key)
+    found = _issue_cache.get(key)
+    if found is not None and found[0] == signature:
+        if not found[1]:
+            return []
+        items = components_for(obj)
+        return [Issue(level, obj, items[index] if index is not None else None, message) for level, index, message in found[1]]
+    issues = _object_issues(obj, children, exported, *options[:4])
+    items = components_for(obj) if issues else []
+    stored = [(issue.level, next((index for index, item in enumerate(items) if item == issue.item), None) if issue.item is not None else None, issue.message) for issue in issues]
+    if all(issue.obj == obj for issue in issues) and all(index is not None or issue.item is None for (_level, index, _message), issue in zip(stored, issues)):
+        if len(_issue_cache) >= ISSUE_CACHE_LIMIT:
+            _issue_cache.clear()
+        _issue_cache[key] = (signature, stored)
     return issues
 
 
 @resolved
 def check_object(obj, objects, modifiers=True):
+    _flush()
     objects = list(objects)
-    issues = _object_issues(obj, children_map(objects), set(objects), modifiers=modifiers, assets=game_assets(bpy.context)) + _visibility_range_issues(objects, obj)
+    exported = set(objects)
+    assets = game_assets(bpy.context)
+    issues = _cached_issues(obj, children_map(objects), exported, _check_options(None, True, modifiers, assets))
+    issues.extend(Issue("WARNING", obj, None, message) for message in material_warnings(obj))
+    issues.extend(_visibility_range_issues(objects, obj))
     collection = prefab_of(obj)
     if collection is None:
         return issues
@@ -237,13 +304,15 @@ def check_game_paths(objects, destination, assets):
         return []
     issues = [] if destination is None or inside(destination, assets) else [Issue("WARNING", None, None, f"{destination.name} is outside {assets}, so the game cannot load it")]
     for obj in objects:
+        if not _has_kinds(obj, {"SCENE_REFERENCE"}):
+            continue
         for item in components_for(obj):
             if item.component_type == "SCENE_REFERENCE" and item.scene_file.strip() and not inside(file_path(item.scene_file), assets):
                 issues.append(Issue("WARNING", obj, item, f"{file_path(item.scene_file).name} is outside the game's assets folder, so the game cannot load it"))
     return issues
 
 
-def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, materials=None, assets=None):
+def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, assets=None):
     issues = []
     custom_types = set()
     for item in components_for(obj):
@@ -295,7 +364,6 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
     shape_keys = obj.data.shape_keys if obj.type == "MESH" else None
     if modifiers and len(obj.modifiers) and shape_keys is not None and len(shape_keys.key_blocks) > 1:
         issues.append(Issue("WARNING", obj, None, "glTF leaves out the shape keys of meshes with modifiers. Apply the modifiers, or turn off Apply Modifiers"))
-    issues.extend(Issue("WARNING", obj, None, message) for message in material_warnings(obj, materials))
     return issues
 
 
@@ -377,7 +445,7 @@ def stale_bakes(objects):
         if record is not None:
             baked.append((None, None, "SKY", record))
     for obj in objects:
-        if scene.objects.get(obj.name) != obj:
+        if not _has_kinds(obj, FILE_KINDS) or scene.objects.get(obj.name) != obj:
             continue
         for item in components_for(obj):
             if item.component_type in FILE_KINDS and (record := read_record(item.bake_fingerprint, item.probe_file)) is not None:
@@ -615,7 +683,7 @@ def _visibility_range_issues(objects, only=None):
         return []
     groups = {}
     for obj in objects:
-        if only is not None and obj != only and "VISIBILITY_RANGE" not in component_kinds(obj):
+        if obj != only and not _has_kinds(obj, {"VISIBILITY_RANGE"}):
             continue
         item = component_of(obj, "VISIBILITY_RANGE")
         if item is not None and not component_errors(item):
