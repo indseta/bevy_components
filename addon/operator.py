@@ -26,7 +26,7 @@ from .probe import FILE_KINDS, embed_files
 from .project import game_assets, game_folder, play_target
 from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, sync_owner, unlink_component, viewport_view, write_component_text, write_field
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, blender_count, blender_snapshot, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, has_blender_settings, image_to_png, linked_component, mesh_points, new_identifier, paste_blender, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, sync_owner, unlink_component, viewport_view, write_component_text, write_field
 from .validation import COLLECTION_ONLY, body_kind, check_bsn, check_game_paths, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
@@ -168,9 +168,9 @@ def _targets(context):
     return targets
 
 
-def _paste(operator, context, components, source):
+def _paste(operator, context, components, blender, source):
     targets = _targets(context)
-    pasted = [paste_components(obj, components, context.scene) for obj in targets]
+    pasted = [paste_components(obj, components, context.scene, blender) for obj in targets]
     redraw_viewports()
     if not any(pasted):
         operator.report({"WARNING"}, f"None of the components in {source} fit the selected objects")
@@ -745,7 +745,7 @@ class BEVY_OT_field_move(bpy.types.Operator):
 class BEVY_OT_copy_to_selected(bpy.types.Operator):
     bl_idname = "bevy_components.copy_to_selected"
     bl_label = "Copy Components to Selected"
-    bl_description = "Replace the components of the other selected objects with the active object's components"
+    bl_description = "Replace the components of the other selected objects with the active object's components, and give them its Rigid Body, Rigid Body Constraint, shadow, autoplay and Bevy settings"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -754,7 +754,8 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
 
     def execute(self, context):
         source = context.object
-        count = 0
+        blender = blender_snapshot(source)
+        copied = 0
         for obj in context.selected_objects:
             if obj == source or obj.library:
                 continue
@@ -763,10 +764,11 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
             for item in source.bevy_component_data.components:
                 if accepts(obj, item.component_type):
                     copy_to_object(item, destination.add(), obj)
+            paste_blender(obj, blender)
             sync_object(obj)
-            count += 1
+            copied += 1
         redraw_viewports()
-        self.report({"INFO"}, f"Copied components to {count} objects")
+        self.report({"INFO"}, f"Copied components to {count(copied, 'object')}")
         return {"FINISHED"}
 
 
@@ -794,16 +796,17 @@ class BEVY_OT_copy_component(bpy.types.Operator):
 class BEVY_OT_copy_components(bpy.types.Operator):
     bl_idname = "bevy_components.copy_components"
     bl_label = "Copy Components"
-    bl_description = "Copy the active object's components to the clipboard, to paste them onto objects in any .blend file"
+    bl_description = "Copy the active object's components, with its Rigid Body, Rigid Body Constraint, shadow, autoplay and Bevy settings, to the clipboard, to paste them onto objects in any .blend file"
 
     @classmethod
     def poll(cls, context):
-        return context.object is not None and any(item.component_type for item in context.object.bevy_component_data.components)
+        return context.object is not None and (any(item.component_type for item in context.object.bevy_component_data.components) or has_blender_settings(context.object))
 
     def execute(self, context):
         items = [item for item in context.object.bevy_component_data.components if item.component_type]
-        context.window_manager.clipboard = clipboard_text(context.object, items)
-        self.report({"INFO"}, f"Copied {count(len(items), 'component')}")
+        blender = blender_snapshot(context.object)
+        context.window_manager.clipboard = clipboard_text(context.object, items, blender=blender)
+        self.report({"INFO"}, f"Copied {count(len(items) + blender_count(blender), 'component')}")
         return {"FINISHED"}
 
 
@@ -818,23 +821,23 @@ class BEVY_OT_paste_components(bpy.types.Operator):
         return bool(_targets(context))
 
     def execute(self, context):
-        components = read_components(context.window_manager.clipboard)
-        if not components:
+        found = read_components(context.window_manager.clipboard)
+        if found is None or not any(found):
             self.report({"WARNING"}, "The clipboard holds no Bevy components. Copy some with Copy Components first")
             return {"CANCELLED"}
-        return _paste(self, context, components, "the clipboard")
+        return _paste(self, context, *found, "the clipboard")
 
 
 class BEVY_OT_save_preset(bpy.types.Operator):
     bl_idname = "bevy_components.save_preset"
     bl_label = "Save Components as Preset"
-    bl_description = "Save the active object's components as a preset that every .blend file lists under Add Component > Presets"
+    bl_description = "Save the active object's components, with its Rigid Body, Rigid Body Constraint, shadow, autoplay and Bevy settings, as a preset that every .blend file lists under Add Component > Presets"
 
     name: StringProperty(name="Name", description="Name of the preset. Saving under the name of an existing preset replaces it", default="My Preset")
 
     @classmethod
     def poll(cls, context):
-        if context.object is None or not any(item.component_type for item in context.object.bevy_component_data.components):
+        if context.object is None or not (any(item.component_type for item in context.object.bevy_component_data.components) or has_blender_settings(context.object)):
             cls.poll_message_set("The active object has no components to save")
             return False
         return True
@@ -857,7 +860,7 @@ class BEVY_OT_save_preset(bpy.types.Operator):
         obj = context.object
         path = preset_file(self.name)
         try:
-            path.write_text(clipboard_text(obj, obj.bevy_component_data.components, name=self.name.strip(), references=False), encoding="utf-8")
+            path.write_text(clipboard_text(obj, obj.bevy_component_data.components, name=self.name.strip(), references=False, blender=blender_snapshot(obj, references=False)), encoding="utf-8")
         except OSError as error:
             self.report({"ERROR"}, f"Could not save the preset: {error.strerror or error}")
             return {"CANCELLED"}
@@ -880,14 +883,14 @@ class BEVY_OT_apply_preset(bpy.types.Operator):
     def execute(self, context):
         path = Path(self.filepath)
         try:
-            components = read_components(path.read_text(encoding="utf-8"))
+            found = read_components(path.read_text(encoding="utf-8"))
         except OSError as error:
             self.report({"ERROR"}, f"Could not read the preset: {error.strerror or error}")
             return {"CANCELLED"}
-        if not components:
+        if found is None or not any(found):
             self.report({"ERROR"}, f"{path.name} is not a Bevy Components preset")
             return {"CANCELLED"}
-        return _paste(self, context, components, f"preset {bpy.path.display_name(path.stem)}")
+        return _paste(self, context, *found, f"preset {bpy.path.display_name(path.stem)}")
 
 
 class BEVY_OT_remove_preset(bpy.types.Operator):
@@ -1117,6 +1120,30 @@ class BEVY_OT_convert_to_native(bpy.types.Operator):
             self.report({"INFO"}, f"Converted {count(len(converted), 'object')} to Blender data")
         redraw_properties()
         redraw_viewports()
+        return {"FINISHED"}
+
+
+class BEVY_OT_copy_physics(bpy.types.Operator):
+    bl_idname = "bevy_components.copy_physics"
+    bl_label = "Copy from Active with Bevy Settings"
+    bl_description = "Copy the active object's Rigid Body and its Bevy settings, such as Sensor, Bevy Layers and Gravity Scale, to the selected meshes. Blender's Copy from Active leaves the Bevy settings out"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.rigid_body is not None and len(context.selected_objects) > 1 and context.mode == "OBJECT"
+
+    def execute(self, context):
+        source = context.object
+        physics = blender_snapshot(source, physics_only=True)
+        targets = [obj for obj in context.selected_objects if obj != source and obj.type == "MESH" and obj.library is None]
+        for obj in targets:
+            paste_blender(obj, physics)
+            sync_object(obj)
+        redraw_properties()
+        redraw_viewports()
+        self.report({"INFO"}, f"Copied {source.name}'s Rigid Body to {count(len(targets), 'object')}")
         return {"FINISHED"}
 
 

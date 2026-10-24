@@ -556,7 +556,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_prefab"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_component_data"))
-        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "bevy_components.show_collection"):
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "bevy_components.show_collection", "bevy_components.copy_physics"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_advanced", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_components", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
@@ -573,6 +573,7 @@ class TestRegistration(unittest.TestCase):
         for menu in (bpy.types.VIEW3D_MT_object, bpy.types.VIEW3D_MT_object_context_menu):
             self.assertIn(addon.menu.object_menu, menu._dyn_ui_initialize())
         self.assertIn(addon.menu.select_menu, bpy.types.VIEW3D_MT_select_object._dyn_ui_initialize())
+        self.assertIn(addon.menu.rigid_body_menu, bpy.types.VIEW3D_MT_object_rigid_body._dyn_ui_initialize())
         self.assertIn(addon.menu.text_header, bpy.types.TEXT_HT_header._dyn_ui_initialize())
         for name in ("depsgraph_update_post", "undo_post", "redo_post", "load_post"):
             self.assertIn(addon.system.problems_changed, getattr(bpy.app.handlers, name))
@@ -3073,6 +3074,75 @@ class TestWorkflow(unittest.TestCase):
             self.assertEqual(bpy.ops.bevy_components.remove_preset(filepath=str(path)), {"FINISHED"})
             self.assertFalse(path.exists())
             self.assertEqual(addon.system.presets(), [])
+
+    def test_copy_paste_and_presets_carry_blender_settings(self):
+        crate = self.obj
+        _rigid_body(crate, shape="BOX")
+        crate.rigid_body.mass = 4.0
+        crate.rigid_body.friction = 0.9
+        crate.bevy_physics.gravity_scale = 0.5
+        crate.bevy_physics.sensor = True
+        crate.bevy_physics.events = False
+        crate.visible_shadow = False
+        add_component(crate, "CUSTOM", type_path="my_game::Crate", custom_json="{}")
+        expected = _native(crate)
+        clipboard = SimpleNamespace(clipboard="")
+        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_components, _clipboard_context(crate, crate, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Copied 3 components")]))
+        self.assertEqual(sorted(json.loads(clipboard.clipboard)["blender"]), ["bevy_physics", "rigid_body", "shadows"])
+        target = add_mesh(bpy.ops.mesh.primitive_cube_add, "target", location=(3, 0, 0))
+        _rigid_body(target, "PASSIVE", "SPHERE")
+        target.bevy_physics.ccd = "ALL"
+        marker = add_empty("marker", (6, 0, 0))
+        result = _execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(target, target, marker, clipboard=clipboard))
+        self.assertEqual(result, ({"FINISHED"}, [({"INFO"}, "Added 3 components from the clipboard to 2 objects")]))
+        self.assertEqual((target.rigid_body.type, target.rigid_body.collision_shape, target.rigid_body.mass), ("ACTIVE", "BOX", 4.0))
+        self.assertEqual((target.bevy_physics.ccd, target.bevy_physics.sensor, target.bevy_physics.events), ("DEFAULT", True, False))
+        self.assertFalse(target.visible_shadow)
+        self.assertEqual(_native(target), expected)
+        self.assertIsNone(marker.rigid_body)
+        self.assertEqual(_stored(marker)["components"], [{"type": "custom", "type_path": "my_game::Crate", "data": {}}])
+        rocks = [add_mesh(bpy.ops.mesh.primitive_cube_add, f"rock_{index}", location=(index * 3, 4, 0)) for index in range(2)]
+        context = SimpleNamespace(object=crate, selected_objects=[crate, *rocks], mode="OBJECT")
+        self.assertTrue(addon.operator.BEVY_OT_copy_physics.poll(context))
+        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_physics, context), ({"FINISHED"}, [({"INFO"}, "Copied subject's Rigid Body to 2 objects")]))
+        for rock in rocks:
+            self.assertEqual((rock.rigid_body.mass, rock.bevy_physics.gravity_scale, rock.bevy_physics.sensor), (4.0, 0.5, True))
+            self.assertTrue(rock.visible_shadow)
+            self.assertEqual(len(rock.bevy_component_data.components), 0)
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", location=(0, 8, 0))
+        _rigid_body(frame, "PASSIVE", "BOX")
+        hinge = add_empty("hinge", (0, 10, 0))
+        constraint = _constraint(hinge, "HINGE", frame, hinge)
+        constraint.use_limit_ang_z = True
+        hinge.bevy_physics.joint_angular_damping = 2.0
+        door = add_empty("door", (0, 12, 0))
+        select(hinge, door)
+        bpy.context.view_layer.objects.active = hinge
+        self.assertEqual(bpy.ops.bevy_components.copy_to_selected(), {"FINISHED"})
+        self.assertEqual((door.rigid_body_constraint.type, door.rigid_body_constraint.object1, door.rigid_body_constraint.object2, door.rigid_body_constraint.use_limit_ang_z), ("HINGE", frame, door, True))
+        self.assertEqual(door.bevy_physics.joint_angular_damping, 2.0)
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(addon.system, "preset_folder", lambda create=False: Path(folder)):
+            select(hinge)
+            self.assertEqual(bpy.ops.bevy_components.save_preset(name="Hinge"), {"FINISHED"})
+            data = json.loads((Path(folder) / "hinge.json").read_text(encoding="utf-8"))
+            self.assertEqual((data["components"], data["blender"]["rigid_body_constraint"]["object1"]), ([], None))
+            gate = add_empty("gate", (0, 14, 0))
+            select(gate)
+            self.assertEqual(bpy.ops.bevy_components.apply_preset(filepath=str(Path(folder) / "hinge.json")), {"FINISHED"})
+            self.assertEqual((gate.rigid_body_constraint.type, gate.rigid_body_constraint.object1, gate.bevy_physics.joint_angular_damping), ("HINGE", None, 2.0))
+
+    def test_copy_and_paste_carry_light_settings(self):
+        lamp = add_light("lamp", "POINT", (0, 0, 3))
+        lamp.data.bevy_light.light_volumetric = True
+        clipboard = SimpleNamespace(clipboard="")
+        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_components, _clipboard_context(lamp, lamp, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Copied 1 component")]))
+        other = add_light("other", "SPOT", (4, 0, 3))
+        twin = bpy.data.objects.new("twin", other.data)
+        bpy.context.scene.collection.objects.link(twin)
+        self.assertEqual(_execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(other, other, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Added 1 component from the clipboard to 1 object")]))
+        self.assertTrue(other.data.bevy_light.light_volumetric)
+        self.assertTrue(_by_type(_stored(twin)["components"])["light"]["volumetric"])
+        self.assertEqual(_execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(self.obj, self.obj, clipboard=clipboard)), ({"CANCELLED"}, [({"WARNING"}, "None of the components in the clipboard fit the selected objects")]))
 
     def test_preset_names_become_snake_case_files(self):
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(addon.system, "preset_folder", lambda create=False: Path(folder)):

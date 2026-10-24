@@ -23,6 +23,7 @@ BEVY_AXES = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
 CLIPBOARD_TYPE = "bevy_components"
 CLIPBOARD_VERSION = 1
 SNAPSHOT_SKIPPED = {"rna_type", "text_link"}
+DATA_GROUPS = {"LIGHT": "bevy_light", "SPEAKER": "bevy_speaker", "LIGHT_PROBE": "bevy_probe"}
 PRESET_FOLDER = os.path.join("presets", "bevy_components")
 TEXT_OBJECT = "bevy_object"
 TEXT_COMPONENT = "bevy_component"
@@ -382,11 +383,13 @@ def restore_component(item, data, owner):
             continue
 
 
-def clipboard_text(obj, items, name=None, references=True):
+def clipboard_text(obj, items, name=None, references=True, blender=None):
     data = {"type": CLIPBOARD_TYPE, "version": CLIPBOARD_VERSION}
     if name is not None:
         data["name"] = name
     data["components"] = [component_snapshot(item, obj, references) for item in items if item.component_type]
+    if blender:
+        data["blender"] = blender
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
@@ -397,16 +400,146 @@ def read_components(text):
         return None
     if not isinstance(data, dict) or data.get("type") != CLIPBOARD_TYPE or not isinstance(data.get("components"), list):
         return None
-    return [component for component in data["components"] if isinstance(component, dict)]
+    blender = data.get("blender")
+    return [component for component in data["components"] if isinstance(component, dict)], blender if isinstance(blender, dict) else {}
+
+
+def _struct_snapshot(struct, owner, references):
+    data = {}
+    for prop in struct.bl_rna.properties:
+        if prop.identifier == "rna_type" or prop.is_readonly:
+            continue
+        value = getattr(struct, prop.identifier)
+        if prop.type == "POINTER":
+            data[prop.identifier] = None if value is None else {"self": True} if value == owner else {"object": value.name} if references else None
+        elif getattr(prop, "is_array", False):
+            data[prop.identifier] = list(value)
+        else:
+            data[prop.identifier] = value
+    return data
+
+
+def _restore_struct(struct, data, owner):
+    for name, value in data.items():
+        prop = struct.bl_rna.properties.get(name)
+        if prop is None or prop.is_readonly or name == "rna_type":
+            continue
+        try:
+            setattr(struct, name, _pointer(value, owner) if prop.type == "POINTER" else value)
+        except (TypeError, ValueError, AttributeError):
+            continue
+
+
+def _replace_group(group, data, owner):
+    for name in group.bl_rna.properties.keys():
+        if name != "rna_type":
+            group.property_unset(name)
+    for name in list(group.keys()):
+        del group[name]
+    restore_component(group, data, owner)
+
+
+def blender_snapshot(obj, references=True, physics_only=False):
+    data = {}
+    if obj.rigid_body is not None:
+        data["rigid_body"] = _struct_snapshot(obj.rigid_body, obj, references)
+    if obj.rigid_body_constraint is not None and not physics_only:
+        data["rigid_body_constraint"] = _struct_snapshot(obj.rigid_body_constraint, obj, references)
+    if data:
+        data["bevy_physics"] = component_snapshot(obj.bevy_physics, obj, references)
+    if physics_only:
+        return data
+    settings = obj.bevy_object
+    if obj.type in MESH_TYPES and not (obj.visible_shadow and settings.receive_shadows):
+        data["shadows"] = {"cast": obj.visible_shadow, "receive": settings.receive_shadows}
+    if settings.autoplay:
+        data["autoplay"] = {"speed": settings.speed}
+    group = DATA_GROUPS.get(obj.type)
+    if group is not None and hasattr(obj.data, group):
+        data[group] = component_snapshot(getattr(obj.data, group), obj, references)
+    if obj.bevy_component_data.leave_out:
+        data["leave_out"] = True
+    return data
+
+
+def has_blender_settings(obj):
+    return obj.rigid_body is not None or obj.rigid_body_constraint is not None or obj.type in DATA_GROUPS or obj.bevy_component_data.leave_out or obj.bevy_object.autoplay or obj.type in MESH_TYPES and not (obj.visible_shadow and obj.bevy_object.receive_shadows)
+
+
+def blender_count(data):
+    return len([key for key in data if key not in {"bevy_physics", "leave_out"}])
+
+
+def _with_active(obj, operator):
+    view_layer = bpy.context.view_layer
+    if view_layer is None or view_layer.objects.get(obj.name) != obj:
+        return
+    previous = view_layer.objects.active
+    view_layer.objects.active = obj
+    try:
+        operator()
+    except RuntimeError:
+        pass
+    finally:
+        view_layer.objects.active = previous
+
+
+def _add_constraint():
+    if bpy.context.scene.rigidbody_world is None:
+        bpy.ops.rigidbody.world_add()
+    bpy.ops.rigidbody.constraint_add()
+
+
+def paste_blender(obj, data):
+    if obj.library is not None:
+        return 0
+    pasted = 0
+    physics = False
+    body = data.get("rigid_body")
+    if isinstance(body, dict) and obj.type == "MESH":
+        if obj.rigid_body is None:
+            _with_active(obj, bpy.ops.rigidbody.object_add)
+        if obj.rigid_body is not None:
+            _restore_struct(obj.rigid_body, body, obj)
+            physics = True
+            pasted += 1
+    constraint = data.get("rigid_body_constraint")
+    if isinstance(constraint, dict):
+        if obj.rigid_body_constraint is None:
+            _with_active(obj, _add_constraint)
+        if obj.rigid_body_constraint is not None:
+            _restore_struct(obj.rigid_body_constraint, constraint, obj)
+            physics = True
+            pasted += 1
+    if physics and isinstance(data.get("bevy_physics"), dict):
+        _replace_group(obj.bevy_physics, data["bevy_physics"], obj)
+    shadows = data.get("shadows")
+    if isinstance(shadows, dict) and obj.type in MESH_TYPES:
+        obj.visible_shadow = bool(shadows.get("cast", True))
+        obj.bevy_object.receive_shadows = bool(shadows.get("receive", True))
+        pasted += 1
+    autoplay = data.get("autoplay")
+    if isinstance(autoplay, dict) and isinstance(autoplay.get("speed", 1.0), (int, float)):
+        obj.bevy_object.autoplay = True
+        obj.bevy_object.speed = autoplay.get("speed", 1.0)
+        pasted += 1
+    group = DATA_GROUPS.get(obj.type)
+    if group is not None and isinstance(data.get(group), dict) and obj.data.library is None and hasattr(obj.data, group):
+        _replace_group(getattr(obj.data, group), data[group], obj)
+        sync_owner(obj.data)
+        pasted += 1
+    if data.get("leave_out") is True:
+        obj.bevy_component_data.leave_out = True
+    return pasted
 
 
 def _same_component(item, data):
     return item.component_type == data.get("component_type") and (item.component_type != "CUSTOM" or item.custom_type == data.get("custom_type", item.bl_rna.properties["custom_type"].default))
 
 
-def paste_components(obj, components, scene):
+def paste_components(obj, components, scene, blender=None):
     items = obj.bevy_component_data.components
-    pasted = 0
+    pasted = paste_blender(obj, blender) if blender else 0
     for data in components:
         kind = data.get("component_type")
         if not isinstance(kind, str) or not accepts(obj, kind):
