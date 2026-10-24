@@ -15,6 +15,7 @@ from types import MethodType, SimpleNamespace
 from unittest import mock
 
 import bpy
+import blf
 import gpu
 import numpy
 from mathutils import Matrix, Quaternion, Vector
@@ -1538,7 +1539,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(layout.props()[-6:], ["light_use_intensity", "shadow_soft_size", "use_custom_distance", "light_baked", "light_volumetric", "use_shadow"])
         self.assertIn(("row", "Intensity"), [(name, bound.get("heading")) for name, bound, child in layout.calls])
         self.assertIn("136,600 lm", layout.texts())
-        self.assertIn("20 m, Bevy's default", layout.texts())
+        self.assertIn("20 m (default)", layout.texts())
         self.assertNotIn("light_contact_shadows", layout.props())
         item.light_use_intensity = True
         item.show_shadows = True
@@ -3821,7 +3822,7 @@ class TestNativePhysics(unittest.TestCase):
         panel = FakePanel(self)
         addon.panel.BEVY_PT_physics_rigid_body.draw(panel, bpy.context)
         self.assertEqual(panel.layout.props(), ["auto_mass", "gravity_scale", "ccd", *["lock_translation"] * 3, *["lock_rotation"] * 3, "linear_velocity", "angular_velocity"])
-        self.assertIn("Dynamic body in Bevy", panel.layout.texts())
+        self.assertIn("Dynamic Body", panel.layout.texts())
         crate.rigid_body.type = "PASSIVE"
         panel = FakePanel(self)
         addon.panel.BEVY_PT_physics_rigid_body.draw(panel, bpy.context)
@@ -3949,6 +3950,7 @@ class TestNativeLighting(unittest.TestCase):
         self.assertTrue(addon.panel.BEVY_PT_light.poll(context))
         layout = self._panel(addon.panel.BEVY_PT_light, context)
         self.assertIn("light_volumetric", layout.props())
+        self.assertNotIn("shadow_soft_size", layout.props())
         self.assertIn("Volumetric needs Shadows, or the light makes no light shafts", " ".join(layout.texts()))
         add_component(lamp, "LIGHT")
         self.assertIn("The Light component in Object > Game Components replaces these settings in Bevy", " ".join(self._panel(addon.panel.BEVY_PT_light, context).texts()))
@@ -3989,6 +3991,8 @@ class TestNativeLighting(unittest.TestCase):
         speaker.name = "bell"
         self.assertEqual(_native(speaker), [])
         self.assertEqual(self._messages(), ["bell: No sound picked, so nothing plays"])
+        context = SimpleNamespace(object=speaker, speaker=speaker.data, scene=bpy.context.scene, region=None, space_data=None, view_layer=bpy.context.view_layer, selected_objects=[])
+        self.assertIn("No sound picked, so nothing plays", " ".join(self._panel(addon.panel.BEVY_PT_speaker, context).texts()))
         speaker.data.sound = bpy.data.sounds.load(str(SOUNDS / "chime.ogg"))
         speaker.data.volume = 0.5
         speaker.data.pitch = 1.5
@@ -3996,7 +4000,6 @@ class TestNativeLighting(unittest.TestCase):
         speaker.data.bevy_speaker.audio_loop = True
         self.assertEqual(_native(speaker), [{**DEFAULT_AUDIO, "path": "sounds/chime.ogg", "volume": 0.5, "loop": True, "distance": 3.0, "speed": 1.5}])
         self.assertEqual(self._messages(), [])
-        context = SimpleNamespace(object=speaker, speaker=speaker.data, scene=bpy.context.scene, region=None, space_data=None, view_layer=bpy.context.view_layer, selected_objects=[])
         self.assertTrue(addon.panel.BEVY_PT_speaker.poll(context))
         layout = self._panel(addon.panel.BEVY_PT_speaker, context)
         self.assertIn("sounds/chime.ogg", layout.texts())
@@ -4567,6 +4570,23 @@ class TestValidation(unittest.TestCase):
             constraint.limit_ang_z_lower = -0.5
             door.rigid_body.collision_shape = "MESH"
             self.assertEqual(self._messages(), ["door: Triangle meshes collide poorly on Dynamic bodies, use Convex Hull"])
+            door.rigid_body.collision_shape = "BOX"
+            constraint.use_breaking = True
+            self.assertEqual(self._messages(), [f"hinge: {addon.validation.BREAKABLE}"])
+
+    def test_messages_wrap_to_the_panel_width(self):
+        text = "Export the scene once, then Play exports it again each time"
+        for width in (180, 252, 291, 600):
+            layout = FakeLayout(self)
+            addon.validation.draw_message(layout, text, "INFO", width)
+            lines = [line for line in layout.texts() if line]
+            self.assertEqual(" ".join(lines), text)
+            space = width - addon.validation.MESSAGE_MARGIN
+            self.assertTrue(all(blf.dimensions(0, line)[0] <= space for line in lines if " " in line))
+        self.assertEqual(len(lines), 1)
+        layout = FakeLayout(self)
+        addon.validation.draw_message(layout, text, "INFO", 252)
+        self.assertGreater(len([line for line in layout.texts() if line]), 1)
 
     def test_checks_run_again_only_for_objects_that_changed(self):
         crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate")
@@ -5595,7 +5615,7 @@ class TestPlay(unittest.TestCase):
         self.assertEqual((game.name, game.code, game.failed), ("my_game", 0, False))
         layout = self._panel()
         texts = layout.texts()
-        self.assertIn(f"Runs {self.preferences.run_command} in my_game", texts)
+        self.assertIn(f"Runs {self.preferences.run_command} in my_game", " ".join(texts))
         self.assertIn("my_game closed", texts)
         self.assertIn("Unnamed object: Invalid visibility range", texts)
         self.assertEqual([(text, properties.name) for text, properties, enabled in layout.buttons() if hasattr(properties, "name")], [("subject: Invalid mass", "subject")])
@@ -5642,7 +5662,7 @@ class TestPlay(unittest.TestCase):
         importer = Path(__file__).resolve().parents[2] / "importer"
         self.preferences.viewer_folder = str(importer)
         self.assertEqual(addon.project.play_target(bpy.context), (importer, addon.play.VIEWER_COMMAND))
-        self.assertIn("Opens the scene in the importer's viewer", self._panel().texts())
+        self.assertIn("Opens the scene in the importer's viewer", " ".join(self._panel().texts()))
         self.preferences.game_folder = str(self.project)
         self.assertEqual(addon.project.play_target(bpy.context), (self.project, "cargo run"))
         self.assertEqual(next(bound["placeholder"] for name, bound, layout in self._panel().calls if name == "prop" and bound["property"] == "folder"), str(self.project))

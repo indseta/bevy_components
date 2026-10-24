@@ -14,7 +14,7 @@ from .project import game_folder, play_target
 from .property import COMPONENT_LABELS, FIELD_LABELS, JOINT_LABELS, LAYER_COUNT
 from .schema import short_name
 from .system import ambient_light, component_index, components_for, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, problem_changes, sky_lights_scene, world_background, world_color
-from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, collection_issues, component_name, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
+from .validation import AMBIENT_WITH_SKY, NO_SOUND, ambient_doubles_sky, check_object, collection_issues, component_name, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
 _overview = {"key": None, "objects": {}}
@@ -324,7 +324,7 @@ def _draw_light(layout, obj, index, item):
     else:
         value.active = False
         value.label(text=light_amount(light_intensity(light, obj), unit))
-    if light.type in {"POINT", "SPOT"}:
+    if light.type in {"POINT", "SPOT"} and index >= 0:
         layout.prop(light, "shadow_soft_size", text="Radius")
     if light.type != "SUN":
         row = layout.row(heading="Range")
@@ -334,13 +334,14 @@ def _draw_light(layout, obj, index, item):
             distance.prop(light, "cutoff_distance", text="")
         else:
             distance.active = False
-            distance.label(text=f"{BEVY_LIGHT_RANGE:g} m, Bevy's default")
+            distance.label(text=f"{BEVY_LIGHT_RANGE:g} m (default)")
     if light.type == "AREA":
         draw_message(layout, "Bevy area lights cast no shadows, and need its area_light_luts feature", icon="INFO", width=bpy.context.region.width if bpy.context.region else 300)
         return
     layout.prop(item, "light_baked")
     layout.prop(item, "light_volumetric")
     header, body = layout.panel_prop(item, "show_shadows")
+    header.use_property_split = False
     header.prop(light, "use_shadow", text="Shadows")
     if body is None:
         return
@@ -672,7 +673,7 @@ class BEVY_PT_physics_rigid_body(bpy.types.Panel):
             return
         physics = obj.bevy_physics
         kind = rigid_body_kind(obj.rigid_body)
-        layout.label(text=f"{BODY_LABELS[kind]} body in Bevy")
+        _labeled_row(layout, "Exports As").label(text=f"{BODY_LABELS[kind]} Body")
         if kind == "DYNAMIC":
             layout.prop(physics, "auto_mass")
             layout.prop(physics, "gravity_scale")
@@ -752,7 +753,7 @@ class BEVY_PT_physics_joint(bpy.types.Panel):
             return
         kind = JOINTS[constraint.type]
         physics = obj.bevy_physics
-        layout.label(text=f"{JOINT_LABELS[kind]} joint in Bevy")
+        _labeled_row(layout, "Exports As").label(text=f"{JOINT_LABELS[kind]} Joint")
         if kind == "SPHERICAL":
             row = layout.row(heading="Swing Limit")
             row.prop(physics, "joint_use_swing", text="")
@@ -824,6 +825,8 @@ class BEVY_PT_speaker(bpy.types.Panel):
             return
         if not _draw_native_checks(layout, context, obj, "AUDIO_PLAYER"):
             return
+        if speaker.sound is None:
+            draw_message(layout, NO_SOUND, width=width)
         path = sound_file(speaker.sound)
         if path is not None:
             row = _labeled_row(layout, "Asset Path")
@@ -937,7 +940,7 @@ class BEVY_PT_object_properties(bpy.types.Panel):
 
 
 class BEVY_PT_view_sidebar(bpy.types.Panel):
-    bl_label = "Bevy Components"
+    bl_label = "Game Components"
     bl_idname = "BEVY_PT_view_sidebar"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -1038,7 +1041,7 @@ def _draw_play_target(layout, context, width):
         draw_message(layout, str(error), width=width)
         layout.operator("preferences.addon_show", text="Open Preferences", icon="PREFERENCES").module = __package__
         return
-    layout.label(text="Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", icon="CONSOLE")
+    draw_message(layout, "Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", "CONSOLE", width)
     if not BEVY_OT_export_glb.remembered(context.scene):
         draw_message(layout, "Export the scene once, then Play exports it again each time", "INFO", width)
 
