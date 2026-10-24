@@ -9,15 +9,17 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from .bsn import BsnError, crate_root, custom_literal, file_state, inside
+from .collection import COLLECTION_KINDS, collection_entries, collections_changed, from_collection
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
 from .native import MESH_TYPES, PRINCIPLED_VOLUME, UNSUPPORTED_JOINTS, asset_path, bounds, fog_source, is_native, sound_file
-from .property import AUDIO_FORMATS
+from .property import AUDIO_FORMATS, COMPONENT_LABELS
 from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_order
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
+from .schema import short_name
 from .system import children_map, collider_sources, component_of, components_for, export_settings, exported, file_path, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
@@ -51,6 +53,7 @@ UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
 PROCEDURAL_NODES = {"AMBIENT_OCCLUSION", "BEVEL", "CAMERA", "FRESNEL", "HAIR_INFO", "LAYER_WEIGHT", "LIGHT_PATH", "NEW_GEOMETRY", "OBJECT_INFO", "PARTICLE_INFO", "POINT_INFO", "SCRIPT", "TANGENT", "TEX_COORD", "WIREFRAME"}
 AMBIENT_WITH_SKY = "Bevy Ambient Light takes the World color, which the Bevy Sky's environment light already gives, so meshes get the World's light twice"
 PROBLEM_DELAY = 0.5
+COLLECTION_ONLY = "Collections only pass on game and custom components, Navigation and Visibility Range"
 
 _texture_checks = {}
 _problem_counts = {}
@@ -151,6 +154,7 @@ def draw_problem_count(layout, scene):
 
 def check_objects(objects, destination=None, animations=True, modifiers=True, prefab_files=True):
     objects = list(objects)
+    collections_changed()
     return _check_list(objects, destination, animations, modifiers) + _prefab_issues(objects, destination, animations, modifiers, prefab_files)
 
 
@@ -160,9 +164,53 @@ def _check_list(objects, destination, animations, modifiers):
     materials = set()
     assets = game_assets(bpy.context)
     issues = []
+    shared = {}
     for obj in objects:
         issues.extend(_object_issues(obj, children, exported, destination, animations, modifiers, materials, assets))
+        for item in components_for(obj):
+            if from_collection(item):
+                shared.setdefault(item.as_pointer(), (obj, item))
+    for obj, item in shared.values():
+        issues.extend(Issue(level, obj, item, f"{message}, in collection {item.id_data.name}") for level, message in _item_issues(item, set()))
     issues.extend(_visibility_range_issues(objects))
+    return issues
+
+
+def component_name(item):
+    if item.component_type == "CUSTOM" and item.custom_type.strip():
+        return short_name(item.custom_type)
+    return COMPONENT_LABELS.get(item.component_type, ("Removed Component", "ERROR"))[0]
+
+
+def collection_issues(collection):
+    issues = []
+    custom_types = set()
+    for item in collection.bevy_component_data.components:
+        if not item.component_type:
+            continue
+        if item.component_type in COLLECTION_KINDS:
+            issues.extend(Issue(level, None, item, message) for level, message in _item_issues(item, custom_types))
+        else:
+            issues.append(Issue("WARNING", None, item, f"{COLLECTION_ONLY}, so its objects do not get this one"))
+    return issues
+
+
+def _item_issues(item, custom_types):
+    issues = [("ERROR", error) for error in component_errors(item)]
+    if item.component_type != "CUSTOM" or not item.custom_type.strip():
+        return issues
+    if not TYPE_PATH.fullmatch(item.custom_type):
+        issues.append(("WARNING", f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
+    if item.custom_type in custom_types:
+        issues.append(("WARNING", f"Added more than once, but an entity holds only one {item.custom_type}"))
+    custom_types.add(item.custom_type)
+    game_type = game_types().get(item.custom_type)
+    if item.use_fields and game_type is not None and game_type.others:
+        names = ", ".join(name for name, _rust_type in game_type.others)
+        if game_type.tuple_struct:
+            issues.append(("WARNING", f"Blender cannot set field {names}, and a tuple struct cannot leave fields out, so the game cannot insert {item.custom_type}. Name its fields, or skip that one with #[reflect(skip_serializing)]"))
+        elif not game_type.has_default:
+            issues.append(("WARNING", f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
     return issues
 
 
@@ -306,8 +354,10 @@ def check_rust_file(rust_file, strict=False):
 def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, materials=None, assets=None):
     issues = []
     custom_types = set()
-    for item in components_for(obj):
-        issues.extend(Issue("ERROR", obj, item, error) for error in component_errors(item))
+    items = components_for(obj)
+    for item in items:
+        if not from_collection(item):
+            issues.extend(Issue(level, obj, item, message) for level, message in _item_issues(item, custom_types))
         if item.component_type == "COLLIDER":
             issues.extend(Issue("WARNING", obj, item, message) for message in _collider_warnings(obj, item, children))
         elif item.component_type == "RIGID_BODY":
@@ -336,19 +386,10 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
             issues.append(Issue("WARNING", obj, item, "Density is 0, so the fog is invisible"))
         elif item.component_type == "LIGHT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _light_warnings(obj, item))
-        elif item.component_type == "CUSTOM" and item.custom_type.strip():
-            if not TYPE_PATH.fullmatch(item.custom_type):
-                issues.append(Issue("WARNING", obj, item, f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
-            if item.custom_type in custom_types:
-                issues.append(Issue("WARNING", obj, item, f"Added more than once, but an entity holds only one {item.custom_type}"))
-            custom_types.add(item.custom_type)
-            game_type = game_types().get(item.custom_type)
-            if item.use_fields and game_type is not None and game_type.others:
-                names = ", ".join(name for name, _rust_type in game_type.others)
-                if game_type.tuple_struct:
-                    issues.append(Issue("WARNING", obj, item, f"Blender cannot set field {names}, and a tuple struct cannot leave fields out, so the game cannot insert {item.custom_type}. Name its fields, or skip that one with #[reflect(skip_serializing)]"))
-                elif not game_type.has_default:
-                    issues.append(Issue("WARNING", obj, item, f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
+    for entry in collection_entries(obj):
+        if entry.rivals and any(item == entry.item for item in items if from_collection(item)):
+            name = component_name(entry.item)
+            issues.append(Issue("WARNING", obj, entry.item, f"{entry.collection.name} and {', '.join(rival.name for rival in entry.rivals)} both give it {name} with different settings, so it uses {entry.collection.name}'s. Put one collection inside the other to choose"))
     constraint = getattr(obj, "rigid_body_constraint", None)
     if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None:
         issues.append(Issue("WARNING", obj, None, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"))
