@@ -22,6 +22,10 @@
 - The Components panel is now **Game Components**. **Add Component** lists your game's components, Navigation, Visibility Range, Lightmap and Scene Reference, and the built-in components that replace Blender's settings moved to **Add Component > Advanced**.
 - Scene Overview and **Select by Bevy Component** include what objects get from Blender's settings and from collections.
 
+### Removed
+
+- The **BSN export** (**File > Export > Bevy Scene (BSN)**) is gone, so the addon writes GLB files only and the importer is the one way into Bevy. Its settings, the **Enum Type** of enum fields in **Bevy Custom Components** and the `enums` entry in custom component extras, which only that export read, went with it. Files that used it still open and export their GLB.
+
 ## 0.5.0 (2026-10-24)
 
 ### Added

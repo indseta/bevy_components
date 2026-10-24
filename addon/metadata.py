@@ -312,8 +312,7 @@ def serialize_component(item, locate=_portable):
         return _serialize_light(item, getattr(item, "id_data", None))
     if kind == "CUSTOM":
         if item.use_fields:
-            enums = {field.name: field.rust_type.strip() for field in item.fields if field.field_type == "ENUM" and field.rust_type.strip()}
-            return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields), **({"enums": enums} if enums else {})}
+            return {"type": "custom", "type_path": item.custom_type, "data": field_data(item.fields)}
         try:
             value = json.loads(item.custom_json)
         except json.JSONDecodeError as error:
