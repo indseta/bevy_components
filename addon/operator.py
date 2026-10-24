@@ -14,8 +14,10 @@ from .bsn import BsnError, asset_root, default_assets_folder, digest, drop_scene
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .fingerprint import bake_record
+from .convert import convert_objects
 from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
+from .native import rest_frame
 from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command, needs_scene
 from .prefab import collection_export, find_collection, prefab_file, prefab_fingerprint, prefab_fresh, prefab_order, prefab_settings, remember_prefab, scene_export
 from .preferences import draw_encoder_status, encoder_path, texture_cache
@@ -1049,6 +1051,58 @@ class BEVY_OT_validate(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class BEVY_OT_convert_to_native(bpy.types.Operator):
+    bl_idname = "bevy_components.convert_to_native"
+    bl_label = "Convert Physics to Blender"
+    bl_description = "Replace Collider, Rigid Body and Joint components with Blender's Rigid Body and Rigid Body Constraint wherever the game gets the same physics, and keep the other components"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene is not None and context.view_layer is not None and context.mode == "OBJECT"
+
+    def execute(self, context):
+        converted, kept = convert_objects(context, context.scene.objects)
+        for obj, reason in kept:
+            print(f"Bevy Components: kept the physics components of {obj.name} because {reason}")
+        if not converted and not kept:
+            self.report({"INFO"}, "No Collider, Rigid Body or Joint components to convert")
+            return {"CANCELLED"}
+        if kept and context.window is not None and not bpy.app.background:
+            rows = [("WARNING", obj.name, f"kept because {reason}") for obj, reason in kept]
+            context.window_manager.popup_menu(lambda menu, _context: draw_issues(menu.layout, rows, 20, "in the system console", select=True), title=f"Converted {count(len(converted), 'object')}, kept {count(len(kept), 'object')}", icon="INFO")
+        if kept:
+            self.report({"WARNING"}, f"Converted {count(len(converted), 'object')}, kept components on {count(len(kept), 'object')}: {kept[0][0].name} because {kept[0][1]}")
+        else:
+            self.report({"INFO"}, f"Converted {count(len(converted), 'object')} to Blender physics")
+        redraw_properties()
+        redraw_viewports()
+        return {"FINISHED"}
+
+
+class BEVY_OT_add_constraint(bpy.types.Operator):
+    bl_idname = "bevy_components.add_constraint"
+    bl_label = "Add Rigid Body Constraint"
+    bl_description = "Add Blender's Rigid Body Constraint to the active object, and a Rigid Body World when the scene has none. The game gets it as a Joint"
+    bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.library is None and obj.rigid_body_constraint is None and context.mode == "OBJECT"
+
+    def execute(self, context):
+        if context.scene.rigidbody_world is None:
+            bpy.ops.rigidbody.world_add()
+        context.view_layer.objects.active = context.object
+        bpy.ops.rigidbody.constraint_add()
+        if context.object.rigid_body_constraint is None:
+            self.report({"ERROR"}, "Blender could not add a Rigid Body Constraint")
+            return {"CANCELLED"}
+        redraw_properties()
+        return {"FINISHED"}
+
+
 class BEVY_OT_cancel_export(bpy.types.Operator):
     bl_idname = "bevy_components.cancel_export"
     bl_label = "Cancel Export"
@@ -1328,7 +1382,7 @@ class _SceneExport(ExportHelper, ExportOptions):
     def _export_gltf(self, path, collection=None, directory=None):
         limited = collection is None
         try:
-            with collection_export(collection, bpy.context.scene, directory) if collection is not None else scene_export(directory):
+            with rest_frame(bpy.context.scene), collection_export(collection, bpy.context.scene, directory) if collection is not None else scene_export(directory):
                 return bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_active_scene=True, use_selection=limited and self.selected_only, use_visible=limited and self.visible_only, use_renderable=limited and self.renderable_only, export_apply=self.apply_modifiers, export_lights=self.include_lights, export_cameras=self.include_cameras, export_animations=self.include_animations, export_anim_slide_to_zero=True, check_existing=False)
         except Exception as error:
             self.report({"ERROR"}, f"GLB export failed: {error}")

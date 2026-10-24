@@ -6,15 +6,21 @@ import bpy
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
 from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
+from .native import JOINTS, UNSUPPORTED_JOINTS, compound_parent, is_native, rigid_body_kind
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
 from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
 from .project import game_folder, play_target
-from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
+from .property import COMPONENT_LABELS, FIELD_LABELS, JOINT_LABELS, LAYER_COUNT
 from .schema import short_name
-from .system import ambient_light, component_index, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
+from .system import ambient_light, component_index, components_for, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
 from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
+BODY_LABELS = {
+    "STATIC": "Static",
+    "DYNAMIC": "Dynamic",
+    "KINEMATIC": "Kinematic",
+}
 
 
 def _labeled_row(layout, text):
@@ -87,8 +93,6 @@ def _draw_collider(layout, obj, index, item):
     if body is None:
         return
     names = layer_names(bpy.context.scene)
-    named = [layer for layer in range(LAYER_COUNT) if names[layer]]
-    unnamed = [layer for layer in range(LAYER_COUNT) if not names[layer]]
     for layers, prop, text in (("MEMBERSHIPS", "collider_memberships", "Belongs To"), ("FILTERS", "collider_filters", "Collides With")):
         buttons = _labeled_row(body, text)
         for enable, label in ((True, "All"), (False, "None")):
@@ -96,16 +100,22 @@ def _draw_collider(layout, obj, index, item):
             button.index = index
             button.layers = layers
             button.enable = enable
-        column = body.column(align=True)
-        for shown, columns in ((named, 2), (unnamed, 8)):
-            if not shown:
-                continue
-            grid = column.grid_flow(row_major=True, columns=columns, even_columns=True, even_rows=True, align=True)
-            grid.use_property_split = False
-            for layer in shown:
-                grid.prop(item, prop, index=layer, text=f"{layer} {names[layer]}" if names[layer] else str(layer), toggle=True)
+        _draw_layer_grid(body, item, prop, names)
     if not any(item.collider_memberships) or not any(item.collider_filters):
         body.label(text="Collides with nothing", icon="INFO")
+
+
+def _draw_layer_grid(layout, owner, prop, names):
+    named = [layer for layer in range(LAYER_COUNT) if names[layer]]
+    unnamed = [layer for layer in range(LAYER_COUNT) if not names[layer]]
+    column = layout.column(align=True)
+    for shown, columns in ((named, 2), (unnamed, 8)):
+        if not shown:
+            continue
+        grid = column.grid_flow(row_major=True, columns=columns, even_columns=True, even_rows=True, align=True)
+        grid.use_property_split = False
+        for layer in shown:
+            grid.prop(owner, prop, index=layer, text=f"{layer} {names[layer]}" if names[layer] else str(layer), toggle=True)
 
 
 def _draw_axes(layout, item, prop, text):
@@ -476,8 +486,165 @@ def draw_components(layout, context, obj):
     owner = prefab_owner(obj)
     if owner is not None:
         draw_message(layout, f"Part of prefab {owner.name}, so it exports to the prefab's GLB file and not with the scene", icon="INFO", width=width)
+    _draw_native(layout, context, obj, issues, width)
     for index, item in enumerate(obj.bevy_component_data.components):
         _draw_component(layout, context, obj, index, item, issues)
+
+
+def _draw_native(layout, context, obj, issues, width):
+    natives = [item for item in components_for(obj) if is_native(item)]
+    if not natives:
+        return
+    column = layout.column(align=True)
+    for item in natives:
+        text, icon = COMPONENT_LABELS[item.component_type]
+        found = [issue for issue in issues if is_native(issue.item) and issue.item.component_type == item.component_type]
+        row = column.row(align=True)
+        row.label(text=f"{text} from Physics", icon=("CANCEL" if any(issue.level == "ERROR" for issue in found) else "ERROR") if found else icon)
+        if context.space_data is not None and context.space_data.type == "PROPERTIES":
+            button = row.operator("wm.context_set_enum", text="", icon="PHYSICS", emboss=False)
+            button.data_path = "space_data.context"
+            button.value = "PHYSICS"
+        for issue in found:
+            draw_message(column, issue.message, icon="BLANK1", width=width)
+
+
+def _card_of(obj, kind):
+    return next((item for item in obj.bevy_component_data.components if item.enabled and item.component_type == kind), None)
+
+
+def _draw_native_checks(layout, context, obj, kind):
+    width = context.region.width if context.region else 300
+    if _card_of(obj, kind) is not None:
+        draw_message(layout, f"The {COMPONENT_LABELS[kind][0]} component in Object > Components replaces these settings in Bevy", icon="INFO", width=width)
+        return False
+    settings = export_settings(context.scene)
+    for issue in check_object(obj, exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers):
+        if is_native(issue.item) and issue.item.component_type == kind:
+            draw_message(layout, issue.message, icon="CANCEL" if issue.level == "ERROR" else "ERROR", width=width)
+    return True
+
+
+def _draw_native_axes(layout, owner, prop, text):
+    row = layout.row(heading=text, align=True)
+    for axis, label in enumerate("XYZ"):
+        row.prop(owner, prop, index=axis, text=label, toggle=True)
+
+
+class BEVY_PT_physics_rigid_body(bpy.types.Panel):
+    bl_label = "Bevy"
+    bl_idname = "BEVY_PT_physics_rigid_body"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "physics"
+    bl_parent_id = "PHYSICS_PT_rigid_body"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.rigid_body is not None and hasattr(obj, "bevy_physics") and compound_parent(obj) is None
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        obj = context.object
+        if not _draw_native_checks(layout, context, obj, "RIGID_BODY"):
+            return
+        physics = obj.bevy_physics
+        kind = rigid_body_kind(obj.rigid_body)
+        layout.label(text=f"{BODY_LABELS[kind]} body in Bevy")
+        if kind == "DYNAMIC":
+            layout.prop(physics, "auto_mass")
+            layout.prop(physics, "gravity_scale")
+            layout.prop(physics, "ccd")
+            _draw_native_axes(layout, physics, "lock_translation", "Lock Position")
+            _draw_native_axes(layout, physics, "lock_rotation", "Lock Rotation")
+        if kind != "STATIC":
+            layout.prop(physics, "linear_velocity")
+            layout.prop(physics, "angular_velocity")
+
+
+class BEVY_PT_physics_collisions(bpy.types.Panel):
+    bl_label = "Bevy"
+    bl_idname = "BEVY_PT_physics_collisions"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "physics"
+    bl_parent_id = "PHYSICS_PT_rigid_body_collisions"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.rigid_body is not None and hasattr(obj, "bevy_physics") and obj.rigid_body.collision_shape != "COMPOUND"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        obj = context.object
+        if not _draw_native_checks(layout, context, obj, "COLLIDER"):
+            return
+        physics = obj.bevy_physics
+        column = layout.column(align=True)
+        column.prop(physics, "sensor")
+        column.prop(physics, "events")
+        column.prop(physics, "collision_only")
+        layout.prop(physics, "use_layers")
+        if not physics.use_layers:
+            return
+        names = layer_names(context.scene)
+        for prop, text in (("memberships", "Belongs To"), ("filters", "Collides With")):
+            _labeled_row(layout, text)
+            _draw_layer_grid(layout, physics, prop, names)
+        if not any(physics.memberships) or not any(physics.filters):
+            layout.label(text="Collides with nothing", icon="INFO")
+
+
+class BEVY_PT_physics_joint(bpy.types.Panel):
+    bl_label = "Bevy"
+    bl_idname = "BEVY_PT_physics_joint"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "physics"
+    bl_parent_id = "PHYSICS_PT_rigid_body_constraint"
+    bl_options = {"DEFAULT_CLOSED"}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.object
+        return obj is not None and obj.rigid_body_constraint is not None and hasattr(obj, "bevy_physics")
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        layout.use_property_decorate = False
+        obj = context.object
+        constraint = obj.rigid_body_constraint
+        width = context.region.width if context.region else 300
+        if constraint.type in UNSUPPORTED_JOINTS:
+            draw_message(layout, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this constraint out. Use Fixed, Point, Hinge or Slider", width=width)
+            return
+        if not constraint.enabled:
+            draw_message(layout, "The constraint is turned off, so the game leaves it out", icon="INFO", width=width)
+            return
+        if not _draw_native_checks(layout, context, obj, "JOINT"):
+            return
+        kind = JOINTS[constraint.type]
+        physics = obj.bevy_physics
+        layout.label(text=f"{JOINT_LABELS[kind]} joint in Bevy")
+        if kind == "SPHERICAL":
+            row = layout.row(heading="Swing Limit")
+            row.prop(physics, "joint_use_swing", text="")
+            swing = row.row()
+            swing.active = physics.joint_use_swing
+            swing.prop(physics, "joint_swing", text="")
+        if kind != "FIXED":
+            column = layout.column(align=True)
+            column.prop(physics, "joint_linear_damping")
+            column.prop(physics, "joint_angular_damping")
 
 
 class BEVY_PT_object_properties(bpy.types.Panel):

@@ -21,6 +21,7 @@ pub struct ColliderSpec {
     pub sensor: bool,
     pub events: bool,
     pub collision_only: bool,
+    pub own_mesh: bool,
     pub friction: Option<f32>,
     pub restitution: Option<f32>,
     pub layers: Option<CollisionLayers>,
@@ -33,6 +34,8 @@ pub enum ColliderShape {
     Cuboid,
     Sphere,
     Capsule,
+    Cylinder,
+    Cone,
 }
 
 impl ColliderShape {
@@ -43,6 +46,8 @@ impl ColliderShape {
             "cuboid" => Some(Self::Cuboid),
             "sphere" => Some(Self::Sphere),
             "capsule" => Some(Self::Capsule),
+            "cylinder" => Some(Self::Cylinder),
+            "cone" => Some(Self::Cone),
             _ => None,
         };
     }
@@ -141,6 +146,9 @@ pub struct DecodedGltfExtras;
 
 #[derive(Component)]
 pub struct DefaultStaticBody;
+
+#[derive(Component)]
+pub struct DecodedScenePhysics;
 
 #[derive(Component)]
 pub struct ProcessedMesh;

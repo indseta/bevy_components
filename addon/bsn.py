@@ -39,6 +39,8 @@ COLLIDER_SHAPES = {
     "cuboid": "Collider::cuboid({0}, {1}, {2})",
     "sphere": "Collider::sphere({3})",
     "capsule": "Collider::capsule({3}, {4})",
+    "cylinder": "Collider::cylinder({3}, {4})",
+    "cone": "Collider::cone({3}, {4})",
     "trimesh": "ColliderConstructor::TrimeshFromMesh",
     "convex": "ColliderConstructor::ConvexHullFromMesh",
 }
@@ -94,6 +96,7 @@ HELPERS = {
     "animated_by": ("AnimatedBy", "EntityTemplate", "Template"),
     "ambient_light": ("EmptySceneEffect",),
     "sky": ("EmptySceneEffect",),
+    "gravity": ("EmptySceneEffect",),
 }
 HELPER_SOURCES = {
     "preload": """fn preload(path: &'static str) -> impl Scene {
@@ -154,6 +157,14 @@ impl Scene for Preload {
         template(move |context| {
             let image = context.resource::<AssetServer>().load(path);
             context.entity.world_scope(|world| world.insert_resource(BlenderSky { image, brightness, environment_light }));
+            return Ok(EmptySceneEffect);
+        })
+    };
+}""",
+    "gravity": """fn gravity(gravity: Vec3) -> impl Scene {
+    return bsn! {
+        template(move |context| {
+            context.entity.world_scope(|world| world.insert_resource(Gravity(gravity)));
             return Ok(EmptySceneEffect);
         })
     };
@@ -791,6 +802,11 @@ class _Generator:
         sky = _first(scene_components, "sky")
         if sky is not None:
             root_body.extend(self._sky(sky))
+        gravity = _first(scene_components, "gravity")
+        if gravity is not None:
+            self._helper("gravity")
+            self.physics = True
+            root_body.append(f"@gravity({_vector(gravity.get('value', [0.0, -9.81, 0.0]))})")
         children = [self._entity(index) for index in self.roots if index in self.worlds]
         for (joint, pose), ident in zip(self.anchors, self.anchor_idents):
             self.physics = True
@@ -1049,6 +1065,8 @@ class _Generator:
             else:
                 self.warnings.append(f"{self.names[index]}: invalid visibility range")
         collider = self._inherited(index, "collider")
+        if collider is not None and collider.get("own_mesh") and _first(self.components[index], "collider") is not collider:
+            collider = None
         if collider is not None and collider.get("collision_only"):
             entries.append("Visibility::Hidden")
         if collider is not None and collider.get("shape") in MESH_SHAPES:
@@ -1466,7 +1484,7 @@ def scene_source(gltf, glb, name, prefabs=True, files=None, crate=None, scenes=(
     for chunk, lines in shared["chunks"]:
         functions.append(_list_function(f"fn {chunk}() -> impl SceneList", lines))
     helpers = set().union(*(generator.helpers for generator in generators))
-    for helper in ("preload", "joint", "animation", "animated_by", "ambient_light", "sky"):
+    for helper in ("preload", "joint", "animation", "animated_by", "ambient_light", "sky", "gravity"):
         if helper in helpers:
             functions.append(HELPER_SOURCES[helper])
     header = []

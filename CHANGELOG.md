@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Blender physics**: the export reads Blender's own **Rigid Body**, **Rigid Body Constraint** and scene gravity into Avian bodies, colliders, joints and `Gravity`. A **Bevy** subpanel under each Physics panel holds what Blender lacks, such as sensors, Avian's 32 collision layers and a starting velocity. See [Physics](docs/components.md#physics).
+- **Convert Physics to Blender** replaces Collider, Rigid Body and Joint components with Blender's physics wherever the game gets the same result, and lists what it kept.
+- Cylinder and Cone colliders, for Collider components and Blender's shapes.
+- New checks: Blender shapes on meshes that are not centered on their origin, and constraint types Avian has no joint for.
+
+### Changed
+
+- The export writes rigid bodies where the simulation starts, also when the timeline is on a later frame.
+- Importer: colliders from Blender's shapes cover only their own mesh, and scenes with custom gravity set Avian's `Gravity` when they load.
+
 ## 0.5.0 (2026-10-24)
 
 ### Added

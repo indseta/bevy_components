@@ -11,7 +11,8 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .metadata import EXTRAS_KEY, FIELD_VALUES, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
+from .native import NATIVE_KINDS, native_components, physics_components, with_native
 from .prefab import filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
 from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
@@ -113,7 +114,7 @@ def problem_changes():
 def components_for(obj):
     if not hasattr(obj, "bevy_component_data"):
         return []
-    return [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]
+    return with_native(obj, [item for item in obj.bevy_component_data.components if item.enabled and item.component_type])
 
 
 def component_of(obj, kind):
@@ -176,6 +177,12 @@ def has_faces(obj):
 
 def mesh_sources(obj, children, kind, instances=True):
     return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
+
+
+def collider_sources(obj, children, item, instances=True):
+    if getattr(item, "collider_own_mesh", False):
+        return [(obj, obj.matrix_world)] if has_faces(obj) else []
+    return mesh_sources(obj, children, "COLLIDER", instances)
 
 
 def export_settings(scene):
@@ -886,7 +893,9 @@ class glTF2ExportUserExtension:
 
     def gather_node_hook(self, gltf2_node, blender_object, _export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
+        _remove_extra(gltf2_node, "bevy_physics")
         _remove_extra(gltf2_node, "bevy_prefab")
+        _native_extras(gltf2_node, blender_object)
         instance_node(gltf2_node, blender_object)
 
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
@@ -900,8 +909,31 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_game")
         prefab_scene(gltf2_scene, blender_scene)
         world = getattr(blender_scene, "world", None)
-        components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
+        components = (scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []) + physics_components(blender_scene)
         gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}
+
+
+def _native_extras(gltf2_node, obj):
+    if obj is None or not hasattr(obj, "bevy_component_data"):
+        return
+    extras = gltf2_node.extras if isinstance(gltf2_node.extras, dict) else {}
+    stored = extras.get(EXTRAS_KEY)
+    natives = native_components(obj)
+    if not natives and not isinstance(stored, str):
+        return
+    try:
+        found = json.loads(stored)["components"] if isinstance(stored, str) else []
+    except (ValueError, KeyError, TypeError):
+        return
+    cards = {item.component_type for item in obj.bevy_component_data.components if item.enabled and item.component_type}
+    components = [component for component in found if not isinstance(component, dict) or str(component.get("type", "")).upper() not in NATIVE_KINDS or component["type"].upper() in cards]
+    components.extend(serialize_component(item) for item in natives if item.component_type not in cards)
+    if components == found:
+        return
+    if components:
+        gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)}
+    else:
+        _remove_extra(gltf2_node, EXTRAS_KEY)
 
 
 def _remove_extra(gltf2_element, key):

@@ -92,6 +92,9 @@ def clear_scene():
     for collection in (bpy.data.objects, bpy.data.collections, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups, bpy.data.actions):
         for block in list(collection):
             collection.remove(block)
+    if bpy.context.scene.rigidbody_world is not None:
+        bpy.ops.rigidbody.world_remove()
+    bpy.context.scene.gravity = (0.0, 0.0, -9.81)
     if hasattr(bpy.context.scene, "bevy_component_definitions"):
         bpy.context.scene.bevy_component_definitions.definitions.clear()
     if hasattr(bpy.context.scene, "bevy_collision_layers"):
@@ -665,6 +668,9 @@ def build_static_scene():
     material.use_backface_culling = True
     statue = add_mesh(bpy.ops.mesh.primitive_cube_add, "statue", size=1, location=(-2, 0, 0.5))
     statue.data.materials.append(material)
+    bpy.ops.rigidbody.object_add(type="PASSIVE")
+    statue.rigid_body.collision_shape = "CYLINDER"
+    bpy.context.scene.gravity = (0.0, 0.0, -1.62)
     mirrored = bpy.data.objects.new("statue_mirrored", statue.data)
     mirrored.location = (2, 0, 0.5)
     mirrored.scale = (-1, 1, 1)

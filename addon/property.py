@@ -58,6 +58,13 @@ JOINT_TYPES = [
 
 JOINT_LABELS = {identifier: name for identifier, name, _description, _icon, _number in JOINT_TYPES}
 
+CCD_MODES = [
+    ("DEFAULT", "Default", "Sweep fast movement against static and kinematic bodies, so the body does not pass through walls. This is Avian's default"),
+    ("ALL", "All Bodies", "Also sweep against dynamic bodies and colliders without a body, for small fast objects such as bullets"),
+    ("OFF", "Off", "Never sweep, which is cheaper but lets fast bodies pass through thin colliders"),
+]
+CCD_DESCRIPTION = "Continuous collision detection, which sweeps fast bodies along their path so they do not pass through thin colliders"
+
 BAKE_SIZES = (64, 128, 256, 512, 1024)
 LIGHTMAP_SIZES = (64, 128, 256, 512, 1024, 2048)
 AXES = [
@@ -77,6 +84,10 @@ def _get_collision_events(self):
 
 def _set_collision_events(self, value):
     self[EVENTS_KEY] = bool(value)
+
+
+def _get_native_events(self):
+    return bool(self.get(EVENTS_KEY, self.sensor))
 
 
 class BEVY_PG_field(bpy.types.PropertyGroup):
@@ -112,10 +123,12 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
         ("CUBOID", "Cuboid", "Box with explicit dimensions on Bevy's local axes", "MESH_CUBE", 2),
         ("SPHERE", "Sphere", "Sphere with a radius", "MESH_UVSPHERE", 3),
         ("CAPSULE", "Capsule", "Capsule along Bevy's local Y axis", "MESH_CAPSULE", 4),
+        ("CYLINDER", "Cylinder", "Cylinder along Bevy's local Y axis", "MESH_CYLINDER", 5),
+        ("CONE", "Cone", "Cone along Bevy's local Y axis, pointing up", "MESH_CONE", 6),
     ], default="TRIMESH", update=sync_changed)
     collider_size: FloatVectorProperty(name="Size", description="Box dimensions along Bevy's local X, Y (up) and Z axes", size=3, subtype="XYZ", default=(1.0, 1.0, 1.0), min=0.001, unit="LENGTH", update=sync_changed)
-    collider_radius: FloatProperty(name="Radius", description="Radius of the sphere or capsule", default=0.5, min=0.001, unit="LENGTH", update=sync_changed)
-    collider_height: FloatProperty(name="Height", description="Length of the capsule's cylinder, without the caps", default=1.0, min=0.0, unit="LENGTH", update=sync_changed)
+    collider_radius: FloatProperty(name="Radius", description="Radius of the sphere, capsule, cylinder or cone base", default=0.5, min=0.001, unit="LENGTH", update=sync_changed)
+    collider_height: FloatProperty(name="Height", description="Length of the capsule's cylinder without the caps, or the full height of a cylinder or cone", default=1.0, min=0.0, unit="LENGTH", update=sync_changed)
     collider_offset: FloatVectorProperty(name="Offset", description="Moves the shape away from the object's origin, along Bevy's local X, Y (up) and Z axes", size=3, subtype="XYZ", unit="LENGTH", update=sync_changed)
     collider_sensor: BoolProperty(name="Sensor", description="Detect overlaps without producing collision forces", default=False, update=sync_changed)
     collider_events: BoolProperty(name="Collision Events", description="Send Avian's CollisionStart and CollisionEnd events when this collider starts or stops touching another. On by default for sensors", get=_get_collision_events, set=_set_collision_events, update=sync_changed)
@@ -148,11 +161,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     rigid_body_angular_damping: FloatProperty(name="Angular Damping", description="Slows the body's spin over time", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
     rigid_body_lock_translation: BoolVectorProperty(name="Lock Position", description="World axes the body cannot move along, on Bevy's axes (Y up)", size=3, default=(False, False, False), update=sync_changed)
     rigid_body_lock_rotation: BoolVectorProperty(name="Lock Rotation", description="World axes the body cannot turn around, on Bevy's axes (Y up)", size=3, default=(False, False, False), update=sync_changed)
-    rigid_body_ccd: EnumProperty(name="Swept CCD", description="Continuous collision detection, which sweeps fast bodies along their path so they do not pass through thin colliders", items=[
-        ("DEFAULT", "Default", "Sweep fast movement against static and kinematic bodies, so the body does not pass through walls. This is Avian's default"),
-        ("ALL", "All Bodies", "Also sweep against dynamic bodies and colliders without a body, for small fast objects such as bullets"),
-        ("OFF", "Off", "Never sweep, which is cheaper but lets fast bodies pass through thin colliders"),
-    ], default="DEFAULT", update=sync_changed)
+    rigid_body_ccd: EnumProperty(name="Swept CCD", description=CCD_DESCRIPTION, items=CCD_MODES, default="DEFAULT", update=sync_changed)
     rigid_body_linear_velocity: FloatVectorProperty(name="Velocity", description="Velocity the body starts with, along Bevy's world axes (Y up). Kinematic bodies keep it until game code changes it", size=3, subtype="XYZ", unit="VELOCITY", update=sync_changed)
     rigid_body_angular_velocity: FloatVectorProperty(name="Angular Velocity", description="Spin per second the body starts with, around Bevy's world axes (Y up). Kinematic bodies keep it until game code changes it", size=3, subtype="XYZ", unit="ROTATION", update=sync_changed)
     show_velocity: BoolProperty(name="Initial Velocity", description="Show the velocity the body starts with", default=False)
@@ -227,6 +236,26 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
 
 class BEVY_PG_object_data(bpy.types.PropertyGroup):
     components: CollectionProperty(type=BEVY_PG_component)
+
+
+class BEVY_PG_physics(bpy.types.PropertyGroup):
+    auto_mass: BoolProperty(name="Mass from Volume", description="Let Avian compute the mass from the collider's volume at 1 kg per cubic meter, instead of using the Mass above", default=False, update=sync_changed)
+    gravity_scale: FloatProperty(name="Gravity Scale", description="Multiplies gravity for this body. 0 makes it float and negative values make it rise", default=1.0, soft_min=-2.0, soft_max=2.0, update=sync_changed)
+    ccd: EnumProperty(name="Swept CCD", description=CCD_DESCRIPTION, items=CCD_MODES, default="DEFAULT", update=sync_changed)
+    lock_translation: BoolVectorProperty(name="Lock Position", description="World axes the body cannot move along", size=3, subtype="XYZ", default=(False, False, False), update=sync_changed)
+    lock_rotation: BoolVectorProperty(name="Lock Rotation", description="World axes the body cannot turn around", size=3, subtype="XYZ", default=(False, False, False), update=sync_changed)
+    linear_velocity: FloatVectorProperty(name="Velocity", description="Velocity the body starts with, along the world axes. Kinematic bodies keep it until game code changes it", size=3, subtype="VELOCITY", unit="VELOCITY", update=sync_changed)
+    angular_velocity: FloatVectorProperty(name="Spin", description="Spin per second the body starts with, around the world axes. Kinematic bodies keep it until game code changes it", size=3, subtype="XYZ", unit="ROTATION", update=sync_changed)
+    sensor: BoolProperty(name="Sensor", description="Detect overlaps without producing collision forces, such as a trigger zone", default=False, update=sync_changed)
+    events: BoolProperty(name="Collision Events", description="Send Avian's CollisionStart and CollisionEnd events when this collider starts or stops touching another. On by default for sensors", get=_get_native_events, set=_set_collision_events, update=sync_changed)
+    collision_only: BoolProperty(name="Collision Only", description="Hide the object's mesh in the game while its collider still works, for invisible walls", default=False, update=sync_changed)
+    use_layers: BoolProperty(name="Bevy Layers", description="Use Avian's 32 collision layers, with separate layers to be on and to collide with, instead of the Collision Collections above", default=False, update=sync_changed)
+    memberships: BoolVectorProperty(name="Belongs To", description="Collision layers the collider is on", size=LAYER_COUNT, default=(True,) + (False,) * (LAYER_COUNT - 1), update=sync_changed)
+    filters: BoolVectorProperty(name="Collides With", description="Collision layers the collider touches. Two colliders touch only when each is on a layer the other collides with", size=LAYER_COUNT, default=(True,) * LAYER_COUNT, update=sync_changed)
+    joint_use_swing: BoolProperty(name="Swing Limit", description="Keep the bodies' Z axes within a cone of each other", default=False, update=sync_changed)
+    joint_swing: FloatProperty(name="Swing Limit", description="Largest angle between the bodies' Z axes, the half angle of the cone", default=radians(45), min=0.0, max=radians(180), subtype="ANGLE", update=sync_changed)
+    joint_linear_damping: FloatProperty(name="Damping", description="Slows how fast the bodies move relative to each other", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
+    joint_angular_damping: FloatProperty(name="Turn Damping", description="Slows how fast the bodies turn relative to each other, so a door or pendulum settles", default=0.0, min=0.0, soft_max=10.0, update=sync_changed)
 
 
 class BEVY_PG_collision_layers(bpy.types.PropertyGroup):

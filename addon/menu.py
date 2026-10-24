@@ -1,6 +1,6 @@
 import bpy
 
-from .operator import BEVY_OT_add_component, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_export, running_game
+from .operator import BEVY_OT_add_component, BEVY_OT_add_constraint, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_convert_to_native, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_export, running_game
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
 from .schema import short_name
 from .system import TEXT_COMPONENT, accepts, component_index, game_types, preset_folder, presets, scene_definition
@@ -85,7 +85,17 @@ class BEVY_MT_component_add_physics(bpy.types.Menu):
     bl_options = {"SEARCH_ON_KEY_PRESS"}
 
     def draw(self, context):
-        _draw_add_items(self.layout, context.object, ("COLLIDER", "RIGID_BODY", "JOINT"))
+        layout = self.layout
+        obj = context.object
+        column = layout.column()
+        column.enabled = obj is not None and obj.type == "MESH" and obj.rigid_body is None
+        column.operator("rigidbody.object_add", text="Rigid Body", icon="RIGID_BODY")
+        column = layout.column()
+        column.enabled = obj is not None and obj.rigid_body_constraint is None
+        column.operator(BEVY_OT_add_constraint.bl_idname, text="Rigid Body Constraint", icon="RIGID_BODY_CONSTRAINT")
+        layout.separator()
+        layout.label(text="Components")
+        _draw_add_items(layout, obj, ("COLLIDER", "RIGID_BODY", "JOINT"))
 
 
 class BEVY_MT_component_add_rendering(bpy.types.Menu):
@@ -183,6 +193,7 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
         layout.operator(BEVY_OT_paste_components.bl_idname, text="Paste Components", icon="PASTEDOWN")
         layout.separator()
         layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
+        layout.operator(BEVY_OT_convert_to_native.bl_idname, text="Convert Physics to Blender", icon="PHYSICS")
         layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake Lighting...", icon="RENDER_STILL")
         layout.operator(BEVY_OT_export_glb.bl_idname, text="Export Bevy Scene (.glb)...", icon="EXPORT")
         layout.operator(BEVY_OT_export_bsn.bl_idname, text="Export Bevy Scene (BSN)...", icon="EXPORT")
@@ -202,6 +213,7 @@ class BEVY_MT_object_menu(bpy.types.Menu):
         layout.operator(BEVY_OT_paste_components.bl_idname, text="Paste Components", icon="PASTEDOWN")
         layout.separator()
         layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
+        layout.operator(BEVY_OT_convert_to_native.bl_idname, text="Convert Physics to Blender", icon="PHYSICS")
         draw_export_again(layout, context.scene, placeholder=True)
         draw_export_all(layout)
 
