@@ -120,5 +120,6 @@ jobs:
                       echo "$tag is already released, bump the version to publish a new one"
                       exit 0
                   fi
-                  git archive --format=zip --prefix="bevy_components_importer/" --add-file=LICENSE -o "dist/bevy_components_importer_${version//./_}.zip" HEAD:importer . ':!tests'
-                  gh release create "$tag" "dist/bevy_components_${version//./_}.zip" "dist/bevy_components_importer_${version//./_}.zip" --target "$GITHUB_SHA" --title "Bevy Components $version" --notes "Download bevy_components_${version//./_}.zip for the Blender addon and bevy_components_importer_${version//./_}.zip for the Rust importer. See the README for installation."
+                  git archive --format=zip --prefix="bevy_components_importer/" -o "dist/bevy_components_importer_${version//./_}.zip" HEAD:importer . ':!tests'
+                  python3 scripts/release_notes.py "$version" > "$RUNNER_TEMP/release_notes.md"
+                  gh release create "$tag" "dist/bevy_components_${version//./_}.zip" "dist/bevy_components_importer_${version//./_}.zip" --target "$GITHUB_SHA" --title "Bevy Components $version" --notes-file "$RUNNER_TEMP/release_notes.md"

@@ -52,264 +52,43 @@ The importer's warnings start with the Blender object's name, such as `crate: In
 
 ## Usage
 
-1. Select an object, press **Add Component** and pick a component, or start typing to search. Physics, Rendering and Lighting components sit in submenus.
-2. Each component works like a modifier: collapse it, untick it to leave it out of the export, or use its dropdown to duplicate, copy, copy to selected, reset or reorder it.
-3. Export with **File > Export > Bevy Scene (.glb)**, or from the dropdown next to **Add Component**. After that, **Export Again** in those menus and in **3D Viewport > N > Bevy > Export** writes the same file with the same settings, without the file dialog.
-4. Put the GLB in your game's `assets/` folder, or set a game project for [Play](#play) and exports start there.
+1. Select an object, press **Add Component** and pick a component, or start typing to search.
+2. Export with **File > Export > Bevy Scene (.glb)**. After that, **Export Again** writes the same file with the same settings, without the file dialog.
+3. Put the GLB in your game's `assets/` folder and load it as above. Or set your game's folder as the **Game Project** and press **Play** in **3D Viewport > N > Bevy** to export and run the game in one click.
 
-The export holds the active scene. Under **Include**, **Limit to** can leave out objects that aren't selected, are hidden in the viewport or are turned off for renders, and the checks look at the same objects. **Apply Modifiers**, on by default, exports meshes as the viewport shows them, though glTF then leaves out the shape keys of meshes with modifiers. The file is written once the export succeeds, so a failed export keeps the previous one. With more than one scene in the file, **Export All Scenes (.glb)** exports every scene that was exported before to its own GLB, with that scene's settings.
+Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the running game reloads the scene every time you save the .blend file.
 
-**Copy Components** puts the active object's components on the clipboard and **Paste Components** adds them to the selected objects, also in another .blend file. Pasting replaces components of the same type. **Add Component > Presets > Save Components as Preset** keeps a set of components for every .blend file, and picking the preset adds them to the selected objects. Presets are JSON files in Blender's `scripts/presets/bevy_components` folder.
-
-**3D Viewport > N > Bevy > Scene Overview** lists the objects with components, filtered by type or name, and clicking one selects it. **Select > Select by Bevy Component** selects them all at once. The Components and Bevy panel headers count the scene's errors and warnings and open the full list when clicked. The viewport labels the selected objects with what their components do, and other objects with their name and custom components. The **Object** menu and the right-click menu in the 3D Viewport have a **Bevy Components** submenu with these tools and Export Again, and F3 finds them too.
-
-**Shadows** (under Rendering) stops the meshes on and under an object from casting or receiving shadows. **Audio Player** plays a sound from your game's `assets` folder, such as `sounds/fire.ogg`, and its folder button fills in that path from a picked file. Spatial sounds play at full volume within their Distance and fade beyond it. The viewport shows that distance and the one where the sound is down to 1% as spheres, with an arrow to drag the distance.
-
-**Joint** (under Physics) connects two bodies with an Avian Fixed, Hinge, Slider or Ball joint. Put it on an empty at the pivot, or on one of the bodies, and pick Body 1 and Body 2 from objects with a Rigid Body or Collider. Leave one empty to pin the other to that spot in the scene. The object's position and its Axis set the pivot, and limits count from where the bodies sit in Blender.
-
-**Scene Reference** spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. **Animation** plays an action when the scene loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Include Animations** on in the export; each clip starts at its first keyframe.
-
-Collider sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider. **Collision Events** adds Avian's `CollisionEventsEnabled`, so the collider sends `CollisionStart` and `CollisionEnd`; it is on by default for sensors. **Collision Only** hides the meshes on and under the object in the game with `Visibility::Hidden` and keeps their colliders, for invisible walls.
-
-Dynamic Rigid Bodies can set a total mass, gravity scale, damping, locked axes and continuous collision, and moving bodies can start with a velocity and spin. Viewport previews are editor-only and are not exported; set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded. Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
-
-## Prefabs
-
-Tick **Properties > Collection > Bevy Prefab** on a collection and pick its GLB file. Its collection instances then export as a Scene Reference to that file instead of copies of its objects, while the viewport keeps showing the collection. Each scene export writes the prefab's GLB first, but only when the collection's objects, components or transforms or the export settings changed since its last export. The collection's **Instance Offset** is the prefab's origin, and prefabs can hold instances of other prefabs. Keep the prefab collections in another scene or in a collection excluded from the view layer; scene exports leave their objects out either way. An instance's **Components** panel shows the same checkbox and file, since an excluded collection has no Collection tab.
-
-**Export Prefab** in that panel writes just the prefab. Any collection can also export on its own from **Properties > Collection > Exporters > Add > Bevy Scene (.glb)**, which writes the prefabs inside it as well. The BSN export writes each prefab as a `prefab_<name>()` function below `setup()`, with its GLB in the assets folder, and calls it at every instance.
-
-## Hot reload
-
-Turn on **Export on Save** in the export dialog or under **3D Viewport > N > Bevy > Export**, and every save of the .blend file exports the scene again with the same settings. When that export fails, a message says why and the previous file stays. Enable Bevy's `file_watcher` feature in your game, and it reloads the scene while it runs, with the components rebuilt once:
-
-```toml
-bevy = { version = "0.20", features = ["file_watcher"] }
-```
-
-A BSN export rewrites its `.rs` file on save as well, but the game only picks that up when it is rebuilt.
-
-## Checks
-
-**Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own. Errors, such as invalid custom JSON, a number its field's Rust type cannot hold, a joint limit whose Min is above its Max, shadow cascade distances out of order, or a light probe file that is missing or that Bevy cannot use, or a prefab with no GLB file or one that ends up inside itself, block the export. Warnings point out setups that behave differently in Bevy than they look in Blender:
-
-- a Triangle Mesh, Convex Hull or Collision Only collider, or a Visibility Range, with no mesh on or under its object
-- a Dynamic Rigid Body with no collider, a Rigid Body inside a moving one, and Triangle Mesh colliders on Dynamic bodies
-- a collider rotated inside an unevenly scaled parent, which Avian sizes wrong
-- a Dynamic body with every axis locked
-- a Joint with no bodies, the same body twice, only static bodies, or a body that has no Rigid Body or Collider, is part of another body or is left out of the export
-- levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
-- Custom Component type paths that aren't Rust paths, or that repeat on one object, and game components with fields Blender cannot set but no `#[reflect(Default)]`
-- Shadows with no mesh on or under its object, and Navigation with no mesh or collider on or under its object
-- an Audio Player with no sound, a path outside the `assets` folder, or a file type Bevy cannot play
-- a Scene Reference to a missing or non-glTF file, a scene number the file doesn't have, or the exported scene itself (a file on another drive than the exported scene is an error)
-- a prefab with no objects or a GLB file outside the `assets` folder (two prefabs with one file, a prefab writing the exported scene's own file, or a Scene Reference on a prefab instance is an error)
-- an Animation with no clip, a clip that animates nothing in its object's hierarchy, or Include Animations turned off
-- a Fog Volume with a density of 0, and a Reflection Probe, Irradiance Volume or Bevy Sky with no file
-- Bevy Ambient Light from the World color next to the Bevy Sky's Environment Light, which light the scene twice
-- a lightmap, light probe or sky baked before the meshes, lamps or World it lights changed, so it needs another bake
-- an area light without a Light component, which glTF leaves out, a disk or ellipse area light or a square spot light, which Bevy cannot draw, and a Volumetric light without shadows
-- a light probe file in a block-compressed format, which only loads on GPUs that support it
-- a material that glTF flattens: one that mixes shaders, has no Principled BSDF, or drives Principled BSDF inputs with procedural nodes instead of images
-- shape keys on a mesh with modifiers while **Apply Modifiers** is on
-
-## Play
-
-**Play** in **3D Viewport > N > Bevy** exports the scene again and runs your game. Set **Game Project** to the folder with your game's `Cargo.toml` in the add-on preferences under **Play**, or for one .blend file in the Play panel. Play runs **Run Command** there, `cargo run` by default, where `{scene}` becomes the path of the exported GLB. Without a game project, set **Importer** to the `bevy_components_importer` folder and Play opens the scene in its [viewer](#viewer).
-
-- Export the scene once with **File > Export > Bevy Scene**, and Play repeats that export (GLB, BSN or both) with the same settings.
-- The status bar shows the game building and running, with an X to stop it. Play again restarts it.
-- The Play panel lists the importer's warnings, and clicking one selects its object. It also says why the game stopped, and **Show Game Output** opens everything it printed in a Text Editor.
-- The game starts with `BEVY_COMPONENTS_VIEW` set to the 3D Viewport's view. `blender_view()` reads it as a `Transform` in Bevy's axes, so the game can start its camera there:
-
-```rust
-use bevy_components_importer::blender_view;
-
-fn setup(mut commands: Commands) {
-    let start = blender_view().unwrap_or_else(|| Transform::from_xyz(0.0, 5.0, 10.0).looking_at(Vec3::ZERO, Vec3::Y));
-    commands.spawn((Camera3d::default(), start));
-}
-```
-
-With a game project, the GLB export starts at `assets/levels/<scene>.glb` and the BSN export at `src/<scene>.rs`, the sound, scene and probe file pickers start in `assets`, and the checks warn about sounds missing from `assets` and about GLB exports or scene references outside it.
-
-## Viewer
-
-The importer comes with a viewer: run `cargo run --example viewer -- path/to/scene.glb` in the `bevy_components_importer` folder. WASD, Q and E fly, the right mouse button looks around, P pauses physics and F1 hides or shows the collider and joint outlines. It reloads the scene when the file changes, so **Export Again** or **Export on Save** in Blender updates it, and it loads files from the nearest `assets` folder above the scene.
-
-## Custom components
-
-A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, let your game list its components for Blender, or define the fields by hand.
-
-### From your game
-
-Add `BlenderSchemaPlugin` with your crate's name while you develop:
-
-```rust
-use bevy_components_importer::BlenderSchemaPlugin;
-
-#[cfg(debug_assertions)]
-app.add_plugins(BlenderSchemaPlugin::new(&["my_game"]));
-```
-
-Each run writes `bevy_components_schema.json` next to your `Cargo.toml`. It lists every component in those crates that derives `Reflect` with `#[reflect(Component)]`, with its fields and the defaults from `#[reflect(Default)]`. Blender finds the file in the [game project](#play) folder or the folders above the .blend file, or set its path in the add-on preferences.
-
-Your components then show under **Add Component**, in a menu named after your crate, with typed fields. Components already added as JSON switch to them and keep their values. When the components change, run the game again. Blender picks up the new file on its own, and **Properties > Scene > Bevy Custom Components** has a button to read it right away. Fields Blender cannot edit, such as a `Timer`, show as **Game default** and are left out, so the game needs `#[reflect(Default)]` to fill them in.
-
-### By hand
-
-1. In **Properties > Scene > Bevy Custom Components**, press **+** and double-click the new entry to set the type path, such as `my_game::Health`.
-2. Add fields with a name, a type and a default. The default is used when the component is added to an object.
-3. The type now appears under **Add Component**. Objects that already have it as JSON switch to the fields and keep their values.
-
-**Define Fields** in a JSON component's dropdown does steps 1 and 2 for you from its data. **Edit as Text**, the button next to the JSON or in the dropdown, opens the data in a Text Editor; **Apply to Component** in its header writes it back. Changes to a definition reach every object that uses it, and removing a definition turns its components back into JSON with the same values. A type your game lists uses the game's fields instead.
-
-### In the game
-
-The importer inserts the component itself when your type derives `Reflect` with `#[reflect(Component)]`, found by its type path or by crate and type name, so `my_game::Health` also finds `my_game::stats::Health`, and a plain `Health` finds it when no other registered type has that name. Add `#[reflect(Default)]` to fill in fields the data leaves out. Other types arrive as JSON in `BlenderCustomComponents`, which `serde_json::from_value` reads into a struct with the same field names. Either way, the fields map to these Rust types:
-
-| Field | Rust type |
+| Component | In Bevy |
 | --- | --- |
-| Float | `f32` |
-| Integer | `i32` or another integer type |
-| Boolean | `bool` |
-| String | `String` |
-| Vector 2D | `Vec2` |
-| Vector | `Vec3`, on Bevy's axes (Y up) and not converted |
-| Color | `Color`, in sRGB |
-| Enum | An enum whose variants hold no data, such as `Team::Red`. The BSN export needs its **Enum Type**, such as `my_game::Team` |
+| Collider | Avian cuboid, sphere, capsule, convex hull or triangle mesh collider, with friction, restitution, collision layers and events |
+| Rigid Body | Avian static, dynamic or kinematic body with mass, damping, locked axes and a starting velocity |
+| Joint | Avian fixed, hinge, slider or ball joint between two bodies |
+| Visibility Range | `VisibilityRange` for levels of detail |
+| Shadows | `NotShadowCaster` and `NotShadowReceiver` |
+| Light | Shadow, volumetric and baked settings for glTF lights, and `RectLight` for area lights |
+| Lightmap, Reflection Probe, Irradiance Volume | Baked lighting, rendered by Cycles in the background |
+| Fog Volume | `FogVolume` |
+| Audio Player | `AudioPlayer` with `PlaybackSettings` |
+| Animation | Plays an action when the scene loads |
+| Scene Reference | Spawns another exported scene at the object |
+| Navigation | `NavigationWalkable` and `NavigationObstacle` tags for a navmesh crate |
+| Custom Component | Any of your game's components, as JSON or with typed fields read from your game |
 
-Fields named `0`, `1` and so on fill a tuple struct, such as `Reward(u32, f32)`.
+The World properties add **Bevy Sky** and **Bevy Ambient Light**, and **Bevy Prefab** turns a collection into a prefab with its own GLB.
 
-## Navigation
+## Guides
 
-**Navigation** (in Add Component) tags the meshes and colliders on and under an object for a navmesh crate, unless a closer object has its own Navigation:
+- [Components](docs/components.md): physics, rendering, audio, animation, scene references, navigation and the viewport previews
+- [Custom components](docs/custom_components.md): your game's own components, from its code or defined by hand
+- [Lighting](docs/lighting.md): lights, ambient light, the sky, fog, light probes and baked lighting
+- [Exporting](docs/exporting.md): export options, Export Again, hot reload, prefabs and the checks
+- [Texture compression](docs/texture_compression.md): KTX2 textures embedded in the GLB
+- [BSN export](docs/bsn_export.md): the scene as Rust code with `bsn!`
+- [Play and the viewer](docs/play.md): run your game from Blender, or open any scene in the importer's viewer
+- [Development](docs/development.md): tests, CI and releases
 
-- **Walkable** for ground that agents walk on, imported as `NavigationWalkable`. Its **Cost** says how much agents avoid it when they find a path: 1 for plain ground, 3 for mud, 0.5 for a road.
-- **Obstacle** for walls, crates and trees that agents go around, imported as `NavigationObstacle`.
-- **Ignored** to leave an object out, such as a small prop on walkable ground under a tagged parent.
-
-The viewport draws the faces of walkable ground that slope less than 45° and the bounds of obstacles. The importer only tags entities and builds no navmesh. No navmesh crate supports Bevy 0.20 yet (checked in October 2026: vleue_navigator 0.16, bevy_rerecast 0.5 and bevy_landmass 0.12 are on Bevy 0.19, oxidized_navigation on 0.15). Once one does, hand it the tagged entities:
-
-- **bevy_rerecast** builds the navmesh from the tagged meshes alone with `NavmeshSettings { filter: Some(tagged.iter().collect()), ..default() }`, where `tagged` is a `Query<Entity, Or<(With<NavigationWalkable>, With<NavigationObstacle>)>>`.
-- **vleue_navigator** cuts tagged obstacles out of the navmesh with `NavmeshUpdaterPlugin::<Collider, NavigationObstacle>`, and takes the walkable ground from `NavMesh::from_bevy_mesh` of a walkable mesh.
-- **oxidized_navigation** reads colliders that have its `NavMeshAffector`, so insert one on each entity with a `Collider` and a navigation tag.
-- **bevy_landmass** uses a navmesh from one of these, and its type index costs can come from `NavigationWalkable::cost`.
-
-## Lights
-
-glTF already carries a light's color, power, spot cone and Custom Distance range. Add a **Light** component (under Lighting) to a light for the rest:
-
-- shadows from the light's own **Shadow** checkbox, plus contact shadows, depth and normal bias, and for sun lights the shadow cascades
-- **Volumetric** for light shafts through Fog Volumes, and **Baked** to bake the light into lightmaps, so it only adds reflections on lightmapped meshes
-- an **Intensity** in Bevy's lumens or lux, in place of Blender's watts at 683 lm/W
-
-Area lights become Bevy `RectLight`s, which need Bevy's `area_light_luts` feature and cast no shadows. Contact shadows need `ContactShadows` and a depth prepass on the camera. The viewport draws how far each light reaches, 20 m unless Custom Distance is on, and dragging its arrow sets Custom Distance.
-
-**Properties > World > Bevy Ambient Light** sets the scene's ambient light, from the World color or a color and brightness of its own.
-
-**Properties > World > Bevy Sky** shows the World behind every `Camera3d` as a `Skybox`, from a cubemap that its **Bake** button renders of the World alone. With **Environment Light** on, the sky also lights the scene through a `GeneratedEnvironmentMapLight`, which adds reflections everywhere and soft light where no lightmap or irradiance volume reaches. The export then sets Bevy's ambient light to 0 unless Bevy Ambient Light is on, so the sky does not light the scene twice. Add `NoBlenderSky` to a camera to leave it out, or read the `BlenderSky` resource to set up cameras yourself.
-
-## Fog and light probes
-
-**Fog Volume**, **Reflection Probe** and **Irradiance Volume** (under Lighting) are boxes. Set their size on Bevy's axes or drag the arrows in the viewport, where the inner box of a probe shows where its falloff starts.
-
-- **Fog Volume** fills its box with volumetric fog. Bevy only draws it for cameras with `VolumetricFog`, such as `commands.spawn((Camera3d::default(), VolumetricFog::default()))`, and once a light in the scene has **Volumetric** on in its Light component.
-- **Reflection Probe** gives the meshes in its box reflections and soft light from a cubemap. Bevy filters the cubemap when the scene loads, so it needs six square faces whose size is a power of two, and no mipmaps. **Bake** makes one (see [Baked lighting](#baked-lighting)), or KTX-Software from six renders: `ktx create --format R16G16B16A16_SFLOAT --cubemap px.exr nx.exr py.exr ny.exr pz.exr nz.exr room.ktx2`.
-- **Irradiance Volume** lights the meshes in its box from a grid of light samples, like Godot's VoxelGI. Its file is a 3D texture in Bevy's layout, where X × Y × Z samples take X × 2Y × 3Z texels, and **Bake** makes one.
-
-The export embeds each probe's `.ktx2` file in the GLB, so the scene stays one file and needs no extra loading code. Save them uncompressed, such as RGBA16F. Bevy cannot use Basis Universal here, and block-compressed formats only load on GPUs that support them.
-
-## Baked lighting
-
-The addon bakes lightmaps, Reflection Probes, Irradiance Volumes and the Bevy Sky with Cycles, a static alternative to Godot's VoxelGI.
-
-1. Add a **Lightmap** (under Lighting) to each static mesh and click **Unwrap Lightmap UVs**, which fills the mesh's second UV map, the one Bevy reads lightmaps with. For a probe, size its box and set its **Bake Size** (pixels per cubemap face) or **Bake Voxels** (light samples along X, Y and Z).
-2. Click **Bake** on a component to bake just that one, or pick **Bake Lighting...** in the components dropdown to bake everything in the scene. The dialog sets the Cycles samples and the folder, `//baked_lighting/` next to the `.blend` file by default, and **Export Again** exports the scene to the GLB or BSN file of its last export once the bake finishes.
-
-A second Blender bakes a copy of the scene in the background, so you can keep working. The status bar shows the progress and its **X** cancels; bakes that already finished keep their new files. Each component's file is set to its result, and the export embeds it like any other. Bakes started from a script finish before the call returns.
-
-Each bake remembers the scene it rendered: for a probe the meshes in its box, for a lightmap its mesh and the meshes touching it, with their materials, plus the lamps and the World. When one of those changes, the export checks warn that the bake is out of date.
-
-- A lightmap holds the light from the sky and emissive materials and the light that bounces between surfaces. Bevy lights the mesh with the exported lamps as usual, except lamps whose Light component is **Baked**: their direct light and shadows go into the lightmap, and Bevy only adds their reflections.
-- Turn on **Bevy Ambient Light** and its **Baked** option in the World properties, so Bevy keeps its ambient light off lightmapped meshes.
-- Lightmaps are 4 bytes per pixel, so a 512 px lightmap adds 1 MB to the exported scene. Unwrap again after changing a lightmap's **Bake Size**, so its UV islands stay a few pixels apart. Keep modifiers the same in the viewport and in renders: the bake renders the ones enabled for renders, and the export applies the ones shown in the viewport while **Apply Modifiers** is on.
-- Lightmapped meshes skip irradiance volumes, which light the moving objects instead. Irradiance volumes leave out the light lamps shine straight at them, since Bevy lights meshes with the exported lamps itself. Turn on **Direct Lamp Light** for lamps you do not export.
-- Bevy adds its ambient light on top of irradiance volumes, so turn off **Bevy Ambient Light** when volumes cover the scene and nothing is lightmapped, or the sky lights it twice.
-- A probe's **Intensity** starts at 683, which converts Blender's light units the way the glTF export converts lamps, so baked light matches them. Lightmaps are stored at that scale already.
-- Let each box reach a little past the floors and walls it should light, since Bevy skips surfaces right on its edge. A Reflection Probe renders its cubemap from the center of its box, so keep that spot clear of meshes.
-- The bake uses your Cycles settings, such as the device and light bounces, and skips objects that are disabled in renders. Only reflection probes are denoised, so raise the samples if a lightmap looks grainy.
-
-## Texture compression
-
-The exporter can compress textures to KTX2 and embed them in the GLB, so the scene stays one file but is smaller on disk and in GPU memory.
-
-1. Install [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4 or newer. The addon looks for `ktx` on your `PATH` and in the default install folders (`C:\Program Files\KTX-Software\bin`, `/usr/local/bin`, `/opt/homebrew/bin`). If it lives elsewhere, set its path under **Edit > Preferences > Add-ons > Bevy Components**, which also shows the version it found. KTX-Software is only needed to export, not to run your game.
-2. In **File > Export > Bevy Scene (.glb)**, open **Texture Compression** and pick a mode:
-   - **Disabled** (default): ordinary PNG and JPEG textures.
-   - **ETC1S**: smallest files, lower quality.
-   - **UASTC**: best quality, larger files. **Supercompression** shrinks them on disk.
-   - **Automatic**: UASTC for normal maps, metallic-roughness, occlusion and textures set to Closest interpolation, ETC1S for other color textures.
-
-A 4K texture takes 10 to 25 seconds to encode. Blender stays usable meanwhile: the status bar shows how many textures are done, and its **X** button cancels the export and keeps the previous file. Exports started from a script still finish before the call returns. The exporter encodes up to four textures at once at a lower CPU priority and caches the results in the add-on's user folder (up to 2 GB), so later exports only encode textures that changed. Leave compression Disabled while you iterate for the fastest exports.
-
-Base color, normal, metallic-roughness, occlusion and emissive textures are converted with mipmaps and stored with the `KHR_texture_basisu` glTF extension. Samplers, UV maps, texture transforms, alpha modes and color spaces are kept, and a texture shared by several materials is stored once. Textures whose size is not a multiple of 4 pixels are scaled up to one, and the export warns when it does. Your Blender images are not changed.
-
-Loading needs no extra code. `BlenderBevyComponentsPlugin` registers a GLB loader that converts the textures to a format the GPU supports (ASTC, BC7 or ETC2, otherwise uncompressed RGBA) and passes the file on to Bevy's glTF loader, so `asset_server.load("scene.glb#Scene0")` works the same for compressed and ordinary scenes. It relies on Bevy's default `ktx2` feature; `basis-universal` is not needed.
-
-Limitations:
-
-- Bevy logs `Duplicate AssetLoader registered for Asset type bevy_gltf::assets::Gltf with extensions ["glb"]` once at startup. That is the plugin's loader taking over `.glb` files, and the advice about `.meta` files in the warning does not apply.
-- Without the plugin, Bevy 0.20 cannot load compressed scenes, because it does not support `KHR_texture_basisu`.
-- Only `.glb` files with embedded textures are handled.
-- ETC1S smears per-pixel detail such as pixel art. Use UASTC or Automatic for those textures.
-
-## BSN export
-
-**File > Export > Bevy Scene (BSN)** writes the scene as Rust code instead: a `.rs` file whose `setup()` function builds the scene with `bsn!`, and an assets folder with a GLB for the meshes, materials and animations, plus the lightmap and probe files. It spawns the same entities and components as the GLB with the importer.
-
-1. Pick a `.rs` file in your game's `src/` folder. **Assets Folder** sets where the files go; left empty, they go to `assets/scenes/<file name>` next to `Cargo.toml`. The dialog shows the path the game loads the GLB by.
-2. Add the module and spawn the scene:
-
-```rust
-mod sample_scene;
-
-fn setup(mut commands: Commands) {
-    commands.queue_spawn_scene(sample_scene::setup());
-}
-```
-
-With **Prefab Functions** on, objects that share a combination of components, such as a rigid body and collider, or a mesh with both, use one `object_<name>()` function below `setup()`. Turn it off to write every object out in full inside `setup()`. The export remembers its settings in the .blend file, so **Export Again** writes the same files in one click, and it only rewrites files that changed. It will not write over `main.rs`, `lib.rs` or another crate root, warns before it replaces a `.rs` file it did not write or one edited since the last export (Export Again refuses those), and removes files it copied into the assets folder earlier that the scene no longer uses. Rebuild the game after exporting again.
-
-- Custom components are written as Rust values, so their types must exist at their type path (`my_game::Pickup` becomes `crate::Pickup` when the `.rs` file belongs to the `my_game` crate itself, such as a module of its `lib.rs`) and derive `Component`, `Clone` and `Default`. Fields can hold numbers, text, booleans, vectors, colors and enum variants. Custom JSON is written as it is typed, so give a float field `5.0`, not `5`.
-- Navigation writes the importer's `NavigationWalkable` and `NavigationObstacle`, so a scene that uses it needs the importer crate, though not its plugin.
-- The Bevy Sky sets the importer's `BlenderSky` resource, so a scene with a sky needs the importer crate and its plugin, which puts the sky on the cameras.
-- Physics needs Avian with its `collider-from-mesh` feature. Add `BlenderBevyComponentsPlugin` when you compress textures or use a Scene Reference, since the referenced GLBs carry their components the usual way.
-- Skins and shape keys are left out.
-
-## Development
-
-```sh
-python -m unittest discover -s tests
-python scripts/build_addon.py
-cargo test --manifest-path importer/Cargo.toml
-```
-
-The Blender tests install the built addon into Blender's `bpy` module, build a sample scene and export it. `bpy` only installs on the Python version its Blender ships with (3.11 for 4.2, 3.13 for 5.1 and later):
-
-```sh
-pip install bpy==4.2.23
-python tests/blender/run.py
-```
-
-The importer tests load `importer/tests/assets/sample_scene.glb` and its compressed copies `sample_scene_etc1s.glb`, `sample_scene_uastc.glb` and `sample_scene_automatic.glb`, plus the `props/windmill.glb` prop that the sample scene references and the `props/lamp_post.glb` and `props/lantern.glb` prefabs it writes, and the BSN export of the same scene in `importer/tests/bsn/sample_scene.rs` and `importer/tests/assets/bsn/`, plus a small unanimated BSN scene in `importer/tests/bsn/static_scene.rs` and `importer/tests/assets/bsn_static/`, which `python tests/blender/sample_scene.py` regenerates (it needs KTX-Software). The Blender tests fail if they no longer match a fresh export. The sample scene takes two of its components from `importer/tests/assets/bevy_components_schema.json`, which `BEVY_COMPONENTS_WRITE_SCHEMA=1 cargo test --manifest-path importer/Cargo.toml --test schema` writes from the test crate's types. The texture compression tests are skipped when KTX-Software is missing, unless `BEVY_COMPONENTS_REQUIRE_KTX=1` is set.
-
-The rendering tests compare compressed and uncompressed scenes on a real GPU and check that light probes and fog show up. They are skipped by default. Run it with `cargo test --manifest-path importer/Cargo.toml -- --include-ignored`. On Linux without a GPU, Mesa's `mesa-vulkan-drivers` package provides one in software. Set `BEVY_COMPONENTS_RENDER_OUTPUT` to a folder to save the renders.
-
-`addon/` holds the Blender extension and `importer/` the Rust crate. When CI passes on `main`, a GitHub release with both downloads is published whenever the version changes. The addon and importer share one version, kept in `addon/blender_manifest.toml`, `addon/__init__.py` and `importer/Cargo.toml`, and a test checks they match.
-
-CI runs one Linux job on pull requests and pushes to `main`: the unit tests, the Blender 4.2 and 5.2 tests with KTX-Software, and the importer and GPU rendering tests. Changes to only Markdown files or `LICENSE` skip it. macOS and Windows are not tested in CI.
+What changed in each version is in the [changelog](CHANGELOG.md). The [importer README](importer/README.md) lists what each component becomes in Bevy.
 
 ## License
 
-GPL-3.0 or later, see [LICENSE](LICENSE).
+The Blender addon is GPL-3.0-or-later, see [LICENSE](LICENSE). The importer crate is MIT, see [importer/LICENSE](importer/LICENSE), so games that use it can have any license.

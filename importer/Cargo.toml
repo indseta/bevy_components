@@ -3,7 +3,7 @@ name = "bevy_components_importer"
 version = "0.4.0"
 edition = "2024"
 description = "Import Blender-authored Bevy Components from glTF extras"
-license = "GPL-3.0-or-later"
+license = "MIT"
 
 [dependencies]
 avian3d = { version = "0.8.0", features = ["collider-from-mesh"] }
