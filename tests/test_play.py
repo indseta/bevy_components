@@ -18,7 +18,7 @@ POSIX = os.name == "posix"
 
 
 def python(code):
-    return [sys.executable, "-c", textwrap.dedent(code)]
+    return [sys.executable, "-u", "-c", textwrap.dedent(code)]
 
 
 def program(folder, name, code):
