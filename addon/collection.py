@@ -12,7 +12,7 @@ CHANGES = [0]
 
 Entry = namedtuple("Entry", ("collection", "item", "rivals"))
 
-_index = {"key": None, "members": {}, "inner": {}, "entries": {}}
+_index = {"key": None, "members": {}, "inner": {}, "entries": {}, "left_out": {}}
 
 
 @persistent
@@ -45,19 +45,37 @@ def _refresh():
         return _index
     members = {}
     inner = {}
+    left_out = {}
     for collection in bpy.data.collections:
+        if collection.bevy_component_data.leave_out:
+            for obj in collection.all_objects:
+                left_out.setdefault(obj.as_pointer(), collection)
         if not any(item.enabled and item.component_type in COLLECTION_KINDS for item in collection.bevy_component_data.components):
             continue
         for obj in collection.all_objects:
             members.setdefault(obj.as_pointer(), []).append(collection)
         inner[collection.as_pointer()] = {child.as_pointer() for child in collection.children_recursive}
-    _index.update(key=key, members=members, inner=inner, entries={})
+    _index.update(key=key, members=members, inner=inner, entries={}, left_out=left_out)
     return _index
+
+
+def left_out_by(obj):
+    data = getattr(obj, "bevy_component_data", None)
+    if data is None:
+        return None
+    if data.leave_out:
+        return obj
+    index = _refresh()
+    return index["left_out"].get(obj.as_pointer()) if index["left_out"] else None
+
+
+def left_out(obj):
+    return left_out_by(obj) is not None
 
 
 def collection_entries(obj):
     index = _refresh()
-    if not index["members"]:
+    if not index["members"] or left_out(obj):
         return []
     pointer = obj.as_pointer()
     if pointer not in index["entries"]:

@@ -4222,6 +4222,142 @@ class TestCollectionComponents(unittest.TestCase):
         self.assertNotEqual(addon.prefab.prefab_fingerprint(crate, settings, bpy.context.scene), before)
 
 
+
+class TestLeaveOut(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+
+    def tearDown(self):
+        clear_scene()
+
+    def _messages(self):
+        bpy.context.view_layer.update()
+        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.data.objects)]
+
+    def _context(self, obj, **values):
+        return SimpleNamespace(**{"object": obj, "scene": bpy.context.scene, "region": None, "space_data": None, "view_layer": bpy.context.view_layer, "selected_objects": [], **values})
+
+    def _texts(self, obj):
+        panel = FakePanel(self)
+        addon.panel.draw_components(panel.layout, self._context(obj), obj)
+        return panel.layout
+
+    def test_objects_left_out_export_only_their_own_components(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
+        _rigid_body(crate, shape="BOX")
+        crate.visible_shadow = False
+        add_component(crate, "CUSTOM", type_path="my_game::Helper", custom_json="{}")
+        _add_to(_collection("Ground", crate), "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
+        self.assertEqual([component["type"] for component in _native(crate)], ["custom", "rigid_body", "collider", "shadows", "navigation"])
+        self.assertNotIn("leave_out", self._texts(add_mesh(bpy.ops.mesh.primitive_cube_add, "plain", size=1, location=(4, 0, 0))).props())
+        layout = self._texts(crate)
+        self.assertIn("leave_out", layout.props())
+        self.assertIn("Collider from Physics", layout.texts())
+        crate.bevy_component_data.leave_out = True
+        self.assertEqual(_stored(crate)["components"], [{"type": "custom", "type_path": "my_game::Helper", "data": {}}])
+        layout = self._texts(crate)
+        self.assertIn("leave_out", layout.props())
+        self.assertNotIn("Collider from Physics", layout.texts())
+        self.assertNotIn("Navigation from Ground", layout.texts())
+        self.assertIn("Exports as plain glTF, without components from Blender's settings or collections", " ".join(layout.texts()))
+        self.assertIn("Helper", layout.texts())
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_rigid_body.draw(panel, self._context(crate))
+        self.assertIn("Left out of Bevy in Object > Game Components, so the game gets none of these settings", " ".join(panel.layout.texts()))
+        self.assertNotIn("gravity_scale", panel.layout.props())
+        panel = FakePanel(self)
+        addon.panel.draw_visibility(panel, SimpleNamespace(object=crate))
+        self.assertFalse(_prop_layout(panel.layout, "receive_shadows").active)
+        self.assertEqual(self._messages(), [])
+        with tempfile.TemporaryDirectory() as directory:
+            gltf = export_sample_scene(Path(directory) / "left_out.glb")
+        node = next(node for node in gltf["nodes"] if node["name"] == "crate")
+        self.assertEqual(_extras(gltf, node)["components"], [{"type": "custom", "type_path": "my_game::Helper", "data": {}}])
+        crate.bevy_component_data.leave_out = False
+        self.assertEqual(len(_stored(crate)["components"]), 5)
+
+    def test_left_out_data_objects_export_as_plain_glTF(self):
+        fog = add_mesh(bpy.ops.mesh.primitive_cube_add, "fog", size=2)
+        fog.data.materials.append(_volume_material("haze", {"Density": 0.5})[0])
+        lamp = add_light("lamp", "POINT", (0, 0, 3))
+        mirror = _add_object(bpy.ops.object.lightprobe_add, type="PLANE", location=(4, 0, 0))
+        speaker = _add_object(bpy.ops.object.speaker_add, location=(0, 4, 0))
+        hinge = add_empty("hinge", (0, 0, 0))
+        _constraint(hinge, "MOTOR")
+        self.assertEqual(sorted(self._messages()), sorted([
+            "hinge: Bevy has no Motor joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider",
+            f"{mirror.name}: Bevy has no planar reflections, so the game leaves this Light Probe out",
+            f"{speaker.name}: No sound picked, so nothing plays",
+        ]))
+        for obj in (fog, lamp, mirror, speaker, hinge):
+            obj.bevy_component_data.leave_out = True
+        self.assertEqual(self._messages(), [])
+        self.assertEqual(_native(fog), [])
+        self.assertEqual(_native(lamp), [])
+        with tempfile.TemporaryDirectory() as directory:
+            gltf = export_sample_scene(Path(directory) / "plain.glb")
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertIn("mesh", nodes["fog"])
+        self.assertNotIn("bevy_components", nodes["fog"].get("extras") or {})
+        self.assertNotIn("bevy_components", nodes["lamp"].get("extras") or {})
+        fog.bevy_component_data.leave_out = False
+        self.assertEqual([component["type"] for component in _native(fog)], ["fog_volume"])
+
+    def test_collections_leave_out_every_member(self):
+        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
+        _rigid_body(rock, "PASSIVE", "MESH")
+        pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
+        ground = _collection("Ground", rock, pebble)
+        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
+        reference = _collection("Reference")
+        blockout = _collection("Blockout", rock, parent=reference)
+        self.assertEqual([component["type"] for component in _native(rock)], ["rigid_body", "collider", "navigation"])
+        reference.bevy_component_data.leave_out = True
+        self.assertEqual(_components(rock), [])
+        self.assertNotIn("bevy_components", rock)
+        self.assertEqual(_components(pebble), [WALKABLE])
+        layout = self._texts(rock)
+        self.assertIn("Left out of Bevy by collection Reference", layout.texts())
+        self.assertIn("Reference", [getattr(properties, "collection", None) for text, properties, enabled in layout.buttons()])
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_physics_collisions.draw(panel, self._context(rock))
+        self.assertIn("Left out of Bevy by collection Reference, so the game gets none of these settings", " ".join(panel.layout.texts()))
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_collection_components.draw(panel, self._context(rock, collection=reference))
+        self.assertIn("leave_out", panel.layout.props())
+        self.assertIn("Every object in this collection and the collections inside it exports as plain glTF", " ".join(panel.layout.texts()))
+        self.assertNotIn("Link objects to it with Ctrl+L", " ".join(panel.layout.texts()))
+        blockout.bevy_component_data.leave_out = True
+        reference.bevy_component_data.leave_out = False
+        self.assertEqual(_components(rock), [])
+        blockout.objects.unlink(rock)
+        bpy.context.view_layer.update()
+        self.assertEqual([component["type"] for component in _components(rock)], ["rigid_body", "collider", "navigation"])
+
+    def test_left_out_compound_parents_free_their_children(self):
+        cart = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart", size=1)
+        _rigid_body(cart, shape="COMPOUND")
+        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel", radius=0.5, depth=0.2, location=(0, 0, -0.5))
+        wheel.parent = cart
+        _rigid_body(wheel, shape="CYLINDER")
+        self.assertEqual([component["type"] for component in _native(wheel)], ["collider"])
+        self.assertFalse(addon.panel.BEVY_PT_physics_rigid_body.poll(self._context(wheel)))
+        cart.bevy_component_data.leave_out = True
+        self.assertEqual([component["type"] for component in _native(wheel)], ["rigid_body", "collider"])
+        self.assertTrue(addon.panel.BEVY_PT_physics_rigid_body.poll(self._context(wheel)))
+        self.assertEqual(self._messages(), [])
+
+    def test_convert_keeps_components_on_left_out_objects(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
+        add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2))
+        crate.bevy_component_data.leave_out = True
+        converted, kept = addon.convert.convert_objects(bpy.context, [crate])
+        self.assertEqual(converted, [])
+        self.assertEqual(kept, [(crate, "it is left out of Bevy, so Blender's settings would not reach the game")])
+        self.assertIsNone(crate.rigid_body)
+        self.assertEqual([component["type"] for component in _stored(crate)["components"]], ["collider"])
+
+
 class TestValidation(unittest.TestCase):
     def setUp(self):
         clear_scene()

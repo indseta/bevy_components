@@ -2,6 +2,7 @@ import os
 
 import bpy
 
+from .collection import left_out
 from .metadata import MESH_SHAPES, WATTS_TO_LUMENS, serialize_component
 from .native import BLENDER_JOINTS, BLENDER_LAYERS, BLENDER_SHAPES, FOG_SETTINGS, JOINT_AXES, LIGHT_SETTINGS, MESH_TYPES, NATIVE_KINDS, NATIVE_SOURCES, PRINCIPLED_VOLUME, SPEAKER_SETTINGS, active_action, asset_path, blender_axes, blender_vector, compound_parent, fog_source, linear, native_components
 from .project import game_assets
@@ -498,6 +499,9 @@ def convert_objects(context, objects):
         for obj in objects:
             cards = _cards(obj)
             if not cards or obj.library is not None:
+                continue
+            if left_out(obj):
+                kept.append((obj, "it is left out of Bevy, so Blender's settings would not reach the game"))
                 continue
             duplicate = _duplicate(obj)
             if duplicate is not None:

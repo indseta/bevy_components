@@ -9,7 +9,7 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from .bsn import BsnError, crate_root, custom_literal, file_state, inside
-from .collection import COLLECTION_KINDS, collection_entries, collections_changed, from_collection
+from .collection import COLLECTION_KINDS, collection_entries, collections_changed, from_collection, left_out
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
 from .metadata import EXTRAS_KEY, component_errors, light_of, light_size, serialize_component, visibility_range_problems
@@ -391,7 +391,7 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
             name = component_name(entry.item)
             issues.append(Issue("WARNING", obj, entry.item, f"{entry.collection.name} and {', '.join(rival.name for rival in entry.rivals)} both give it {name} with different settings, so it uses {entry.collection.name}'s. Put one collection inside the other to choose"))
     constraint = getattr(obj, "rigid_body_constraint", None)
-    if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None:
+    if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None and not left_out(obj):
         issues.append(Issue("WARNING", obj, None, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"))
     issues.extend(_data_issues(obj))
     shape_keys = obj.data.shape_keys if obj.type == "MESH" else None
@@ -536,6 +536,8 @@ def _file_check(filepath, kind, library):
 
 def _data_issues(obj):
     issues = []
+    if left_out(obj):
+        return issues
     if obj.type == "LIGHT_PROBE" and obj.data.type == "PLANE" and not any(component_of(obj, kind) is not None for kind in FILE_KINDS):
         issues.append(Issue("WARNING", obj, None, "Bevy has no planar reflections, so the game leaves this Light Probe out"))
     if obj.type == "SPEAKER" and not obj.data.muted and component_of(obj, "AUDIO_PLAYER") is None:

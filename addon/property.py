@@ -237,6 +237,7 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
 
 class BEVY_PG_object_data(bpy.types.PropertyGroup):
     components: CollectionProperty(type=BEVY_PG_component)
+    leave_out: BoolProperty(name="Leave Out of Bevy", description="Export as plain glTF: Blender's physics, light, speaker, light probe and fog settings and the components of collections do not reach the game. On a collection, this counts for every object in it. Components added in Game Components still export", default=False, update=sync_changed)
 
 
 class BEVY_PG_physics(bpy.types.PropertyGroup):
