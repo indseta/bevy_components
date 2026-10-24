@@ -343,16 +343,16 @@ def collection_export(collection, source, directory):
 
 def _restore_active(scene, active):
     for layer in scene.view_layers:
-        found = _layer_collection(layer.layer_collection, active.get(layer.name))
+        found = layer_collection(layer.layer_collection, active.get(layer.name))
         if found is not None:
             layer.active_layer_collection = found
 
 
-def _layer_collection(layer_collection, collection):
-    if layer_collection.collection == collection:
-        return layer_collection
-    for child in layer_collection.children:
-        found = _layer_collection(child, collection)
+def layer_collection(layer, collection):
+    if layer.collection == collection:
+        return layer
+    for child in layer.children:
+        found = layer_collection(child, collection)
         if found is not None:
             return found
     return None

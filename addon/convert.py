@@ -6,7 +6,7 @@ from .collection import left_out
 from .metadata import MESH_SHAPES, WATTS_TO_LUMENS, serialize_component
 from .native import BLENDER_JOINTS, BLENDER_LAYERS, BLENDER_SHAPES, FOG_SETTINGS, JOINT_AXES, LIGHT_SETTINGS, MESH_TYPES, NATIVE_KINDS, NATIVE_SOURCES, PRINCIPLED_VOLUME, SPEAKER_SETTINGS, active_action, asset_path, blender_axes, blender_vector, compound_parent, fog_source, linear, native_components
 from .project import game_assets
-from .property import EVENTS_KEY, LAYER_COUNT
+from .property import LAYER_COUNT
 from .system import children_map, component_of, components_for, data_users, inherited, mesh_sources, owns_mesh, touch_object
 
 TOLERANCE = 1e-3
@@ -203,18 +203,21 @@ def _apply_joint(context, obj, joint, physics):
     physics.joint_angular_damping = joint.joint_angular_damping
 
 
-def _revert(context, obj, added):
+def _stored(group):
+    return {key: group[key].to_list() if hasattr(group[key], "to_list") else group[key] for key in group.keys()}
+
+
+def _revert(context, obj, added, stored):
     _active(context, obj)
     if "BODY" in added and obj.rigid_body is not None:
         bpy.ops.rigidbody.object_remove()
     if "JOINT" in added and obj.rigid_body_constraint is not None:
         bpy.ops.rigidbody.constraint_remove()
     physics = obj.bevy_physics
-    for name in physics.bl_rna.properties.keys():
-        if name != "rna_type":
-            physics.property_unset(name)
-    if EVENTS_KEY in physics:
-        del physics[EVENTS_KEY]
+    for key in list(physics.keys()):
+        del physics[key]
+    for key, value in stored.items():
+        physics[key] = value
 
 
 def _differences(obj, expected):
@@ -278,6 +281,7 @@ def _convert_physics(context, obj, cards, children, shared):
         return reason
     expected = {**{item.component_type: serialize_component(item) for item in native_components(obj) if item.component_type in PHYSICS_KINDS}, **_expected(obj, cards)}
     physics = obj.bevy_physics
+    stored = _stored(physics)
     added = set()
     if "COLLIDER" in cards or "RIGID_BODY" in cards:
         _apply_body(context, obj, cards, physics, shared)
@@ -287,7 +291,7 @@ def _convert_physics(context, obj, cards, children, shared):
         added.add("JOINT")
     differences = _differences(obj, expected)
     if differences:
-        _revert(context, obj, added)
+        _revert(context, obj, added, stored)
         return _difference_reason(differences)
     return None
 

@@ -35,7 +35,7 @@ Physics uses Blender's own **Rigid Body** and **Rigid Body Constraint** in **Pro
 - **Shape**: Box, Sphere, Capsule, Cylinder and Cone take their size from the mesh and sit on the object's origin, as they do in Blender. Convex Hull and Mesh use the object's own mesh, not its children's. **Compound Parent** makes one body from the direct children that have a Rigid Body: only their shapes count.
 - **Collision Collections** become Avian collision layers 0 to 19, so two objects collide when they share a collection.
 - **Rigid Body Constraint**: Fixed, Point, Hinge and Slider become Avian's fixed, ball, hinge and slider joints with their limits. A hinge turns around the constraint object's Z axis and a slider moves along its X axis. Piston, Generic, Generic Spring and Motor have no Avian joint, so the game leaves them out.
-- **Scene > Gravity**: when the scene has a Rigid Body World and its gravity differs from Earth's, the scene sets Avian's `Gravity` when it loads.
+- **Scene > Gravity**: when the scene has a Rigid Body World and its gravity differs from Earth's, the scene sets Avian's `Gravity` when it loads, and the gravity from before comes back when the scene is despawned or reloads without it.
 
 **Object > Rigid Body > Copy from Active with Bevy Settings** copies the active object's Rigid Body to the selected meshes like Blender's **Copy from Active**, and also its Bevy settings, which Blender's leaves out.
 

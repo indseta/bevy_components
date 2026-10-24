@@ -181,7 +181,9 @@ def _check_list(objects, destination, animations, modifiers):
         for pointer in _shared_items(obj):
             shared.setdefault(pointer, obj)
     for pointer, obj in shared.items():
-        item = next(item for item in components_for(obj) if from_collection(item) and item.as_pointer() == pointer)
+        item = next((item for item in components_for(obj) if from_collection(item) and item.as_pointer() == pointer), None)
+        if item is None:
+            continue
         issues.extend(Issue(level, obj, item, f"{message}, in collection {item.id_data.name}") for level, message in _item_issues(item, set()))
     issues.extend(_visibility_range_issues(objects))
     return issues

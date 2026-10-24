@@ -27,6 +27,17 @@
 - The checks behind the problem count, each component's warnings, Validate All Objects and the export run again only for objects that changed, so with 2000 objects they take about 15 ms instead of 180 ms when little changed. Adding, duplicating or deleting an object no longer makes every check or preview start over.
 - Play runs the same export as Export Again instead of calling its operator, so when texture compression fails, Play says why.
 
+### Fixed
+
+- Changing a setting of Blender's Rigid Body or Rigid Body Constraint, such as a hinge limit or a collision shape, updates the checks and the problem count right away.
+- When **Convert Physics to Blender** keeps an object as it was, its Bevy joint and body settings stay too.
+- **Paste Components** and presets that hold only a body or only a joint keep the object's Bevy settings for the other one.
+- Sphere Light Probes no longer show the box resize handle of Reflection Probes.
+- The checks no longer stop when a script removes a collection's components.
+- Sounds and other files in an `assets` folder inside another one follow the game project's `Cargo.toml`, also when it is added after the file was first exported.
+- **Bake Lighting** leaves out meshes hidden by a **Collision Only** collider, as the game does, and moving them no longer marks a bake out of date.
+- Importer: when a scene that set `Gravity` is despawned or reloads without it, the gravity from before comes back.
+
 ### Removed
 
 - The **BSN export** (**File > Export > Bevy Scene (BSN)**) is gone, so the addon writes GLB files only and the importer is the one way into Bevy. Its settings, the **Enum Type** of enum fields in **Bevy Custom Components** and the `enums` entry in custom component extras, which only that export read, went with it. Files that used it still open and export their GLB.

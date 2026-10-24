@@ -8,7 +8,7 @@ from bpy.app.handlers import persistent
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
-from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, baked_sky, lighting_jobs, sky_job, unwrap_lightmap
+from .bake import BackgroundBake, bake_command, bake_hidden, bake_jobs, bake_summary, baked_sky, lighting_jobs, sky_job, unwrap_lightmap
 from .export import PROGRESS_INTERVAL, ExportCancelled, ExportError, SceneExport, again, cancel_exports, export_path, finish_export, remembered, running_export, scene_issues, start_export
 from .files import snake_case
 from .fingerprint import bake_record
@@ -17,7 +17,7 @@ from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .native import asset_path
 from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command
-from .prefab import find_collection
+from .prefab import find_collection, layer_collection
 from .preferences import draw_encoder_status
 from .probe import FILE_KINDS
 from .project import game_assets, game_folder, play_target
@@ -1017,7 +1017,8 @@ class BEVY_OT_show_collection(bpy.types.Operator):
         return context.view_layer is not None
 
     def execute(self, context):
-        layer = _layer_collection(context.view_layer.layer_collection, self.collection)
+        collection = find_collection(self.collection)
+        layer = layer_collection(context.view_layer.layer_collection, collection) if collection is not None else None
         if layer is None:
             self.report({"WARNING"}, f"{self.collection} is not in the current view layer")
             return {"CANCELLED"}
@@ -1025,12 +1026,6 @@ class BEVY_OT_show_collection(bpy.types.Operator):
         if context.space_data is not None and context.space_data.type == "PROPERTIES":
             context.space_data.context = "COLLECTION"
         return {"FINISHED"}
-
-
-def _layer_collection(layer, name):
-    if layer.collection.name_full == name:
-        return layer
-    return next((found for found in (_layer_collection(child, name) for child in layer.children) if found is not None), None)
 
 
 class BEVY_OT_validate(bpy.types.Operator):
@@ -1663,7 +1658,7 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         job_path = Path(self._directory.name) / "bake.json"
         try:
             bpy.ops.wm.save_as_mainfile(filepath=str(blend), copy=True, check_existing=False)
-            job_path.write_text(json.dumps({"scene": context.scene.name, "view_layer": context.view_layer.name, "samples": settings.samples, "lamp_direct": settings.lamp_direct, "jobs": self._jobs}), encoding="utf-8")
+            job_path.write_text(json.dumps({"scene": context.scene.name, "view_layer": context.view_layer.name, "samples": settings.samples, "lamp_direct": settings.lamp_direct, "hidden": bake_hidden(context.scene), "jobs": self._jobs}), encoding="utf-8")
             self._task = BackgroundBake(bake_command(binary, blend, job_path), len(self._jobs), scratch=self._directory.name)
         except (RuntimeError, OSError) as error:
             self._release()

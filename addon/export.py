@@ -183,18 +183,21 @@ class SceneExport:
         settings = prefab_settings(self.options)
         own = collection is not None and collection.bevy_prefab.enabled and prefab_file(collection) == self.path
         self._own = prefab_fingerprint(collection, settings, self.scene) if own else None
-        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
+        stale = []
         for nested in prefab_order(self.objects)[0]:
             target = prefab_file(nested)
             fingerprint = prefab_fingerprint(nested, settings, self.scene)
-            if prefab_fresh(nested, target, fingerprint):
-                continue
-            path = Path(self.directory) / f"prefab_{len(self.prefabs)}.glb"
-            self._export_gltf(path, nested, target.parent)
-            gltf, binary = _embed(*read_glb(path.read_bytes()))
-            self.prefabs.append(SimpleNamespace(collection=nested, target=target, fingerprint=fingerprint, gltf=gltf, binary=binary, jobs=[]))
+            if not prefab_fresh(nested, target, fingerprint):
+                stale.append((nested, target, fingerprint))
+        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
         path = Path(self.directory) / "scene.glb"
-        self._export_gltf(path, collection, self.path.parent)
+        with rest_frame(self.scene):
+            for nested, target, fingerprint in stale:
+                written = Path(self.directory) / f"prefab_{len(self.prefabs)}.glb"
+                self._export_gltf(written, nested, target.parent)
+                gltf, binary = _embed(*read_glb(written.read_bytes()))
+                self.prefabs.append(SimpleNamespace(collection=nested, target=target, fingerprint=fingerprint, gltf=gltf, binary=binary, jobs=[]))
+            self._export_gltf(path, collection, self.path.parent)
         if self.encoder is None and not _has_probes(self.objects) and not _embeds_sky(self.scene):
             self._scene = path.read_bytes()
             return
@@ -244,7 +247,7 @@ class SceneExport:
         options = self.options
         limited = collection is None
         try:
-            with rest_frame(self.scene), collection_export(collection, self.scene, directory) if collection is not None else scene_export(directory):
+            with collection_export(collection, self.scene, directory) if collection is not None else scene_export(directory):
                 result = bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True, use_active_scene=True, use_selection=limited and options.selected_only, use_visible=limited and options.visible_only, use_renderable=limited and options.renderable_only, export_apply=options.apply_modifiers, export_lights=options.include_lights, export_cameras=options.include_cameras, export_animations=options.include_animations, export_anim_slide_to_zero=True, check_existing=False)
         except Exception as error:
             raise ExportError(f"GLB export failed: {error}") from error

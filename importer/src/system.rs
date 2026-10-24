@@ -220,13 +220,25 @@ pub fn decode_extras(value: &str, name: Option<&Name>) -> Option<ExportedData> {
     return Some(exported);
 }
 
-pub fn apply_scene_physics(mut commands: Commands, scenes: Query<(Entity, &GltfSceneExtras, Option<&Name>), Without<DecodedScenePhysics>>) {
+pub fn clear_scene_physics(mut commands: Commands, source: Option<Res<GravitySource>>, scenes: Query<(), With<GltfSceneExtras>>) {
+    let Some(source) = source else { return; };
+    if scenes.contains(source.scene) {
+        return;
+    }
+    commands.insert_resource(Gravity(source.previous));
+    commands.remove_resource::<GravitySource>();
+}
+
+pub fn apply_scene_physics(mut commands: Commands, gravity: Option<Res<Gravity>>, source: Option<Res<GravitySource>>, scenes: Query<(Entity, &GltfSceneExtras, Option<&Name>), Without<DecodedScenePhysics>>) {
+    let mut previous = source.map(|source| source.previous).or(gravity.map(|gravity| gravity.0));
     for (entity, extras, name) in &scenes {
         commands.entity(entity).insert(DecodedScenePhysics);
         let Some(exported) = decode_extras(&extras.value, name) else { continue; };
         for component in exported.components {
             if let ExportedComponent::Gravity { value } = component {
+                let restored = *previous.get_or_insert(Gravity::default().0);
                 commands.insert_resource(Gravity(Vec3::from_array(value)));
+                commands.insert_resource(GravitySource { scene: entity, previous: restored });
             }
         }
     }

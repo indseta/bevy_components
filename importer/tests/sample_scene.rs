@@ -878,6 +878,23 @@ fn scene_gravity_replaces_avian_gravity() {
 }
 
 #[test]
+fn scene_gravity_goes_back_when_its_scene_is_gone() {
+    let mut app = single_threaded_app();
+    app.insert_resource(Gravity(Vec3::NEG_Y * 20.0));
+    let moon = app.world_mut().spawn((Name::new("moon"), gravity_extras([0.0, -1.62, 0.0]))).id();
+    app.update();
+    assert_eq!(app.world().resource::<Gravity>().0, Vec3::new(0.0, -1.62, 0.0));
+    app.world_mut().despawn(moon);
+    let mars = app.world_mut().spawn((Name::new("mars"), gravity_extras([0.0, -3.7, 0.0]))).id();
+    app.update();
+    assert_eq!(app.world().resource::<Gravity>().0, Vec3::new(0.0, -3.7, 0.0));
+    app.world_mut().despawn(mars);
+    app.world_mut().spawn((Name::new("earth"), scene_extras(None)));
+    app.update();
+    assert_eq!(app.world().resource::<Gravity>().0, Vec3::NEG_Y * 20.0);
+}
+
+#[test]
 fn masses_set_the_total_body_mass() {
     let mut app = load_scene(SCENE);
     let world = app.world_mut();
