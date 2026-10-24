@@ -31,7 +31,7 @@ impl Plugin for BlenderBevyComponentsPlugin {
         app.register_type::<component::NavigationObstacle>();
         app.add_systems(SpawnScene, (system::read_gltf_components, system::apply_default_bodies, system::build_joints, system::spawn_scene_references, system::play_animations, system::apply_mesh_components, system::build_colliders, system::apply_navigation).chain().after(SceneSpawnerSystems::WorldInstanceSpawn));
         app.add_systems(SpawnScene, system::apply_reflection_probes.after(system::read_gltf_components));
-        app.add_systems(SpawnScene, system::apply_scene_physics.after(SceneSpawnerSystems::WorldInstanceSpawn));
+        app.add_systems(SpawnScene, (system::clear_scene_physics, system::apply_scene_physics).chain().after(SceneSpawnerSystems::WorldInstanceSpawn));
     }
 
     fn finish(&self, app: &mut App) {

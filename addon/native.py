@@ -1,6 +1,5 @@
 import os
 from contextlib import contextmanager
-from functools import lru_cache
 from math import sqrt
 from pathlib import Path
 
@@ -217,13 +216,12 @@ def linear(value):
     return value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
 
 
-@lru_cache(maxsize=256)
 def asset_path(path):
     path = Path(path)
     folders = [parent for parent in path.parents if parent.name.lower() == "assets"]
     if not folders:
         return path.name, None
-    root = next((folder for folder in folders if (folder.parent / "Cargo.toml").is_file()), folders[0])
+    root = folders[0] if len(folders) == 1 else next((folder for folder in folders if (folder.parent / "Cargo.toml").is_file()), folders[0])
     return path.relative_to(root).as_posix(), root
 
 

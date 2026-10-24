@@ -151,6 +151,12 @@ pub struct DefaultStaticBody;
 #[derive(Component)]
 pub struct DecodedScenePhysics;
 
+#[derive(Resource)]
+pub struct GravitySource {
+    pub scene: Entity,
+    pub previous: Vec3,
+}
+
 #[derive(Component)]
 pub struct ProcessedMesh;
 

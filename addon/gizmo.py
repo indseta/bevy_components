@@ -116,7 +116,7 @@ def handle_item(obj, settings):
     if settings.colliders and collider is not None and not is_native(collider) and collider.collider_shape in PRIMITIVE_SHAPES:
         return collider
     if settings.volumes:
-        return next((item for item in components_for(obj) if item.component_type in VOLUME_TYPES), None)
+        return next((item for item in components_for(obj) if item.component_type in VOLUME_TYPES and not is_native(item)), None)
     return None
 
 

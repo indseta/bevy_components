@@ -17,7 +17,7 @@ from mathutils import Matrix
 from .metadata import WATTS_TO_LUMENS
 from .probe import FILE_KINDS, ktx2_rgb9e5, ktx2_rgba16f
 from .native import fog_source, is_native, native_components
-from .system import component_of, components_for, lightmap_uv_map
+from .system import collision_only_meshes, component_of, components_for, lightmap_uv_map
 
 PACKAGE = "bevy_components_bake"
 PROGRESS_PREFIX = "BEVY_BAKE_PROGRESS"
@@ -417,9 +417,14 @@ def _render_changes(scene, camera, size, path):
     return changes + [(image, "file_format", "OPEN_EXR"), (image, "color_mode", "RGBA"), (image, "color_depth", "32")]
 
 
-def bake_jobs(scene, view_layer, jobs, samples, lamp_direct):
-    fog = [(obj, "hide_render", True) for obj in scene.objects if not obj.hide_render and fog_source(obj) is not None]
-    with _changed((scene.render, "engine", "CYCLES"), (scene.cycles, "samples", samples), *fog):
+def bake_hidden(scene):
+    hidden = collision_only_meshes(scene.objects)
+    return sorted(obj.name for obj in scene.objects if not obj.hide_render and (fog_source(obj) is not None or obj in hidden))
+
+
+def bake_jobs(scene, view_layer, jobs, samples, lamp_direct, hidden=None):
+    unseen = [(scene.objects[name], "hide_render", True) for name in (bake_hidden(scene) if hidden is None else hidden) if name in scene.objects and not scene.objects[name].hide_render]
+    with _changed((scene.render, "engine", "CYCLES"), (scene.cycles, "samples", samples), *unseen):
         for job in jobs:
             if job["kind"] == "SKY":
                 data = bake_sky(scene, job)
@@ -450,7 +455,7 @@ def run(job_path):
     bpy.app.handlers.render_stats.append(_print_samples)
     try:
         with bpy.context.temp_override(scene=scene, view_layer=view_layer):
-            for done, _job in enumerate(bake_jobs(scene, view_layer, settings["jobs"], settings["samples"], settings["lamp_direct"]), start=1):
+            for done, _job in enumerate(bake_jobs(scene, view_layer, settings["jobs"], settings["samples"], settings["lamp_direct"], settings.get("hidden")), start=1):
                 print(f"{PROGRESS_PREFIX} {done}", flush=True)
     except Exception as error:
         print(f"{ERROR_PREFIX} {error}", flush=True)

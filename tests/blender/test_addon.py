@@ -2804,6 +2804,9 @@ class TestViewport(unittest.TestCase):
             self.settings.volumes = True
         collider.collider_shape = "SPHERE"
         self.assertEqual(addon.gizmo._get_handle_value(0), 0.5)
+        sphere = _add_object(bpy.ops.object.lightprobe_add, type="SPHERE")
+        self.assertEqual(addon.system.component_kinds(sphere), {"REFLECTION_PROBE"})
+        self.assertIsNone(addon.gizmo.handle_item(sphere, self.settings))
 
     def test_convex_hull_preview_is_the_real_hull(self):
         collider = add_component(self.obj, "COLLIDER", collider_shape="CONVEX")
@@ -3174,6 +3177,8 @@ class TestWorkflow(unittest.TestCase):
         self.assertIsNone(marker.rigid_body)
         self.assertEqual(_stored(marker)["components"], [{"type": "custom", "type_path": "my_game::Crate", "data": {}}])
         rocks = [add_mesh(bpy.ops.mesh.primitive_cube_add, f"rock_{index}", location=(index * 3, 4, 0)) for index in range(2)]
+        _constraint(rocks[0], "HINGE", crate)
+        rocks[0].bevy_physics.joint_angular_damping = 3.0
         context = SimpleNamespace(object=crate, selected_objects=[crate, *rocks], mode="OBJECT")
         self.assertTrue(addon.operator.BEVY_OT_copy_physics.poll(context))
         self.assertEqual(_execute(addon.operator.BEVY_OT_copy_physics, context), ({"FINISHED"}, [({"INFO"}, "Copied subject's Rigid Body to 2 objects")]))
@@ -3181,6 +3186,7 @@ class TestWorkflow(unittest.TestCase):
             self.assertEqual((rock.rigid_body.mass, rock.bevy_physics.gravity_scale, rock.bevy_physics.sensor), (4.0, 0.5, True))
             self.assertTrue(rock.visible_shadow)
             self.assertEqual(len(rock.bevy_component_data.components), 0)
+        self.assertEqual(rocks[0].bevy_physics.joint_angular_damping, 3.0)
         frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", location=(0, 8, 0))
         _rigid_body(frame, "PASSIVE", "BOX")
         hinge = add_empty("hinge", (0, 10, 0))
@@ -3764,6 +3770,21 @@ class TestNativePhysics(unittest.TestCase):
         clear_scene()
         self.assertEqual(bpy.ops.bevy_components.convert_to_native(), {"CANCELLED"})
 
+    def test_failed_conversions_keep_the_bevy_physics_settings(self):
+        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door", size=2)
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", size=2, location=(3, 0, 0))
+        bpy.context.view_layer.objects.active = door
+        bpy.ops.rigidbody.world_add()
+        bpy.ops.rigidbody.constraint_add(type="HINGE")
+        door.rigid_body_constraint.object1 = frame
+        door.bevy_physics.joint_angular_damping = 2.0
+        door.bevy_physics.joint_use_swing = True
+        add_component(door, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_offset=(0.0, 1.0, 0.0))
+        converted, kept = addon.convert.convert_objects(bpy.context, [door])
+        self.assertEqual((list(converted), [(obj.name, reason) for obj, reason in kept]), ([], [("door", "its collider's size or offset differs from the mesh, which Blender's shape always fits")]))
+        self.assertIsNone(door.rigid_body)
+        self.assertEqual((door.rigid_body_constraint.type, door.bevy_physics.joint_angular_damping, door.bevy_physics.joint_use_swing), ("HINGE", 2.0, True))
+
     def test_convert_keeps_default_layers_that_other_colliders_rely_on(self):
         wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", size=2)
         add_component(wall, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2))
@@ -4197,6 +4218,15 @@ class TestCollectionComponents(unittest.TestCase):
         addon.menu.BEVY_MT_select_by_component.draw(menu, bpy.context)
         self.assertIn(("CUSTOM", "my_game::Ground"), [(properties.component_type, getattr(properties, "type_path", "")) for text, properties, enabled in menu.layout.buttons()])
 
+    def test_checks_survive_collection_components_removed_from_a_script(self):
+        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
+        ground = _collection("Ground", rock)
+        _add_to(ground, "CUSTOM", type_path="my_game::Ground", custom_json="{")
+        with mock.patch.object(addon.validation, "_caching", lambda: True):
+            self.assertEqual(self._messages(), ["rock: invalid JSON in Custom Component, in collection Ground"])
+            ground.bevy_component_data.components.clear()
+            self.assertNotIn("rock: invalid JSON in Custom Component, in collection Ground", self._messages())
+
     def test_collections_give_their_components_to_every_member(self):
         rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
         pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
@@ -4518,6 +4548,25 @@ class TestValidation(unittest.TestCase):
     def test_sample_scene_is_clean(self):
         build_sample_scene()
         self.assertEqual(self._messages(), [])
+
+    def test_checks_follow_blender_physics_settings(self):
+        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door")
+        _rigid_body(door, "ACTIVE", "BOX")
+        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", location=(3, 0, 0))
+        _rigid_body(wall, "PASSIVE", "BOX")
+        hinge = add_empty("hinge", (1.5, 0, 0))
+        constraint = _constraint(hinge, "HINGE", door, wall)
+        constraint.use_limit_ang_z = True
+        constraint.limit_ang_z_lower = -0.5
+        constraint.limit_ang_z_upper = 0.5
+        bpy.context.view_layer.update()
+        with mock.patch.object(addon.validation, "_caching", lambda: True):
+            self.assertEqual(self._messages(), [])
+            constraint.limit_ang_z_lower = 1.0
+            self.assertIn("hinge: Joint limit Min is above Max", self._messages())
+            constraint.limit_ang_z_lower = -0.5
+            door.rigid_body.collision_shape = "MESH"
+            self.assertEqual(self._messages(), ["door: Triangle meshes collide poorly on Dynamic bodies, use Convex Hull"])
 
     def test_checks_run_again_only_for_objects_that_changed(self):
         crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate")
@@ -5662,6 +5711,13 @@ class TestPlay(unittest.TestCase):
         reference.scene_file = str(self.project / "assets" / "tree.glb")
         self.assertEqual(addon.validation.check_game_paths(bpy.data.objects, self.glb, assets), [])
 
+    def test_nested_assets_folders_follow_the_game_project(self):
+        sound = Path(self.directory.name) / "studio" / "assets" / "sfx" / "assets" / "hit.ogg"
+        self.assertEqual(addon.native.asset_path(str(sound)), ("hit.ogg", sound.parent))
+        (Path(self.directory.name) / "studio" / "Cargo.toml").parent.mkdir(parents=True, exist_ok=True)
+        (Path(self.directory.name) / "studio" / "Cargo.toml").write_text("[package]\n")
+        self.assertEqual(addon.native.asset_path(str(sound)), ("sfx/assets/hit.ogg", sound.parents[2]))
+
     def test_the_game_schema_is_read_from_the_game_project(self):
         (self.project / SCHEMA.name).write_bytes(SCHEMA.read_bytes())
         self.preferences.game_folder = str(self.project)
@@ -6110,6 +6166,19 @@ class TestBakeLighting(unittest.TestCase):
             face, row, column = _cube_texel(_bevy_lookup(holder, item, direction), 64)
             self.assertTrue(numpy.allclose(pixels[face, row, column, :3], color, atol=0.1), f"{direction} looks up {pixels[face, row, column]}")
         self.assertTrue(numpy.all(pixels[..., 3] == 1.0))
+
+    def test_bakes_leave_out_collision_only_meshes(self):
+        room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64", volume_size=(4.0, 4.0, 4.0))
+        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", size=6)
+        _emissive(wall, (1.0, 0.0, 0.0))
+        add_component(wall, "COLLIDER", collider_collision_only=True)
+        self.assertEqual(addon.bake.bake_hidden(self.scene), ["wall"])
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="room", index=0), {"FINISHED"})
+        self.assertFalse(wall.hide_render)
+        pixels = _ktx2_pixels(reflection.probe_file)
+        self.assertLess(float(pixels[..., 0].mean() - pixels[..., 1].mean()), 0.05)
+        wall.location.x = 0.5
+        self.assertEqual(addon.validation.stale_bakes(bpy.data.objects), [])
 
     def test_the_sky_holds_the_world_alone(self):
         world = self.scene.world

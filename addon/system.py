@@ -35,6 +35,7 @@ PROBLEM_CHANGES = [0, 0.0]
 SCHEMA_CHECK_INTERVAL = 1.0
 
 SUMMARY_LIMIT = 8192
+JOINT_SETTINGS = "joint_"
 _resolved = [None]
 _skipped = [None]
 _summaries = {}
@@ -250,6 +251,16 @@ def collider_sources(obj, children, item, instances=True):
     if getattr(item, "collider_own_mesh", False):
         return [(obj, obj.matrix_world)] if has_faces(obj) else []
     return mesh_sources(obj, children, "COLLIDER", instances)
+
+
+def collision_only_meshes(objects):
+    children = children_map(objects)
+    hidden = set()
+    for obj in objects:
+        collider = component_of(obj, "COLLIDER")
+        if collider is not None and collider.collider_collision_only:
+            hidden.update(source for source, _matrix in collider_sources(obj, children, collider, instances=False))
+    return hidden
 
 
 def export_settings(scene):
@@ -496,13 +507,14 @@ def _restore_struct(struct, data, owner):
             continue
 
 
-def _replace_group(group, data, owner):
+def _replace_group(group, data, owner, replaced=lambda name: True):
     for name in group.bl_rna.properties.keys():
-        if name != "rna_type":
+        if name != "rna_type" and replaced(name):
             group.property_unset(name)
     for name in list(group.keys()):
-        del group[name]
-    restore_component(group, data, owner)
+        if replaced(name):
+            del group[name]
+    restore_component(group, {name: value for name, value in data.items() if replaced(name)}, owner)
 
 
 def blender_snapshot(obj, references=True, physics_only=False):
@@ -560,14 +572,15 @@ def paste_blender(obj, data):
     if obj.library is not None:
         return 0
     pasted = 0
-    physics = False
+    pasted_body = False
+    pasted_joint = False
     body = data.get("rigid_body")
     if isinstance(body, dict) and obj.type == "MESH":
         if obj.rigid_body is None:
             _with_active(obj, bpy.ops.rigidbody.object_add)
         if obj.rigid_body is not None:
             _restore_struct(obj.rigid_body, body, obj)
-            physics = True
+            pasted_body = True
             pasted += 1
     constraint = data.get("rigid_body_constraint")
     if isinstance(constraint, dict):
@@ -575,10 +588,10 @@ def paste_blender(obj, data):
             _with_active(obj, _add_constraint)
         if obj.rigid_body_constraint is not None:
             _restore_struct(obj.rigid_body_constraint, constraint, obj)
-            physics = True
+            pasted_joint = True
             pasted += 1
-    if physics and isinstance(data.get("bevy_physics"), dict):
-        _replace_group(obj.bevy_physics, data["bevy_physics"], obj)
+    if (pasted_body or pasted_joint) and isinstance(data.get("bevy_physics"), dict):
+        _replace_group(obj.bevy_physics, data["bevy_physics"], obj, lambda name: pasted_joint if name.startswith(JOINT_SETTINGS) else pasted_body)
     shadows = data.get("shadows")
     if isinstance(shadows, dict) and obj.type in MESH_TYPES:
         obj.visible_shadow = bool(shadows.get("cast", True))
