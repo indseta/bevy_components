@@ -3,9 +3,10 @@ from fnmatch import fnmatchcase
 
 import bpy
 
+from .collection import collection_entries, from_collection
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, cascades_invalid, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_bsn, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_collection, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
 from .native import JOINTS, MESH_TYPES, NATIVE_SOURCES, PRINCIPLED_VOLUME, PROBE_KINDS, UNSUPPORTED_JOINTS, active_action, asset_path, compound_parent, is_native, native_components, rigid_body_kind, sound_file, volume_shader
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
 from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
@@ -13,7 +14,7 @@ from .project import game_folder, play_target
 from .property import COMPONENT_LABELS, FIELD_LABELS, JOINT_LABELS, LAYER_COUNT
 from .schema import short_name
 from .system import ambient_light, component_index, components_for, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
-from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
+from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, collection_issues, component_name, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
 BODY_LABELS = {
@@ -488,8 +489,61 @@ def draw_components(layout, context, obj):
         draw_message(layout, f"Part of prefab {owner.name}, so it exports to the prefab's GLB file and not with the scene", icon="INFO", width=width)
     _draw_autoplay(layout, obj, issues, width)
     _draw_native(layout, context, obj, issues, width)
+    _draw_inherited(layout, obj, issues, width)
     for index, item in enumerate(obj.bevy_component_data.components):
         _draw_component(layout, context, obj, index, item, issues)
+
+
+def _issue_icon(issues, icon):
+    if not issues:
+        return icon
+    return "CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR"
+
+
+def _draw_inherited(layout, obj, issues, width):
+    entries = collection_entries(obj)
+    if not entries:
+        return
+    used = [item for item in components_for(obj) if from_collection(item)]
+    checked = {}
+    column = layout.column(align=True)
+    for entry in entries:
+        name = component_name(entry.item)
+        replaced = not any(item == entry.item for item in used)
+        if entry.collection not in checked:
+            checked[entry.collection] = collection_issues(entry.collection)
+        found = [] if replaced else [issue for issue in issues + checked[entry.collection] if issue.item == entry.item]
+        row = column.row(align=True)
+        row.active = not replaced
+        row.label(text=f"{name} from {entry.collection.name}", icon=_issue_icon(found, COMPONENT_LABELS[entry.item.component_type][1]))
+        row.operator(BEVY_OT_show_collection.bl_idname, text="", icon="OUTLINER_COLLECTION", emboss=False).collection = entry.collection.name_full
+        if replaced:
+            note = column.column(align=True)
+            note.active = False
+            draw_message(note, f"Replaced by the {name} on this object", icon="BLANK1", width=width)
+        for issue in found:
+            draw_message(column, issue.message, icon="BLANK1", width=width)
+
+
+def draw_collection_components(layout, context, collection):
+    layout.context_pointer_set("bevy_collection", collection)
+    width = context.region.width if context.region else 300
+    row = layout.row()
+    row.enabled = collection.library is None
+    row.menu(BEVY_MT_component_add.bl_idname, text="Add Component", icon="ADD")
+    items = collection.bevy_component_data.components
+    if collection.library is not None:
+        draw_message(layout, f"Linked from {collection.library.name}, so edit its components in that file", icon="LIBRARY_DATA_DIRECT", width=width)
+    if not len(items):
+        draw_message(layout, "Every object in this collection and the collections inside it gets the components added here. Link objects to it with Ctrl+L > Link to Collection, so they stay in their other collections", icon="INFO", width=width)
+        return
+    members = len(collection.all_objects)
+    draw_message(layout, f"{count(members, 'object')} {'gets' if members == 1 else 'get'} these components, unless the object or a collection inside this one sets its own", icon="INFO", width=width)
+    issues = collection_issues(collection)
+    column = layout.column()
+    column.enabled = collection.library is None
+    for index, item in enumerate(items):
+        _draw_component(column, context, collection, index, item, issues)
 
 
 def _native_issues(issues, kind):
@@ -1091,6 +1145,22 @@ class BEVY_PT_scene_collision_layers(bpy.types.Panel):
         grid = layout.grid_flow(row_major=False, columns=2, even_columns=True, align=True)
         for layer in range(LAYER_COUNT):
             grid.prop(layers, f"layer_{layer}", text=str(layer))
+
+
+class BEVY_PT_collection_components(bpy.types.Panel):
+    bl_label = "Bevy Components"
+    bl_idname = "BEVY_PT_collection_components"
+    bl_space_type = "PROPERTIES"
+    bl_region_type = "WINDOW"
+    bl_context = "collection"
+
+    @classmethod
+    def poll(cls, context):
+        collection = getattr(context, "collection", None)
+        return collection is not None and context.scene is not None and collection != context.scene.collection
+
+    def draw(self, context):
+        draw_collection_components(self.layout, context, context.collection)
 
 
 class BEVY_PT_collection_prefab(bpy.types.Panel):

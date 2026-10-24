@@ -11,6 +11,7 @@ import bpy
 from mathutils import Quaternion, Vector
 
 from .bsn import snake_case
+from .collection import with_collections
 from .metadata import EXTRAS_KEY, SCHEMA_VERSION, addon_version, relative_path, serialize_items
 from .native import with_native
 
@@ -173,7 +174,7 @@ def _id_properties(owner, skipped=()):
 
 
 def _components(obj):
-    items = with_native(obj, [item for item in obj.bevy_component_data.components if item.enabled and item.component_type])
+    items = with_collections(obj, with_native(obj, [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]))
     try:
         return serialize_items(items, lambda path: str(Path(os.path.abspath(bpy.path.abspath(path, library=obj.library)))) if path.strip() else "")
     except ValueError as error:

@@ -10,9 +10,10 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
+from .collection import from_collection
 from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cone_shape_lines, cuboid_lines, cylinder_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
 from .metadata import EXTRAS_KEY, PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit, serialize_items
-from .native import native_components
+from .native import is_native
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .schema import short_name
@@ -420,8 +421,13 @@ def _settings_key(settings):
 
 
 def _native_key(obj):
-    natives = native_components(obj)
-    return serialize_items(natives) if natives else None
+    inferred = [item for item in components_for(obj) if is_native(item) or from_collection(item)]
+    if not inferred:
+        return None
+    try:
+        return serialize_items(inferred)
+    except ValueError as error:
+        return str(error)
 
 
 def _stored_key(obj):

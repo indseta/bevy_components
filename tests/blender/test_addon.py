@@ -555,9 +555,10 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_prefab"))
-        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component"):
+        self.assertTrue(hasattr(bpy.types.Collection, "bevy_component_data"))
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_components_bsn", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "bevy_components.show_collection"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_components", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
@@ -3975,6 +3976,225 @@ class TestNativeLighting(unittest.TestCase):
             self.assertEqual(len(obj.bevy_component_data.components), 0, obj.name)
         self.assertEqual(bpy.ops.bevy_components.convert_to_native(), {"FINISHED"})
         self.assertEqual(len([obj for obj in bpy.data.objects if obj.parent == bell]), 1)
+
+
+WALKABLE = {"type": "navigation", "kind": "walkable", "cost": 2.0}
+
+
+def _collection(name, *objects, parent=None):
+    collection = bpy.data.collections.new(name)
+    (parent or bpy.context.scene.collection).children.link(collection)
+    for obj in objects:
+        collection.objects.link(obj)
+    return collection
+
+
+def _add_to(collection, kind, type_path="", **values):
+    with bpy.context.temp_override(bevy_collection=collection):
+        if "FINISHED" not in bpy.ops.bevy_components.add(component_type=kind, type_path=type_path):
+            raise RuntimeError(f"Could not add {kind} to {collection.name}")
+    item = collection.bevy_component_data.components[-1]
+    for name, value in values.items():
+        setattr(item, name, value)
+    return item
+
+
+def _components(obj):
+    return [addon.metadata.serialize_component(item) for item in addon.system.components_for(obj)]
+
+
+class TestCollectionComponents(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+        for library in list(bpy.data.libraries):
+            bpy.data.libraries.remove(library)
+
+    def tearDown(self):
+        clear_scene()
+        for library in list(bpy.data.libraries):
+            bpy.data.libraries.remove(library)
+
+    def _messages(self):
+        bpy.context.view_layer.update()
+        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.context.scene.objects)]
+
+    def _context(self, obj, **values):
+        return SimpleNamespace(**{"object": obj, "scene": bpy.context.scene, "region": None, "space_data": None, "view_layer": bpy.context.view_layer, "selected_objects": [], **values})
+
+    def test_collections_give_their_components_to_every_member(self):
+        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
+        pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
+        lamp = add_light("lamp", "POINT", (0, 0, 3))
+        ground = _collection("Ground", rock, pebble, lamp)
+        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
+        _add_to(ground, "CUSTOM", type_path="my_game::Ground", custom_json='{"slip": 1}')
+        ground_tag = {"type": "custom", "type_path": "my_game::Ground", "data": {"slip": 1}}
+        self.assertEqual(_stored(rock)["components"], [WALKABLE, ground_tag])
+        self.assertEqual(_stored(lamp)["components"][1:], [ground_tag])
+        self.assertEqual(self._messages(), [])
+        with bpy.context.temp_override(bevy_collection=ground):
+            self.assertEqual(bpy.ops.bevy_components.add(component_type="COLLIDER"), {"CANCELLED"})
+        mud = _collection("Mud", pebble, parent=ground)
+        _add_to(mud, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=4.0)
+        self.assertEqual(_stored(pebble)["components"], [{**WALKABLE, "cost": 4.0}, ground_tag])
+        add_component(rock, "NAVIGATION", navigation_kind="OBSTACLE")
+        self.assertEqual(_stored(rock)["components"], [OBSTACLE, ground_tag])
+        rock.bevy_component_data.components[0].enabled = False
+        self.assertEqual(_stored(rock)["components"], [WALKABLE, ground_tag])
+        boulder = add_mesh(bpy.ops.mesh.primitive_cube_add, "boulder", size=1, location=(6, 0, 0))
+        ground.objects.link(boulder)
+        bpy.context.view_layer.update()
+        self.assertEqual(_components(boulder), [WALKABLE, ground_tag])
+        ground.bevy_component_data.components[0].navigation_cost = 3.0
+        self.assertEqual(_stored(boulder)["components"][0]["cost"], 3.0)
+        with tempfile.TemporaryDirectory() as directory:
+            gltf = export_sample_scene(Path(directory) / "ground.glb")
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertEqual(_extras(gltf, nodes["boulder"])["components"], [{**WALKABLE, "cost": 3.0}, ground_tag])
+        self.assertEqual(_extras(gltf, nodes["pebble"])["components"], [{**WALKABLE, "cost": 4.0}, ground_tag])
+        self.assertFalse(any("bevy_component_data" in json.dumps(element.get("extras", {})) for key in ("nodes", "scenes") for element in gltf[key]))
+        with bpy.context.temp_override(bevy_collection=ground):
+            self.assertEqual(bpy.ops.bevy_components.remove(index=1), {"FINISHED"})
+        self.assertEqual(_stored(boulder)["components"], [{**WALKABLE, "cost": 3.0}])
+        bpy.data.collections.remove(mud)
+        self.assertEqual(_components(pebble), [{**WALKABLE, "cost": 3.0}])
+
+    def test_collections_that_disagree_warn_and_nesting_picks_the_winner(self):
+        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
+        ground = _collection("Ground", rock)
+        swamp = _collection("Swamp", rock)
+        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
+        _add_to(swamp, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
+        self.assertEqual(self._messages(), [])
+        swamp.bevy_component_data.components[0].navigation_cost = 5.0
+        self.assertEqual(self._messages(), ["rock: Ground and Swamp both give it Navigation with different settings, so it uses Ground's. Put one collection inside the other to choose"])
+        self.assertEqual(_stored(rock)["components"], [WALKABLE])
+        bpy.context.scene.collection.children.unlink(swamp)
+        ground.children.link(swamp)
+        self.assertEqual(self._messages(), [])
+        self.assertEqual(_components(rock), [{**WALKABLE, "cost": 5.0}])
+        add_component(rock, "NAVIGATION", navigation_kind="OBSTACLE")
+        self.assertEqual(_components(rock), [OBSTACLE])
+
+    def test_collection_cards_report_problems_once(self):
+        stones = [add_mesh(bpy.ops.mesh.primitive_cube_add, f"stone_{index}", size=1, location=(index * 2, 0, 0)) for index in range(3)]
+        marker = add_empty("marker", (0, 4, 0))
+        rubble = _collection("Rubble", *stones, marker)
+        custom = _add_to(rubble, "CUSTOM", type_path="my_game::Rubble", custom_json="{")
+        _add_to(rubble, "VISIBILITY_RANGE", fade_in_start=10.0, fade_in_end=5.0)
+        self.assertEqual(sorted(self._messages()), [
+            "marker: No mesh on this object or under it to show or hide",
+            "stone_0: Visibility Range must satisfy 0 <= in.start <= in.end <= out.start <= out.end, in collection Rubble",
+            "stone_0: invalid JSON in Custom Component, in collection Rubble",
+        ])
+        self.assertEqual([(issue.level, issue.message) for issue in addon.validation.collection_issues(rubble)], [("ERROR", "invalid JSON in Custom Component"), ("ERROR", "Visibility Range must satisfy 0 <= in.start <= in.end <= out.start <= out.end")])
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(RuntimeError, "invalid JSON in Custom Component, in collection Rubble"):
+                export_sample_scene(Path(directory) / "rubble.glb")
+        custom.custom_json = '{"weight": 2}'
+        with bpy.context.temp_override(bevy_collection=rubble):
+            self.assertEqual(bpy.ops.bevy_components.lod_preset(index=1, preset="MID"), {"FINISHED"})
+        self.assertEqual(_stored(stones[2])["components"][1], {"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False})
+        with bpy.context.temp_override(bevy_collection=rubble):
+            self.assertEqual(bpy.ops.bevy_components.edit_as_text(index=0), {"FINISHED"})
+        text = bpy.data.texts["Rubble Rubble.json"]
+        self.assertEqual(text["bevy_object"], rubble)
+        text.from_string('{"weight": 7}')
+        self.assertEqual(_execute(addon.operator.BEVY_OT_apply_text, SimpleNamespace(space_data=SimpleNamespace(text=text))), ({"FINISHED"}, [({"INFO"}, "Applied Rubble Rubble.json to Rubble")]))
+        self.assertEqual(_stored(stones[1])["components"][0]["data"], {"weight": 7})
+        bpy.data.texts.remove(text)
+        rubble.bevy_component_data.components.add().component_type = "COLLIDER"
+        self.assertEqual(addon.validation.collection_issues(rubble)[-1].message, "Collections only pass on game and custom components, Navigation and Visibility Range, so its objects do not get this one")
+        addon.system.sync_owner(rubble)
+        self.assertNotIn("collider", json.dumps(_stored(stones[0])))
+
+    def test_typed_collection_components_follow_their_definition(self):
+        define_component("my_game::Loot", ("gold", "INT", 5))
+        chest = add_mesh(bpy.ops.mesh.primitive_cube_add, "chest", size=1)
+        loot = _collection("Loot", chest)
+        item = _add_to(loot, "CUSTOM", type_path="my_game::Loot")
+        self.assertTrue(item.use_fields)
+        self.assertEqual(_stored(chest)["components"], [{"type": "custom", "type_path": "my_game::Loot", "data": {"gold": 5}}])
+        set_fields(item, gold=9)
+        self.assertEqual(_stored(chest)["components"][0]["data"], {"gold": 9})
+        library = bpy.context.scene.bevy_component_definitions
+        library.definitions[0].name = "my_game::Treasure"
+        self.assertEqual(item.custom_type, "my_game::Treasure")
+        self.assertEqual(_stored(chest)["components"][0]["type_path"], "my_game::Treasure")
+        library.active_index = 0
+        self.assertEqual(bpy.ops.bevy_components.definition_remove(), {"FINISHED"})
+        self.assertFalse(item.use_fields)
+        self.assertEqual(_stored(chest)["components"][0]["data"], {"gold": 9})
+
+    def test_collection_panel_and_inherited_rows(self):
+        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
+        pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
+        ground = _collection("Ground", rock, pebble)
+        context = self._context(rock, collection=ground)
+        self.assertTrue(addon.panel.BEVY_PT_collection_components.poll(context))
+        self.assertFalse(addon.panel.BEVY_PT_collection_components.poll(self._context(rock, collection=bpy.context.scene.collection)))
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_collection_components.draw(panel, context)
+        self.assertEqual(panel.layout.menus(), ["BEVY_MT_component_add"])
+        self.assertIn("Link objects to it with Ctrl+L > Link to Collection", " ".join(panel.layout.texts()))
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_add.draw(menu, SimpleNamespace(bevy_collection=ground, object=rock, scene=bpy.context.scene))
+        self.assertEqual([text for text, properties, enabled in menu.layout.buttons()], ["Custom Component", "Navigation", "Visibility Range"])
+        self.assertEqual(menu.layout.menus(), [])
+        self.assertIn(("context_pointer_set", "bevy_collection"), [(name, bound.get("name")) for name, bound, layout in menu.layout.calls])
+        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE")
+        panel = FakePanel(self)
+        addon.panel.BEVY_PT_collection_components.draw(panel, context)
+        self.assertIn("2 objects get these components, unless the object or a collection inside this one sets its own", " ".join(panel.layout.texts()))
+        self.assertIn("Navigation", panel.layout.texts())
+        self.assertIn("navigation_kind", panel.layout.props())
+        menu = FakePanel(self)
+        addon.menu.BEVY_MT_component_context_menu.draw(menu, SimpleNamespace(bevy_collection=ground, object=rock, bevy_component=ground.bevy_component_data.components[0], scene=bpy.context.scene))
+        self.assertNotIn("Copy to Selected", menu.layout.texts())
+        self.assertIn("Remove", menu.layout.texts())
+        panel = FakePanel(self)
+        addon.panel.draw_components(panel.layout, self._context(rock), rock)
+        self.assertIn("Navigation from Ground", panel.layout.texts())
+        button = next(properties for text, properties, enabled in panel.layout.buttons() if getattr(properties, "collection", None) == "Ground")
+        add_component(rock, "NAVIGATION", navigation_kind="OBSTACLE")
+        panel = FakePanel(self)
+        addon.panel.draw_components(panel.layout, self._context(rock), rock)
+        self.assertIn("Replaced by the Navigation on this object", " ".join(panel.layout.texts()))
+        bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection
+        space = SimpleNamespace(type="PROPERTIES", context="OBJECT")
+        self.assertEqual(_execute(addon.operator.BEVY_OT_show_collection, self._context(rock, space_data=space), collection=button.collection), ({"FINISHED"}, []))
+        self.assertEqual(space.context, "COLLECTION")
+        self.assertEqual(bpy.context.view_layer.active_layer_collection.collection, ground)
+
+    def test_linked_collections_carry_their_components(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
+        props = _collection("Props", crate)
+        _add_to(props, "CUSTOM", type_path="my_game::Prop", custom_json="{}")
+        with tempfile.TemporaryDirectory() as directory:
+            library = Path(directory) / "props.blend"
+            bpy.data.libraries.write(str(library), {props})
+            clear_scene()
+            with bpy.data.libraries.load(str(library), link=True) as (source, target):
+                target.collections = ["Props"]
+            linked = target.collections[0]
+            bpy.context.scene.collection.children.link(linked)
+            crate = next(obj for obj in bpy.data.objects if obj.library is not None)
+            _add_to(_collection("Loot", crate), "NAVIGATION", navigation_kind="OBSTACLE")
+            self.assertEqual(_components(crate), [OBSTACLE, {"type": "custom", "type_path": "my_game::Prop", "data": {}}])
+            panel = FakePanel(self)
+            addon.panel.BEVY_PT_collection_components.draw(panel, self._context(crate, collection=linked))
+            self.assertIn("Linked from props.blend, so edit its components in that file", " ".join(panel.layout.texts()))
+            gltf = export_sample_scene(Path(directory) / "level.glb")
+        node = next(node for node in gltf["nodes"] if node["name"] == "crate")
+        self.assertEqual(_extras(gltf, node)["components"], [OBSTACLE, {"type": "custom", "type_path": "my_game::Prop", "data": {}}])
+
+    def test_prefabs_change_with_their_collection_components(self):
+        box = add_mesh(bpy.ops.mesh.primitive_cube_add, "box", size=1)
+        crate = _collection("Crate", box)
+        settings = addon.prefab.prefab_settings(bpy.context.scene.bevy_glb_export)
+        before = addon.prefab.prefab_fingerprint(crate, settings, bpy.context.scene)
+        _add_to(_collection("Breakable", box), "CUSTOM", type_path="my_game::Breakable", custom_json="{}")
+        self.assertNotEqual(addon.prefab.prefab_fingerprint(crate, settings, bpy.context.scene), before)
 
 
 class TestValidation(unittest.TestCase):

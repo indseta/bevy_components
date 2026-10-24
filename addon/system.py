@@ -11,8 +11,9 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
+from .collection import COLLECTION_KINDS, collections_changed, component_key, from_collection, with_collections
 from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_items, serialize_scene, sky_component, tuple_fields, variant_names
-from .native import MESH_TYPES, NATIVE_KINDS, fog_source, native_components, physics_components, with_native
+from .native import MESH_TYPES, NATIVE_KINDS, fog_source, is_native, physics_components, with_native
 from .prefab import filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
 from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
@@ -113,7 +114,7 @@ def problem_changes():
 def components_for(obj):
     if not hasattr(obj, "bevy_component_data"):
         return []
-    return with_native(obj, [item for item in obj.bevy_component_data.components if item.enabled and item.component_type])
+    return with_collections(obj, with_native(obj, [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]))
 
 
 def component_of(obj, kind):
@@ -133,6 +134,8 @@ def inherited(obj, kind):
 
 
 def accepts(obj, kind):
+    if isinstance(obj, bpy.types.Collection):
+        return kind in COLLECTION_KINDS
     if kind == "LIGHT":
         return light_of(obj) is not None
     if kind == "LIGHTMAP":
@@ -461,15 +464,22 @@ def copy_to_object(source, destination, obj):
 
 
 def data_users(data):
+    if isinstance(data, bpy.types.Collection):
+        return list(data.all_objects)
     if isinstance(data, bpy.types.Material):
         return [obj for obj in bpy.data.objects if any(slot.material == data for slot in obj.material_slots)]
     return [obj for obj in bpy.data.objects if data is not None and obj.data == data]
 
 
-def sync_changed(self, context):
-    owner = getattr(self, "id_data", None)
+def sync_owner(owner):
+    if isinstance(owner, bpy.types.Collection):
+        collections_changed()
     for obj in [owner] if isinstance(owner, bpy.types.Object) else data_users(owner):
         sync_object(obj)
+
+
+def sync_changed(self, context):
+    sync_owner(getattr(self, "id_data", None))
     redraw_viewports()
 
 
@@ -749,22 +759,22 @@ def unlink_component(item):
 
 
 def custom_components(scene, type_path=None):
-    for obj in scene.objects:
-        if obj.library:
+    for owner in [*scene.objects, *scene.collection.children_recursive]:
+        if owner.library:
             continue
-        for item in obj.bevy_component_data.components:
+        for item in owner.bevy_component_data.components:
             if item.component_type == "CUSTOM" and (type_path is None or item.custom_type == type_path):
-                yield obj, item
+                yield owner, item
 
 
 def apply_definitions(scene):
     changed = set()
-    for obj, item in list(custom_components(scene)):
+    for owner, item in list(custom_components(scene)):
         definition = find_definition(scene, item.custom_type)
         if definition is not None and link_component(item, definition):
-            changed.add(obj)
-    for obj in changed:
-        sync_object(obj)
+            changed.add(owner)
+    for owner in changed:
+        sync_owner(owner)
     redraw_viewports()
 
 
@@ -780,7 +790,7 @@ def component_text(item):
 def linked_component(text):
     obj = text.get(TEXT_OBJECT)
     link = text.get(TEXT_COMPONENT)
-    if not isinstance(obj, bpy.types.Object) or not isinstance(link, str) or not link:
+    if not isinstance(obj, (bpy.types.Object, bpy.types.Collection)) or not isinstance(link, str) or not link:
         return None, None
     return obj, next((item for item in obj.bevy_component_data.components if item.component_type == "CUSTOM" and item.text_link == link), None)
 
@@ -859,6 +869,7 @@ def definition_renamed(self, context):
 
 @persistent
 def save_sync(_scene):
+    collections_changed()
     for obj in bpy.data.objects:
         sync_object(obj)
 
@@ -932,22 +943,34 @@ def _native_extras(gltf2_node, obj):
         return
     extras = gltf2_node.extras if isinstance(gltf2_node.extras, dict) else {}
     stored = extras.get(EXTRAS_KEY)
-    natives = native_components(obj)
-    if not natives and not isinstance(stored, str):
+    cards = [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]
+    inferred = [item for item in components_for(obj) if is_native(item) or from_collection(item)]
+    if not inferred and not isinstance(stored, str):
         return
     try:
         found = json.loads(stored)["components"] if isinstance(stored, str) else []
     except (ValueError, KeyError, TypeError):
         return
-    cards = {item.component_type for item in obj.bevy_component_data.components if item.enabled and item.component_type}
-    components = [component for component in found if not isinstance(component, dict) or str(component.get("type", "")).upper() not in NATIVE_KINDS or component["type"].upper() in cards]
-    components.extend(serialize_component(item) for item in natives if item.component_type not in cards)
+    keys = {component_key(item) for item in cards}
+    components = [component for component in found if not isinstance(component, dict) or _stored_key(component) in keys or str(component.get("type", "")).upper() not in {*NATIVE_KINDS, *COLLECTION_KINDS}]
+    for item in inferred:
+        try:
+            component = serialize_component(item)
+        except ValueError:
+            continue
+        if component is not None:
+            components.append(component)
     if components == found:
         return
     if components:
         gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)}
     else:
         _remove_extra(gltf2_node, EXTRAS_KEY)
+
+
+def _stored_key(component):
+    kind = str(component.get("type", "")).upper()
+    return (kind, component.get("type_path")) if kind == "CUSTOM" else kind
 
 
 def _light_extras(gltf2_node):

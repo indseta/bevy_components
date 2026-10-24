@@ -1,6 +1,6 @@
 # Custom components
 
-A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, let your game list its components for Blender, or define the fields by hand.
+A **Custom Component** carries any of your game's components as a Rust type path and its data as JSON. To edit one with normal inputs instead, let your game list its components for Blender, or define the fields by hand. Custom components can also go on a collection, which gives them to every object in it, see [Collections](components.md#collections).
 
 ## From your game
 

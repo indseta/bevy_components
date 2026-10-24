@@ -6,6 +6,14 @@ from .schema import short_name
 from .system import TEXT_COMPONENT, accepts, component_index, game_types, preset_folder, presets, scene_definition
 
 
+def _owner(context, layout):
+    collection = getattr(context, "bevy_collection", None)
+    if collection is None:
+        return context.object
+    layout.context_pointer_set("bevy_collection", collection)
+    return collection
+
+
 def _draw_add_items(layout, obj, kinds):
     present = {item.component_type for item in obj.bevy_component_data.components} if obj else set()
     for kind in kinds:
@@ -46,12 +54,16 @@ class BEVY_MT_component_add(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        _draw_add_items(layout, context.object, ("CUSTOM",))
+        owner = _owner(context, layout)
+        _draw_add_items(layout, owner, ("CUSTOM",))
         types = game_types()
         if types:
             layout.menu(BEVY_MT_component_add_game.bl_idname, text=_game_menu_label(types), icon="FILE_SCRIPT")
-        _draw_defined_items(layout, context.object, context.scene)
+        _draw_defined_items(layout, owner, context.scene)
         layout.separator()
+        if isinstance(owner, bpy.types.Collection):
+            _draw_add_items(layout, owner, ("NAVIGATION", "VISIBILITY_RANGE"))
+            return
         layout.menu(BEVY_MT_component_add_physics.bl_idname)
         layout.menu(BEVY_MT_component_add_rendering.bl_idname)
         layout.menu(BEVY_MT_component_add_lighting.bl_idname)
@@ -70,7 +82,7 @@ class BEVY_MT_component_add_game(bpy.types.Menu):
         layout = self.layout
         types = sorted(game_types(), key=lambda type_path: (short_name(type_path).lower(), type_path))
         names = [short_name(type_path) for type_path in types]
-        present = _custom_types(context.object)
+        present = _custom_types(_owner(context, layout))
         for type_path, name in zip(types, names):
             column = layout.column()
             column.enabled = type_path not in present
@@ -152,7 +164,7 @@ class BEVY_MT_component_context_menu(bpy.types.Menu):
 
     def draw(self, context):
         layout = self.layout
-        obj = context.object
+        obj = _owner(context, layout)
         item = getattr(context, "bevy_component", None)
         if obj is None or item is None:
             return
@@ -162,7 +174,8 @@ class BEVY_MT_component_context_menu(bpy.types.Menu):
         column.enabled = item.component_type == "CUSTOM"
         column.operator(BEVY_OT_duplicate_component.bl_idname, text="Duplicate", icon="DUPLICATE").index = index
         layout.operator(BEVY_OT_copy_component.bl_idname, text="Copy", icon="COPY_ID").index = index
-        layout.operator(BEVY_OT_copy_component_to_selected.bl_idname, text="Copy to Selected", icon="COPYDOWN").index = index
+        if isinstance(obj, bpy.types.Object):
+            layout.operator(BEVY_OT_copy_component_to_selected.bl_idname, text="Copy to Selected", icon="COPYDOWN").index = index
         if item.component_type == "CUSTOM" and item.custom_type not in game_types():
             layout.separator()
             defined = scene_definition(context.scene, item.custom_type) is not None

@@ -30,7 +30,7 @@ Tick **Properties > Collection > Bevy Prefab** on a collection and pick its GLB 
 
 **Validate All Objects** in the dropdown next to **Add Component** lists problems in the scene, and clicking one selects its object. The export dialog lists them under **Checks**, and each component shows its own.
 
-Errors block the export: invalid custom JSON, a number its field's Rust type cannot hold, a joint limit whose Min is above its Max, shadow cascade distances out of order, a light probe file that is missing or that Bevy cannot use, and a prefab with no GLB file or one that ends up inside itself.
+Errors block the export, and a collection's component shows its error once, for the first object that gets it: invalid custom JSON, a number its field's Rust type cannot hold, a joint limit whose Min is above its Max, shadow cascade distances out of order, a light probe file that is missing or that Bevy cannot use, and a prefab with no GLB file or one that ends up inside itself.
 
 Warnings point out setups that behave differently in Bevy than they look in Blender:
 
@@ -40,6 +40,7 @@ Warnings point out setups that behave differently in Bevy than they look in Blen
 - a Dynamic body with every axis locked
 - a Joint with no bodies, the same body twice, only static bodies, or a body that has no Rigid Body or Collider, is part of another body or is left out of the export
 - levels of detail at the same spot whose fade distances leave a gap, overlap or don't crossfade
+- an object that gets the same component from two collections, neither inside the other, with different settings
 - Custom Component type paths that aren't Rust paths, or that repeat on one object, game components with fields Blender cannot set but no `#[reflect(Default)]`, and game tuple structs with such fields, which the game cannot insert
 - Shadows with no mesh on or under its object, and Navigation with no mesh or collider on or under its object
 - an Audio Player or Speaker with no sound, a path outside the `assets` folder, a sound packed into the .blend file, or a file type Bevy cannot play

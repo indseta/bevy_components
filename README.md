@@ -76,11 +76,11 @@ Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the run
 | Navigation | `NavigationWalkable` and `NavigationObstacle` tags for a navmesh crate |
 | Custom Component | Any of your game's components, as JSON or with typed fields read from your game |
 
-The World properties add **Bevy Sky** and **Bevy Ambient Light**, and **Bevy Prefab** turns a collection into a prefab with its own GLB.
+The World properties add **Bevy Sky** and **Bevy Ambient Light**. In the Collection properties, **Bevy Components** gives custom components, Navigation and Visibility Range to every object in the collection, and **Bevy Prefab** turns it into a prefab with its own GLB.
 
 ## Guides
 
-- [Components](docs/components.md): physics, rendering, audio, animation, scene references, navigation and the viewport previews
+- [Components](docs/components.md): collections, physics, rendering, audio, animation, scene references, navigation and the viewport previews
 - [Custom components](docs/custom_components.md): your game's own components, from its code or defined by hand
 - [Lighting](docs/lighting.md): lights, ambient light, the sky, fog, light probes and baked lighting
 - [Exporting](docs/exporting.md): export options, Export Again, hot reload, prefabs and the checks

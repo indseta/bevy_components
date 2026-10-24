@@ -11,6 +11,7 @@ from bpy_extras.io_utils import ExportHelper
 
 from .bake import BackgroundBake, bake_command, bake_jobs, bake_summary, baked_sky, lighting_jobs, sky_job, unwrap_lightmap
 from .bsn import BsnError, asset_root, default_assets_folder, digest, drop_scenes, inside, load_path, module_crate, node_components, remove_stale, scene_source, snake_case, strip_components, write_if_changed
+from .collection import collections_changed
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .fingerprint import bake_record
@@ -25,8 +26,8 @@ from .probe import FILE_KINDS, embed_files
 from .project import game_assets, game_folder, play_target
 from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, unlink_component, viewport_view, write_component_text, write_field
-from .validation import body_kind, check_bsn, check_game_paths, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, image_to_png, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, sync_object, sync_owner, unlink_component, viewport_view, write_component_text, write_field
+from .validation import COLLECTION_ONLY, body_kind, check_bsn, check_game_paths, check_objects, check_rust_file, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 PROGRESS_INTERVAL = 0.1
 ACCEPTED_OBJECTS = {
@@ -94,14 +95,24 @@ def stop_bakes():
     _bakes.clear()
 
 
+def _shown(context):
+    return getattr(context, "bevy_collection", None) or context.object
+
+
+def _owner(context):
+    owner = _shown(context)
+    return owner if owner is not None and owner.library is None else None
+
+
 def _editable(context):
-    return context.object is not None and context.object.library is None
+    return _owner(context) is not None
 
 
 def _components(context, index):
-    if not _editable(context) or not 0 <= index < len(context.object.bevy_component_data.components):
+    owner = _owner(context)
+    if owner is None or not 0 <= index < len(owner.bevy_component_data.components):
         return None
-    return context.object.bevy_component_data.components
+    return owner.bevy_component_data.components
 
 
 def _active_definition(context):
@@ -152,7 +163,7 @@ def _missing_uv_maps(jobs):
 
 def _targets(context):
     targets = [obj for obj in context.selected_objects if obj.library is None]
-    if _editable(context) and context.object not in targets:
+    if context.object is not None and context.object.library is None and context.object not in targets:
         targets.append(context.object)
     return targets
 
@@ -211,11 +222,11 @@ class BEVY_OT_add_component(bpy.types.Operator):
         return f"Add {properties.type_path} to the active object" if properties.type_path else cls.bl_description
 
     def execute(self, context):
-        obj = context.object
+        obj = _owner(context)
         items = obj.bevy_component_data.components
         defined = self.component_type == "CUSTOM" and self.type_path
         if not accepts(obj, self.component_type):
-            self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} only works on {ACCEPTED_OBJECTS[self.component_type]} objects")
+            self.report({"WARNING"}, COLLECTION_ONLY if isinstance(obj, bpy.types.Collection) else f"{COMPONENT_LABELS[self.component_type][0]} only works on {ACCEPTED_OBJECTS[self.component_type]} objects")
             return {"CANCELLED"}
         if self.component_type != "CUSTOM" and any(existing.component_type == self.component_type for existing in items):
             self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} is already on {obj.name}")
@@ -231,7 +242,7 @@ class BEVY_OT_add_component(bpy.types.Operator):
             item.joint_body2 = obj
         if self.component_type == "ANIMATION":
             item.animation_clip = default_clip(obj)
-        sync_object(obj)
+        sync_owner(obj)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -253,7 +264,7 @@ class BEVY_OT_remove_component(bpy.types.Operator):
         if items is None:
             return {"CANCELLED"}
         items.remove(self.index)
-        sync_object(context.object)
+        sync_owner(_owner(context))
         redraw_viewports()
         return {"FINISHED"}
 
@@ -280,7 +291,7 @@ class BEVY_OT_duplicate_component(bpy.types.Operator):
         duplicate = items.add()
         copy_component(items[self.index], duplicate)
         items.move(len(items) - 1, self.index + 1)
-        sync_object(context.object)
+        sync_owner(_owner(context))
         redraw_viewports()
         return {"FINISHED"}
 
@@ -295,7 +306,7 @@ class BEVY_OT_copy_component_to_selected(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _editable(context) and len(context.selected_objects) > 1
+        return isinstance(_owner(context), bpy.types.Object) and len(context.selected_objects) > 1
 
     def execute(self, context):
         items = _components(context, self.index)
@@ -341,7 +352,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
         item.pop(EVENTS_KEY, None)
         if typed:
             reset_fields(item, find_definition(context.scene, item.custom_type))
-        sync_object(context.object)
+        sync_owner(_owner(context))
         redraw_viewports()
         return {"FINISHED"}
 
@@ -373,7 +384,7 @@ class BEVY_OT_move_component(bpy.types.Operator):
         if target == self.index:
             return {"CANCELLED"}
         items.move(self.index, target)
-        sync_object(context.object)
+        sync_owner(_owner(context))
         return {"FINISHED"}
 
 
@@ -408,7 +419,7 @@ class BEVY_OT_lod_preset(bpy.types.Operator):
         item.fade_in_end = fade_in_end
         item.fade_out_start = fade_out_start
         item.fade_out_end = fade_out_end
-        sync_object(context.object)
+        sync_owner(_owner(context))
         redraw_viewports()
         return {"FINISHED"}
 
@@ -435,7 +446,7 @@ class BEVY_OT_set_collision_layers(bpy.types.Operator):
         if items is None or items[self.index].component_type != "COLLIDER":
             return {"CANCELLED"}
         setattr(items[self.index], f"collider_{self.layers.lower()}", (self.enable,) * LAYER_COUNT)
-        sync_object(context.object)
+        sync_owner(_owner(context))
         redraw_viewports()
         return {"FINISHED"}
 
@@ -463,7 +474,7 @@ class BEVY_OT_fit_collider(bpy.types.Operator):
             return {"CANCELLED"}
         for key, value in fit_shape(item.collider_shape, points).items():
             setattr(item, f"collider_{key}", value)
-        sync_object(context.object)
+        sync_owner(_owner(context))
         redraw_viewports()
         return {"FINISHED"}
 
@@ -659,9 +670,9 @@ class BEVY_OT_definition_remove(bpy.types.Operator):
         library.definitions.remove(library.active_index)
         library.active_index = min(library.active_index, len(library.definitions) - 1)
         if find_definition(scene, type_path) is None:
-            for obj, item in list(custom_components(scene, type_path)):
+            for owner, item in list(custom_components(scene, type_path)):
                 if unlink_component(item):
-                    sync_object(obj)
+                    sync_owner(owner)
         apply_definitions(scene)
         return {"FINISHED"}
 
@@ -768,13 +779,14 @@ class BEVY_OT_copy_component(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.object is not None
+        return _shown(context) is not None
 
     def execute(self, context):
-        items = context.object.bevy_component_data.components
+        owner = _shown(context)
+        items = owner.bevy_component_data.components
         if not 0 <= self.index < len(items) or not items[self.index].component_type:
             return {"CANCELLED"}
-        context.window_manager.clipboard = clipboard_text(context.object, [items[self.index]])
+        context.window_manager.clipboard = clipboard_text(owner, [items[self.index]])
         self.report({"INFO"}, f"Copied {COMPONENT_LABELS[items[self.index].component_type][0]}")
         return {"FINISHED"}
 
@@ -914,7 +926,7 @@ class BEVY_OT_edit_as_text(bpy.types.Operator):
         items = _components(context, self.index)
         if items is None or items[self.index].component_type != "CUSTOM":
             return {"CANCELLED"}
-        obj = context.object
+        obj = _owner(context)
         item = items[self.index]
         if not item.text_link or any(other.text_link == item.text_link for other in items if other != item):
             item.text_link = new_identifier()
@@ -958,7 +970,7 @@ class BEVY_OT_apply_text(bpy.types.Operator):
         if error is not None:
             self.report({"ERROR"}, f"Cannot apply {text.name}: {error}")
             return {"CANCELLED"}
-        sync_object(obj)
+        sync_owner(obj)
         redraw_viewports()
         redraw_properties()
         self.report({"INFO"}, f"Applied {text.name} to {obj.name}")
@@ -1024,6 +1036,34 @@ class BEVY_OT_select_object(bpy.types.Operator):
         obj.select_set(True)
         context.view_layer.objects.active = obj
         return {"FINISHED"}
+
+
+class BEVY_OT_show_collection(bpy.types.Operator):
+    bl_idname = "bevy_components.show_collection"
+    bl_label = "Show Collection"
+    bl_description = "Make the collection active and show its Bevy Components in Properties > Collection"
+
+    collection: StringProperty(name="Collection")
+
+    @classmethod
+    def poll(cls, context):
+        return context.view_layer is not None
+
+    def execute(self, context):
+        layer = _layer_collection(context.view_layer.layer_collection, self.collection)
+        if layer is None:
+            self.report({"WARNING"}, f"{self.collection} is not in the current view layer")
+            return {"CANCELLED"}
+        context.view_layer.active_layer_collection = layer
+        if context.space_data is not None and context.space_data.type == "PROPERTIES":
+            context.space_data.context = "COLLECTION"
+        return {"FINISHED"}
+
+
+def _layer_collection(layer, name):
+    if layer.collection.name_full == name:
+        return layer
+    return next((found for found in (_layer_collection(child, name) for child in layer.children) if found is not None), None)
 
 
 class BEVY_OT_validate(bpy.types.Operator):
@@ -1294,6 +1334,7 @@ class _SceneExport(ExportHelper, ExportOptions):
         if not hasattr(bpy.ops.export_scene, "gltf"):
             self.report({"ERROR"}, "Blender glTF exporter is unavailable")
             return {"CANCELLED"}
+        collections_changed()
         self._collection = find_collection(self.collection) if self.collection else None
         if self.collection and self._collection is None:
             self.report({"ERROR"}, f"No collection named {self.collection}")

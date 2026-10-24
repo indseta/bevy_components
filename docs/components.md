@@ -1,6 +1,6 @@
 # Components
 
-Add components with **Add Component** in **Properties > Object > Components** or **3D Viewport > N > Bevy**. Physics, lights, shadows, speakers, light probes, fog and animation come from Blender's own settings, see [Physics](#physics), [Lighting](lighting.md) and below, and the Components panel lists what each object gets from them. Physics, Rendering and Lighting components sit in submenus, and typing searches them all. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
+Add components with **Add Component** in **Properties > Object > Components** or **3D Viewport > N > Bevy**, or give them to every object in a collection, see [Collections](#collections). Physics, lights, shadows, speakers, light probes, fog and animation come from Blender's own settings, see [Physics](#physics), [Lighting](lighting.md) and below, and the Components panel lists what each object gets from them. Physics, Rendering and Lighting components sit in submenus, and typing searches them all. For your game's own components, see [Custom components](custom_components.md). For lights, the sky, fog and light probes, see [Lighting](lighting.md).
 
 ## Working with components
 
@@ -9,6 +9,15 @@ Each component works like a modifier: collapse it, untick it to leave it out of 
 **Copy Components** puts the active object's components on the clipboard and **Paste Components** adds them to the selected objects, also in another .blend file. Pasting replaces components of the same type. **Add Component > Presets > Save Components as Preset** keeps a set of components for every .blend file, and picking the preset adds them to the selected objects. Presets are JSON files in Blender's `scripts/presets/bevy_components` folder.
 
 **3D Viewport > N > Bevy > Scene Overview** lists the objects with components, filtered by type or name, and clicking one selects it. **Select > Select by Bevy Component** selects them all at once. The Components and Bevy panel headers count the scene's errors and warnings and open the full list when clicked. The viewport labels the selected objects with what their components do, and other objects with their name and custom components. The **Object** menu and the right-click menu in the 3D Viewport have a **Bevy Components** submenu with these tools and Export Again, and F3 finds them too.
+
+## Collections
+
+**Properties > Collection > Bevy Components** gives its components to every object in the collection and in the collections inside it, also objects added later. Collections take custom and game components, **Navigation** and **Visibility Range**: a Walkable collection tags all the ground meshes in it, and a LOD1 collection fades its meshes alike. Navigation and Visibility Range go to the meshes, curves, text and empties in the collection, custom components to every object.
+
+- Link objects to a collection with **Ctrl+L > Link to Collection** instead of moving them, so they stay in their other collections. Hiding or excluding a collection also hides the objects that are only in it.
+- A component on the object replaces the collection's, and so does one from a collection inside it. Custom components count as the same when their type path is. When two collections that are not inside one another give an object the same component with different settings, it uses the one from the first collection by name and the checks warn.
+- The object's Components panel lists what it gets from which collection, and the button next to each row shows that collection.
+- A collection linked from another .blend file brings its components along. Edit them in that file.
 
 ## Viewport previews
 
