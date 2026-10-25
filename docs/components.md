@@ -40,7 +40,7 @@ Handles on the selected object resize colliders, visibility ranges, light ranges
 
 **Animation** plays an action when the scene loads, looping or once, at a speed where 1 matches Blender. It starts out with the object's active action. Keep **Animation** ticked in the export; each clip starts at its first keyframe.
 
-**Scene Reference** spawns a scene from another glTF file at the object, like a prefab: export the prop as its own Bevy scene, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. [Prefabs](exporting.md#prefabs) do the same for collection instances and export the prop for you.
+**Scene Reference** spawns a scene from another glTF file at the object, like a prefab: export the prop to its own GLB, then point an empty at it. The path is stored relative to the exported scene, so keep both in your game's `assets` folder. The viewport draws the bounds of the referenced scene. [Prefabs](exporting.md#prefabs) do the same for collection instances and export the prop for you.
 
 ## Navigation
 

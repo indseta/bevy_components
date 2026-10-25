@@ -17,8 +17,9 @@
 
 ### Upgrading from 0.5.1
 
-- Export Again keeps exporting a scene's last Bevy Scene file with its settings.
-- A collection exporter added as **Bevy Scene (.glb)** must be added again as **Bevy glTF**.
+- Export Again keeps exporting a scene's last Bevy Scene file with its settings, and the export dialog opens with the settings that 0.5.1's Bevy glTF remembered. The next export with **Remember Export Settings** ticked replaces both.
+- Collection exporters added as **Bevy glTF** keep working, while one added as **Bevy Scene (.glb)** must be added again as **Bevy glTF**.
+- Saving a .blend file drops the settings of the BSN export removed in 0.5.1.
 - Scripts call `bpy.ops.export_scene.bevy_gltf(again=True)` instead of `bpy.ops.export_scene.bevy_components_glb(again=True)`.
 
 ## 0.5.1 (2026-10-25)

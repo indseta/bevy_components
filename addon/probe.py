@@ -120,10 +120,6 @@ def _holders(gltf):
     return [*gltf.get("nodes", []), *gltf.get("scenes", [])]
 
 
-def needs_embedding(gltf):
-    return any((data := _components(holder)) is not None and _file_components(data) for holder in _holders(gltf))
-
-
 def embed_files(gltf, binary, read):
     textures = {}
     appended = bytearray(binary)

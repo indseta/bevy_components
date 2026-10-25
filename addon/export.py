@@ -15,7 +15,7 @@ from .preferences import encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
 from .project import game_assets
 from .property import EXPORT_OPTIONS
-from .system import bevy_export, component_of, components_for, export_options, exported_objects, gltf_defaults, image_to_png, prop_export, redraw_status_bars, redraw_viewports
+from .system import bevy_export, component_of, components_for, export_options, exported_objects, forget_older_settings, gltf_defaults, image_to_png, prop_export, redraw_status_bars, redraw_viewports
 from .validation import check_game_paths, check_objects, check_scene, count, describe
 
 EXPORT_LABEL = "Bevy glTF (.glb)"
@@ -76,6 +76,7 @@ def remember(operator, scene):
     for name in EXPORT_OPTIONS:
         setattr(settings, name, getattr(operator, name))
     settings.gltf = json.dumps({name: getattr(operator, name) for name in gltf_defaults()}, sort_keys=True, separators=(",", ":"))
+    forget_older_settings(scene)
 
 
 def recall(operator, scene, filepath=True):
@@ -137,7 +138,7 @@ def finish_export(job, context):
     redraw_status_bars()
     redraw_viewports()
     if task.cancelled:
-        raise ExportCancelled("Cancelled the Bevy scene export")
+        raise ExportCancelled("Cancelled the Bevy glTF export")
     if task.error is not None:
         raise ExportError(f"Texture compression failed: {task.error}")
     return job.write(task.results)
@@ -312,9 +313,9 @@ class SceneExport:
         if resized:
             messages.append(({"WARNING"}, f"Resized {', '.join(resized)} to a multiple of 4 pixels, as KTX2 textures need"))
         if everything:
-            messages.append(({"INFO"}, f"Exported Bevy scene with {len(everything)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {summary}"))
+            messages.append(({"INFO"}, f"Exported Bevy glTF with {len(everything)} KTX2 textures ({before // 1024} KB to {sum(len(data) for data in encoded) // 1024} KB): {summary}"))
         else:
-            messages.append(({"INFO"}, f"Exported Bevy scene: {summary}"))
+            messages.append(({"INFO"}, f"Exported Bevy glTF: {summary}"))
         if self.skipped:
             messages.append(({"WARNING"}, _skipped_message(self.skipped)))
         lights = [obj for obj in self.objects if obj.type == "LIGHT" and component_of(obj, "LIGHT") is not None] if not self.options.export_lights else []

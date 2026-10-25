@@ -22,7 +22,7 @@ from .probe import FILE_KINDS
 from .project import game_assets, game_folder, play_target
 from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, copy_component, copy_to_object, custom_components, default_clip, export_options, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, unlink_component, viewport_view, write_component_text, write_field
+from .system import OLDER_GLTF_SETTINGS, TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, copy_component, copy_to_object, custom_components, default_clip, export_options, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, unlink_component, viewport_view, write_component_text, write_field
 from .validation import body_kind, check_objects, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 ACCEPTED_OBJECTS = {
@@ -1142,7 +1142,7 @@ class BEVY_OT_export_gltf(bpy.types.Operator, ExportGLTF2_Base, ExportHelper, Ex
             cls.poll_message_set("Enable Blender's glTF 2.0 add-on to export")
             return False
         if running_export() is not None:
-            cls.poll_message_set("A Bevy scene export is still compressing textures")
+            cls.poll_message_set("A Bevy glTF export is still compressing textures")
             return False
         return context.scene is not None
 
@@ -1168,8 +1168,11 @@ class BEVY_OT_export_gltf(bpy.types.Operator, ExportGLTF2_Base, ExportHelper, Ex
         if not self.properties.is_property_set("filepath"):
             if remembered(context.scene):
                 recall(self, context.scene)
-            elif (default := _game_default(context, self.filename_ext)) is not None:
-                self.filepath = str(default)
+            else:
+                if OLDER_GLTF_SETTINGS in context.scene:
+                    recall(self, context.scene, filepath=False)
+                if (default := _game_default(context, self.filename_ext)) is not None:
+                    self.filepath = str(default)
         return ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
@@ -1246,7 +1249,7 @@ class BEVY_OT_export_all_scenes(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         if running_export() is not None:
-            cls.poll_message_set("A Bevy scene export is still compressing textures")
+            cls.poll_message_set("A Bevy glTF export is still compressing textures")
             return False
         if context.window is None:
             cls.poll_message_set("Exporting every scene needs a Blender window")
@@ -1630,7 +1633,7 @@ class BEVY_OT_play(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         if running_export() is not None:
-            cls.poll_message_set("A Bevy scene export is still compressing textures")
+            cls.poll_message_set("A Bevy glTF export is still compressing textures")
             return False
         return context.scene is not None
 

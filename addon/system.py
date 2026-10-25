@@ -37,6 +37,8 @@ SCHEMA_CHECK_INTERVAL = 1.0
 SUMMARY_LIMIT = 8192
 SETTINGS_KEPT_APART = {"rna_type", "name", "filepath", "gltf"}
 LEGACY_OPTIONS = {"selected_only": "use_selection", "visible_only": "use_visible", "renderable_only": "use_renderable", "apply_modifiers": "export_apply", "include_lights": "export_lights", "include_cameras": "export_cameras", "include_animations": "export_animations"}
+OLDER_GLTF_SETTINGS = "bevy_gltf_export_settings"
+OLDER_SCENE_SETTINGS = ("bevy_bsn_export",)
 LEGACY_DEFAULTS = {"use_selection": False, "use_visible": False, "use_renderable": False, "export_apply": True, "export_lights": True, "export_cameras": False, "export_animations": False, "export_extras": True, "export_anim_slide_to_zero": True, "use_active_scene": True}
 _resolved = [None]
 _export = [None]
@@ -278,7 +280,8 @@ def remembered_gltf(settings):
     if settings.gltf:
         return _stored_gltf(settings.gltf)
     if not settings.filepath.strip():
-        return {}
+        older = settings.id_data.get(OLDER_GLTF_SETTINGS)
+        return older.to_dict() if hasattr(older, "to_dict") else {}
     return {**LEGACY_DEFAULTS, **{name: bool(settings[old]) for old, name in LEGACY_OPTIONS.items() if old in settings}}
 
 
@@ -967,6 +970,16 @@ def save_cleanup(_scene):
     for obj in bpy.data.objects:
         if obj.library is None and EXTRAS_KEY in obj:
             del obj[EXTRAS_KEY]
+    for scene in bpy.data.scenes:
+        if scene.library is None:
+            for key in OLDER_SCENE_SETTINGS:
+                scene.pop(key, None)
+
+
+def forget_older_settings(scene):
+    scene.pop(OLDER_GLTF_SETTINGS, None)
+    for key in LEGACY_OPTIONS:
+        scene.bevy_glb_export.pop(key, None)
 
 
 def asset_path(path):
@@ -1025,8 +1038,8 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_collision_layers")
         _remove_extra(gltf2_scene, "bevy_bake_settings")
         _remove_extra(gltf2_scene, "bevy_glb_export")
-        _remove_extra(gltf2_scene, "bevy_bsn_export")
-        _remove_extra(gltf2_scene, "bevy_gltf_export_settings")
+        for key in (*OLDER_SCENE_SETTINGS, OLDER_GLTF_SETTINGS):
+            _remove_extra(gltf2_scene, key)
         _remove_extra(gltf2_scene, "bevy_component_overview")
         _remove_extra(gltf2_scene, "bevy_game")
         prefab_scene(gltf2_scene, blender_scene, export_settings.get("gltf_yup", True))
