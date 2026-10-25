@@ -14,7 +14,7 @@ Each component works like a modifier: collapse it, untick it to leave it out of 
 
 Previews are editor-only and are not exported. Set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded.
 
-Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, and Convex Hull previews draw the hull the game gets, one per material.
+Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, except levels of detail that only show from farther away, and Convex Hull previews draw the hull the game gets, one per material.
 
 ## Physics
 
@@ -30,7 +30,7 @@ Handles on the selected object resize colliders, visibility ranges, light ranges
 
 ## Rendering
 
-**Visibility Range** fades the meshes on and under the object in and out by camera distance, for levels of detail. Its LOD0, LOD1 and LOD2 presets set fades that crossfade with the neighbouring levels, and handles in the viewport drag the distances.
+**Visibility Range** fades the meshes on and under the object in and out by camera distance, for levels of detail. Its LOD0, LOD1 and LOD2 presets set fades that crossfade with the neighbouring levels, and handles in the viewport drag the distances. A Triangle Mesh or Convex Hull collider on the parent of the levels is built from the first level only, the meshes whose Visibility Range starts at 0 m, unless a level has a collider of its own.
 
 **Shadows** stops the meshes on and under an object from casting or receiving shadows.
 

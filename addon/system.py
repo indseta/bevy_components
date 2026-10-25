@@ -13,7 +13,7 @@ from bpy.app.handlers import persistent
 from mathutils import Matrix
 
 from .changes import relatives, revision, touch
-from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_scene, sky_component, tuple_fields, variant_names
+from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, component_errors, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_scene, sky_component, tuple_fields, variant_names
 from .prefab import export_directory, filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
 from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
@@ -231,6 +231,15 @@ def has_faces(obj):
 
 def mesh_sources(obj, children, kind, instances=True):
     return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
+
+
+def farther_level(obj):
+    item = component_of(obj, "VISIBILITY_RANGE")
+    return item is not None and item.fade_in_start > 0 and not component_errors(item)
+
+
+def collider_meshes(obj, children, instances=True):
+    return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, "COLLIDER") is not None or farther_level(child), instances) if has_faces(source)]
 
 
 def collision_only_meshes(objects):

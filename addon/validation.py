@@ -18,7 +18,7 @@ from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_or
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, asset_path, children_map, component_kinds, component_of, components_for, export_settings, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
+from .system import MESH_TYPES, asset_path, children_map, collider_meshes, component_kinds, component_of, components_for, export_settings, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 CheckOptions = namedtuple("CheckOptions", ("destination", "animations", "modifiers", "assets", "key"))
@@ -522,14 +522,16 @@ def _collider_warnings(obj, item, children):
     warnings = []
     targets = [obj]
     if item.collider_shape in SHAPE_LABELS:
-        sources = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER")]
-        if not sources:
+        sources = [source for source, _matrix in collider_meshes(obj, children)]
+        if not sources and mesh_sources(obj, children, "COLLIDER"):
+            warnings.append(f"The meshes under this object only show from farther away, so no {SHAPE_LABELS[item.collider_shape]} collider is built. Levels of detail after the first are left out of mesh colliders")
+        elif not sources:
             warnings.append(f"No mesh on this object or under it, so no {SHAPE_LABELS[item.collider_shape]} collider is built")
         if item.collider_shape == "TRIMESH":
             bodies = [owner for owner, body in (inherited(source, "RIGID_BODY") for source in sources) if body is not None and body.rigid_body_kind == "DYNAMIC"]
             if bodies:
                 warnings.append("Triangle meshes collide poorly on Dynamic bodies, use Convex Hull" if bodies[0] == obj else f"Triangle meshes collide poorly on Dynamic bodies such as {bodies[0].name}, use Convex Hull")
-        targets = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER", instances=False)]
+        targets = [source for source, _matrix in collider_meshes(obj, children, instances=False)]
     elif item.collider_collision_only and not mesh_sources(obj, children, "COLLIDER"):
         warnings.append("Collision Only finds no mesh on this object or under it to hide")
     for target in targets:

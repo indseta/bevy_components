@@ -816,6 +816,37 @@ fn cylinders_and_cones_stand_on_the_y_axis() {
     assert_eq!(world.get::<RigidBody>(cylinder), Some(&RigidBody::Static));
 }
 
+fn visibility_range(start: [f32; 2], end: [f32; 2]) -> Value {
+    return json!({"type": "visibility_range", "start": start, "end": end, "use_aabb": false});
+}
+
+#[test]
+fn mesh_colliders_leave_out_farther_levels_of_detail() {
+    let mut app = SceneApp::default().build();
+    let world = app.world_mut();
+    let cube = world.resource_mut::<Assets<Mesh>>().add(Mesh::from(Cuboid::new(2.0, 2.0, 2.0)));
+    let lamp = spawn_components(world, "lamp", Vec3::ZERO, json!([box_collider("convex", false, None, false)]));
+    let levels = [([0.0, 0.0], [20.0, 25.0]), ([20.0, 25.0], [80.0, 85.0]), ([80.0, 85.0], [250.0, 260.0])].map(|(start, end)| {
+        let level = spawn_components(world, "lamp_lod", Vec3::ZERO, json!([visibility_range(start, end)]));
+        world.entity_mut(level).insert(ChildOf(lamp));
+        return spawn_mesh(world, &cube, level);
+    });
+    let post = spawn_components(world, "post", Vec3::new(10.0, 0.0, 0.0), json!([box_collider("trimesh", false, None, false)]));
+    let own = spawn_components(world, "post_lod1", Vec3::ZERO, json!([visibility_range([20.0, 25.0], [80.0, 85.0]), box_collider("convex", false, None, false)]));
+    world.entity_mut(own).insert(ChildOf(post));
+    let own_mesh = spawn_mesh(world, &cube, own);
+    let distant = spawn_components(world, "distant", Vec3::new(20.0, 0.0, 0.0), json!([box_collider("trimesh", false, None, false), visibility_range([50.0, 60.0], [100.0, 110.0])]));
+    let distant_mesh = spawn_mesh(world, &cube, distant);
+    for _ in 0..3 {
+        app.update();
+    }
+    let world = app.world();
+    assert_eq!(levels.map(|mesh| world.get::<Collider>(mesh).is_some()), [true, false, false]);
+    assert!(levels.iter().all(|mesh| world.get::<VisibilityRange>(*mesh).is_some()));
+    assert!(world.get::<Collider>(own_mesh).is_some(), "a level of detail keeps its own collider");
+    assert!(world.get::<Collider>(distant_mesh).is_some(), "an object seen only from afar keeps its collider");
+}
+
 #[test]
 fn masses_set_the_total_body_mass() {
     let mut app = load_scene(SCENE);

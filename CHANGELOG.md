@@ -16,6 +16,7 @@
 
 ### Fixed
 
+- A **Triangle Mesh** or **Convex Hull** collider on the parent of levels of detail is built from the first level only, the meshes whose **Visibility Range** starts at 0 m, instead of one collider per level that all collide at every distance and add up the mass.
 - **Bake Lighting** leaves out meshes hidden by a **Collision Only** collider, as the game does, and moving them no longer marks a bake out of date.
 - Hints and warnings in panels wrap to the panel's real width, so they are no longer cut off in the Bevy sidebar.
 

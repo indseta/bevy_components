@@ -350,9 +350,13 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
         let mut visibility = None;
         let mut collider = None;
         let mut shadows = None;
+        let mut farther_level = false;
 
         while let Some(current) = cursor {
             if let Ok(spec) = specs.get(current) {
+                if collider.is_none() && spec.collider.is_none() && spec.visibility_range.as_ref().is_some_and(|range| range.start_margin.start > 0.0) {
+                    farther_level = true;
+                }
                 if visibility.is_none() {
                     visibility = spec.visibility_range.clone();
                 }
@@ -378,7 +382,7 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
             if spec.collision_only {
                 target.insert(Visibility::Hidden);
             }
-            if spec.shape.is_mesh() {
+            if spec.shape.is_mesh() && !farther_level {
                 target.insert(PendingMeshCollider(spec));
             }
         }

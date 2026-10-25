@@ -2854,6 +2854,30 @@ class TestViewport(unittest.TestCase):
         collider.collider_shape = "TRIMESH"
         self.assertEqual(len(addon.overlay.preview_batches(bpy.context, self.settings)[0][1]), 12)
 
+    def test_mesh_colliders_leave_out_farther_levels_of_detail(self):
+        lamp = add_empty("lamp", (4, 0, 0))
+        collider = add_component(lamp, "COLLIDER", collider_shape="CONVEX")
+        levels = []
+        for index, preset in enumerate(("NEAR", "MID", "FAR")):
+            level = add_mesh(bpy.ops.mesh.primitive_cube_add, f"lamp_lod{index}", location=(4, 0, 1))
+            level.parent = lamp
+            add_component(level, "VISIBILITY_RANGE")
+            apply_lod_preset(level, preset)
+            levels.append(level)
+        bpy.context.view_layer.update()
+        select(lamp)
+        self.assertEqual([tuple(matrix.translation) for matrix, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings)], [tuple(levels[0].matrix_world.translation)])
+        self.assertEqual(addon.overlay._label_lines(lamp, self.settings, addon.system.children_map(bpy.data.objects)), ["Collider · Convex · 1 hull"])
+        self.assertEqual(addon.validation.check_object(lamp, bpy.data.objects), [])
+        own = add_component(levels[2], "COLLIDER", collider_shape="CONVEX")
+        self.assertEqual(len(_collider_lines(levels[2], own, 2000)), 12)
+        select(lamp)
+        self.assertEqual(len(addon.overlay.preview_batches(bpy.context, self.settings)), 1)
+        bpy.data.objects.remove(levels[0])
+        self.assertEqual([issue.message for issue in addon.validation.check_object(lamp, bpy.data.objects)], ["The meshes under this object only show from farther away, so no Convex Hull collider is built. Levels of detail after the first are left out of mesh colliders"])
+        levels[1].bevy_component_data.components[0].fade_in_start = 0
+        self.assertEqual(addon.validation.check_object(lamp, bpy.data.objects), [])
+
     def test_mesh_colliders_preview_collection_instances(self):
         prop = bpy.data.collections.new("prop")
         rock = bpy.data.objects.new("prop_rock", bpy.data.meshes.new("prop_rock"))
