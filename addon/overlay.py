@@ -16,7 +16,7 @@ from .metadata import PRIMITIVE_SHAPES, initial_velocities, light_amount, light_
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .schema import short_name
-from .system import changes_mesh, children_map, collider_sources, component_kinds as object_kinds, component_of, components_for, custom_types, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports, resolving
+from .system import changes_mesh, children_map, component_kinds as object_kinds, component_of, components_for, custom_types, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports, resolving
 from .validation import texture_check
 
 DRAW_3D = None
@@ -178,7 +178,7 @@ def collider_lines(obj, item, limit, children):
         return [(collider_matrix(obj, item), cylinder_lines(item.collider_radius, item.collider_height))]
     if kind == "CONE":
         return [(collider_matrix(obj, item), cone_shape_lines(item.collider_radius, item.collider_height))]
-    return [(matrix, mesh_lines(source, kind, limit)) for source, matrix in collider_sources(obj, children, item)]
+    return [(matrix, mesh_lines(source, kind, limit)) for source, matrix in mesh_sources(obj, children, "COLLIDER")]
 
 
 def collider_color(item):
@@ -443,7 +443,7 @@ def _object_key(obj, settings, children):
         for item in components_for(obj):
             kind = item.component_type
             if kind == "COLLIDER" and settings.colliders and item.collider_shape in MESH_SHAPES:
-                key.append(_sources_key(collider_sources(obj, children(), item)))
+                key.append(_sources_key(mesh_sources(obj, children(), "COLLIDER")))
             elif kind == "NAVIGATION" and settings.navigation:
                 key.append(_sources_key(mesh_sources(obj, children(), "NAVIGATION")))
     return tuple(key)
@@ -548,7 +548,7 @@ def _label_lines(obj, settings, children):
         elif collider.collider_shape in {"CYLINDER", "CONE"}:
             details = f"r={collider.collider_radius:g}, height={collider.collider_height:g}m"
         else:
-            sources = [source for source, _matrix in collider_sources(obj, children, collider)]
+            sources = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER")]
             if not sources:
                 details = "no mesh, so no collider"
             elif collider.collider_shape == "CONVEX":

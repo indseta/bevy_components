@@ -21,7 +21,6 @@ pub struct ColliderSpec {
     pub sensor: bool,
     pub events: bool,
     pub collision_only: bool,
-    pub own_mesh: bool,
     pub friction: Option<f32>,
     pub restitution: Option<f32>,
     pub layers: Option<CollisionLayers>,
@@ -61,7 +60,6 @@ impl ColliderShape {
 pub struct ShadowSettings {
     pub cast: bool,
     pub receive: bool,
-    pub own_mesh: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -147,15 +145,6 @@ pub struct DecodedGltfExtras;
 
 #[derive(Component)]
 pub struct DefaultStaticBody;
-
-#[derive(Component)]
-pub struct DecodedScenePhysics;
-
-#[derive(Resource)]
-pub struct GravitySource {
-    pub scene: Entity,
-    pub previous: Vec3,
-}
 
 #[derive(Component)]
 pub struct ProcessedMesh;

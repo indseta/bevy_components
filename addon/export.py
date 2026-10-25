@@ -5,11 +5,9 @@ from types import SimpleNamespace
 
 import bpy
 
-from .collection import collections_changed
 from .compression import check_encoded, embed_textures, plan_textures, read_glb, write_glb
 from .encoder import HINT, BackgroundEncode, EncoderError, check_encoder, encode
 from .files import write_if_changed
-from .native import rest_frame
 from .prefab import collection_export, prefab_file, prefab_fingerprint, prefab_fresh, prefab_order, prefab_settings, remember_prefab, scene_export
 from .preferences import encoder_path, texture_cache
 from .probe import FILE_KINDS, embed_files
@@ -166,7 +164,6 @@ class SceneExport:
     def check(self, context):
         if not hasattr(bpy.ops.export_scene, "gltf"):
             raise ExportError("Blender glTF exporter is unavailable")
-        collections_changed()
         self.objects = list(self.collection.all_objects) if self.collection is not None else exported_objects(context, self.options)
         self.issues = scene_issues(self.options, self.objects, self.path)
         errors = [issue for issue in self.issues if issue.level == "ERROR"]
@@ -183,21 +180,18 @@ class SceneExport:
         settings = prefab_settings(self.options)
         own = collection is not None and collection.bevy_prefab.enabled and prefab_file(collection) == self.path
         self._own = prefab_fingerprint(collection, settings, self.scene) if own else None
-        stale = []
+        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
         for nested in prefab_order(self.objects)[0]:
             target = prefab_file(nested)
             fingerprint = prefab_fingerprint(nested, settings, self.scene)
-            if not prefab_fresh(nested, target, fingerprint):
-                stale.append((nested, target, fingerprint))
-        self._directory = tempfile.TemporaryDirectory(prefix="bevy_components_")
+            if prefab_fresh(nested, target, fingerprint):
+                continue
+            path = Path(self.directory) / f"prefab_{len(self.prefabs)}.glb"
+            self._export_gltf(path, nested, target.parent)
+            gltf, binary = _embed(*read_glb(path.read_bytes()))
+            self.prefabs.append(SimpleNamespace(collection=nested, target=target, fingerprint=fingerprint, gltf=gltf, binary=binary, jobs=[]))
         path = Path(self.directory) / "scene.glb"
-        with rest_frame(self.scene):
-            for nested, target, fingerprint in stale:
-                written = Path(self.directory) / f"prefab_{len(self.prefabs)}.glb"
-                self._export_gltf(written, nested, target.parent)
-                gltf, binary = _embed(*read_glb(written.read_bytes()))
-                self.prefabs.append(SimpleNamespace(collection=nested, target=target, fingerprint=fingerprint, gltf=gltf, binary=binary, jobs=[]))
-            self._export_gltf(path, collection, self.path.parent)
+        self._export_gltf(path, collection, self.path.parent)
         if self.encoder is None and not _has_probes(self.objects) and not _embeds_sky(self.scene):
             self._scene = path.read_bytes()
             return

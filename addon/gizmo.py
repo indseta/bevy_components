@@ -2,7 +2,6 @@ import bpy
 from mathutils import Matrix, Vector
 
 from .metadata import PRIMITIVE_SHAPES, light_of, light_range
-from .native import is_native
 from .system import component_of, components_for, object_components, panel_expanded, redraw_viewports, touch_object
 
 VOLUME_TYPES = {"FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME"}
@@ -113,10 +112,10 @@ def _arrow(group, color, get, set):
 
 def handle_item(obj, settings):
     collider = component_of(obj, "COLLIDER")
-    if settings.colliders and collider is not None and not is_native(collider) and collider.collider_shape in PRIMITIVE_SHAPES:
+    if settings.colliders and collider is not None and collider.collider_shape in PRIMITIVE_SHAPES:
         return collider
     if settings.volumes:
-        return next((item for item in components_for(obj) if item.component_type in VOLUME_TYPES and not is_native(item)), None)
+        return next((item for item in components_for(obj) if item.component_type in VOLUME_TYPES), None)
     return None
 
 

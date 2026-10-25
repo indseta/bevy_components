@@ -11,9 +11,7 @@ import bpy
 from mathutils import Quaternion, Vector
 
 from .files import snake_case
-from .collection import with_collections
 from .metadata import EXTRAS_KEY, SCHEMA_VERSION, addon_version, relative_path, serialize_items
-from .native import with_native
 
 FINGERPRINT_VERSION = 1
 SCENE_NAME = "Bevy Prefab Export"
@@ -174,7 +172,7 @@ def _id_properties(owner, skipped=()):
 
 
 def _components(obj):
-    items = with_collections(obj, with_native(obj, [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]))
+    items = [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]
     try:
         return serialize_items(items, lambda path: str(Path(os.path.abspath(bpy.path.abspath(path, library=obj.library)))) if path.strip() else "")
     except ValueError as error:
@@ -343,16 +341,16 @@ def collection_export(collection, source, directory):
 
 def _restore_active(scene, active):
     for layer in scene.view_layers:
-        found = layer_collection(layer.layer_collection, active.get(layer.name))
+        found = _layer_collection(layer.layer_collection, active.get(layer.name))
         if found is not None:
             layer.active_layer_collection = found
 
 
-def layer_collection(layer, collection):
-    if layer.collection == collection:
-        return layer
-    for child in layer.children:
-        found = layer_collection(child, collection)
+def _layer_collection(layer_collection, collection):
+    if layer_collection.collection == collection:
+        return layer_collection
+    for child in layer_collection.children:
+        found = _layer_collection(child, collection)
         if found is not None:
             return found
     return None

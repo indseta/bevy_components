@@ -3,26 +3,18 @@ from fnmatch import fnmatchcase
 
 import bpy
 
-from .collection import collection_entries, from_collection, left_out_by
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
-from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, cascades_invalid, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_collection, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
-from .native import JOINTS, MESH_TYPES, NATIVE_SOURCES, PRINCIPLED_VOLUME, PROBE_KINDS, UNSUPPORTED_JOINTS, active_action, asset_path, compound_parent, is_native, native_components, rigid_body_kind, sound_file, volume_shader
+from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
 from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
 from .project import game_folder, play_target
-from .property import COMPONENT_LABELS, FIELD_LABELS, JOINT_LABELS, LAYER_COUNT
+from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .schema import short_name
-from .system import ambient_light, component_index, components_for, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, problem_changes, sky_lights_scene, world_background, world_color
-from .validation import AMBIENT_WITH_SKY, NO_SOUND, ambient_doubles_sky, check_object, collection_issues, component_name, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
+from .system import ambient_light, component_index, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
+from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
-_overview = {"key": None, "objects": {}}
-BODY_LABELS = {
-    "STATIC": "Static",
-    "DYNAMIC": "Dynamic",
-    "KINEMATIC": "Kinematic",
-}
 
 
 def _labeled_row(layout, text):
@@ -95,6 +87,8 @@ def _draw_collider(layout, obj, index, item):
     if body is None:
         return
     names = layer_names(bpy.context.scene)
+    named = [layer for layer in range(LAYER_COUNT) if names[layer]]
+    unnamed = [layer for layer in range(LAYER_COUNT) if not names[layer]]
     for layers, prop, text in (("MEMBERSHIPS", "collider_memberships", "Belongs To"), ("FILTERS", "collider_filters", "Collides With")):
         buttons = _labeled_row(body, text)
         for enable, label in ((True, "All"), (False, "None")):
@@ -102,22 +96,16 @@ def _draw_collider(layout, obj, index, item):
             button.index = index
             button.layers = layers
             button.enable = enable
-        _draw_layer_grid(body, item, prop, names)
+        column = body.column(align=True)
+        for shown, columns in ((named, 2), (unnamed, 8)):
+            if not shown:
+                continue
+            grid = column.grid_flow(row_major=True, columns=columns, even_columns=True, even_rows=True, align=True)
+            grid.use_property_split = False
+            for layer in shown:
+                grid.prop(item, prop, index=layer, text=f"{layer} {names[layer]}" if names[layer] else str(layer), toggle=True)
     if not any(item.collider_memberships) or not any(item.collider_filters):
         body.label(text="Collides with nothing", icon="INFO")
-
-
-def _draw_layer_grid(layout, owner, prop, names):
-    named = [layer for layer in range(LAYER_COUNT) if names[layer]]
-    unnamed = [layer for layer in range(LAYER_COUNT) if not names[layer]]
-    column = layout.column(align=True)
-    for shown, columns in ((named, 2), (unnamed, 8)):
-        if not shown:
-            continue
-        grid = column.grid_flow(row_major=True, columns=columns, even_columns=True, even_rows=True, align=True)
-        grid.use_property_split = False
-        for layer in shown:
-            grid.prop(owner, prop, index=layer, text=f"{layer} {names[layer]}" if names[layer] else str(layer), toggle=True)
 
 
 def _draw_axes(layout, item, prop, text):
@@ -324,7 +312,7 @@ def _draw_light(layout, obj, index, item):
     else:
         value.active = False
         value.label(text=light_amount(light_intensity(light, obj), unit))
-    if light.type in {"POINT", "SPOT"} and index >= 0:
+    if light.type in {"POINT", "SPOT"}:
         layout.prop(light, "shadow_soft_size", text="Radius")
     if light.type != "SUN":
         row = layout.row(heading="Range")
@@ -334,14 +322,13 @@ def _draw_light(layout, obj, index, item):
             distance.prop(light, "cutoff_distance", text="")
         else:
             distance.active = False
-            distance.label(text=f"{BEVY_LIGHT_RANGE:g} m (default)")
+            distance.label(text=f"{BEVY_LIGHT_RANGE:g} m, Bevy's default")
     if light.type == "AREA":
         draw_message(layout, "Bevy area lights cast no shadows, and need its area_light_luts feature", icon="INFO", width=bpy.context.region.width if bpy.context.region else 300)
         return
     layout.prop(item, "light_baked")
     layout.prop(item, "light_volumetric")
     header, body = layout.panel_prop(item, "show_shadows")
-    header.use_property_split = False
     header.prop(light, "use_shadow", text="Shadows")
     if body is None:
         return
@@ -359,7 +346,7 @@ def _draw_light(layout, obj, index, item):
     body.prop(item, "light_use_cascades")
     if item.light_use_cascades:
         column = body.column(align=True)
-        column.alert = cascades_invalid(item)
+        column.alert = bool(validate_items([item]))
         column.prop(item, "light_cascade_count")
         column.prop(item, "light_cascade_near")
         column.prop(item, "light_cascade_first")
@@ -489,436 +476,12 @@ def draw_components(layout, context, obj):
     owner = prefab_owner(obj)
     if owner is not None:
         draw_message(layout, f"Part of prefab {owner.name}, so it exports to the prefab's GLB file and not with the scene", icon="INFO", width=width)
-    if not _draw_leave_out(layout, obj, width):
-        _draw_autoplay(layout, obj, issues, width)
-        _draw_native(layout, context, obj, issues, width)
-        _draw_inherited(layout, obj, issues, width)
     for index, item in enumerate(obj.bevy_component_data.components):
         _draw_component(layout, context, obj, index, item, issues)
 
 
-def _left_out_text(source):
-    if isinstance(source, bpy.types.Collection):
-        return f"Left out of Bevy by collection {source.name}"
-    return "Left out of Bevy in Object > Game Components"
-
-
-def _draw_leave_out(layout, obj, width):
-    source = left_out_by(obj)
-    if source is None and not any(is_native(item) or from_collection(item) for item in components_for(obj)):
-        return False
-    column = layout.column(align=True)
-    column.prop(obj.bevy_component_data, "leave_out")
-    if source is None:
-        return False
-    if isinstance(source, bpy.types.Collection):
-        row = column.row(align=True)
-        row.label(text=_left_out_text(source), icon="INFO")
-        row.operator(BEVY_OT_show_collection.bl_idname, text="", icon="OUTLINER_COLLECTION", emboss=False).collection = source.name_full
-    note = column.column(align=True)
-    note.active = False
-    draw_message(note, "Exports as plain glTF, without components from Blender's settings or collections", icon="BLANK1" if isinstance(source, bpy.types.Collection) else "INFO", width=width)
-    return True
-
-
-def _issue_icon(issues, icon):
-    if not issues:
-        return icon
-    return "CANCEL" if any(issue.level == "ERROR" for issue in issues) else "ERROR"
-
-
-def _draw_inherited(layout, obj, issues, width):
-    entries = collection_entries(obj)
-    if not entries:
-        return
-    used = [item for item in components_for(obj) if from_collection(item)]
-    checked = {}
-    column = layout.column(align=True)
-    for entry in entries:
-        name = component_name(entry.item)
-        replaced = not any(item == entry.item for item in used)
-        if entry.collection not in checked:
-            checked[entry.collection] = collection_issues(entry.collection)
-        found = [] if replaced else [issue for issue in issues + checked[entry.collection] if issue.item == entry.item]
-        row = column.row(align=True)
-        row.active = not replaced
-        row.label(text=f"{name} from {entry.collection.name}", icon=_issue_icon(found, COMPONENT_LABELS[entry.item.component_type][1]))
-        row.operator(BEVY_OT_show_collection.bl_idname, text="", icon="OUTLINER_COLLECTION", emboss=False).collection = entry.collection.name_full
-        if replaced:
-            note = column.column(align=True)
-            note.active = False
-            draw_message(note, f"Replaced by the {name} on this object", icon="BLANK1", width=width)
-        for issue in found:
-            draw_message(column, issue.message, icon="BLANK1", width=width)
-
-
-def draw_collection_components(layout, context, collection):
-    layout.context_pointer_set("bevy_collection", collection)
-    width = context.region.width if context.region else 300
-    row = layout.row()
-    row.enabled = collection.library is None
-    row.menu(BEVY_MT_component_add.bl_idname, text="Add Component", icon="ADD")
-    items = collection.bevy_component_data.components
-    if collection.library is not None:
-        draw_message(layout, f"Linked from {collection.library.name}, so edit its components in that file", icon="LIBRARY_DATA_DIRECT", width=width)
-    leave_out = collection.bevy_component_data.leave_out
-    column = layout.column(align=True)
-    column.enabled = collection.library is None
-    column.prop(collection.bevy_component_data, "leave_out")
-    if leave_out:
-        note = column.column(align=True)
-        note.active = False
-        draw_message(note, f"Every object in this collection and the collections inside it exports as plain glTF, without components from Blender's settings or collections{', also the ones below' if len(items) else ''}. Components on the objects themselves still export", icon="INFO", width=width)
-    if not len(items):
-        if not leave_out:
-            draw_message(layout, "Every object in this collection and the collections inside it gets the components added here. Link objects to it with Ctrl+L > Link to Collection, so they stay in their other collections", icon="INFO", width=width)
-        return
-    members = len(collection.all_objects)
-    if not leave_out:
-        draw_message(layout, f"{count(members, 'object')} {'gets' if members == 1 else 'get'} these components, unless the object or a collection inside this one sets its own", icon="INFO", width=width)
-    issues = collection_issues(collection)
-    column = layout.column()
-    column.enabled = collection.library is None
-    column.active = not leave_out
-    for index, item in enumerate(items):
-        _draw_component(column, context, collection, index, item, issues)
-
-
-def _native_issues(issues, kind):
-    return [issue for issue in issues if is_native(issue.item) and issue.item.component_type == kind]
-
-
-def _draw_autoplay(layout, obj, issues, width):
-    action = active_action(obj)
-    if action is None or not hasattr(obj, "bevy_object") or _card_of(obj, "ANIMATION") is not None:
-        return
-    settings = obj.bevy_object
-    column = layout.column(align=True)
-    found = _native_issues(issues, "ANIMATION")
-    column.prop(settings, "autoplay", text=f"Autoplay {action.name}", icon="ERROR" if found else "ACTION")
-    if not settings.autoplay:
-        return
-    row = column.row(align=True)
-    row.prop(action, "use_cyclic", text="Loop", toggle=True)
-    row.prop(settings, "speed")
-    for issue in found:
-        draw_message(column, issue.message, icon="BLANK1", width=width)
-
-
-def _draw_native(layout, context, obj, issues, width):
-    natives = [item for item in components_for(obj) if is_native(item) and item.component_type != "ANIMATION"]
-    if not natives:
-        return
-    column = layout.column(align=True)
-    for item in natives:
-        text, icon = COMPONENT_LABELS[item.component_type]
-        source, tab, tab_icon = NATIVE_SOURCES[item.component_type]
-        found = _native_issues(issues, item.component_type)
-        row = column.row(align=True)
-        row.label(text=f"{text} from {source}", icon=("CANCEL" if any(issue.level == "ERROR" for issue in found) else "ERROR") if found else icon)
-        if tab is not None and context.space_data is not None and context.space_data.type == "PROPERTIES":
-            button = row.operator("wm.context_set_enum", text="", icon=tab_icon, emboss=False)
-            button.data_path = "space_data.context"
-            button.value = tab
-        for issue in found:
-            draw_message(column, issue.message, icon="BLANK1", width=width)
-
-
-def _card_of(obj, kind):
-    return next((item for item in obj.bevy_component_data.components if item.enabled and item.component_type == kind), None)
-
-
-def _draw_native_checks(layout, context, obj, kind):
-    width = context.region.width if context.region else 300
-    source = left_out_by(obj)
-    if source is not None:
-        draw_message(layout, f"{_left_out_text(source)}, so the game gets none of these settings", icon="INFO", width=width)
-        return False
-    if _card_of(obj, kind) is not None:
-        draw_message(layout, f"The {COMPONENT_LABELS[kind][0]} component in Object > Game Components replaces these settings in Bevy", icon="INFO", width=width)
-        return False
-    settings = export_settings(context.scene)
-    for issue in check_object(obj, exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers):
-        if is_native(issue.item) and issue.item.component_type == kind:
-            draw_message(layout, issue.message, icon="CANCEL" if issue.level == "ERROR" else "ERROR", width=width)
-    return True
-
-
-def _draw_native_axes(layout, owner, prop, text):
-    row = layout.row(heading=text, align=True)
-    for axis, label in enumerate("XYZ"):
-        row.prop(owner, prop, index=axis, text=label, toggle=True)
-
-
-class BEVY_PT_physics_rigid_body(bpy.types.Panel):
-    bl_label = "Bevy"
-    bl_idname = "BEVY_PT_physics_rigid_body"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "physics"
-    bl_parent_id = "PHYSICS_PT_rigid_body"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.rigid_body is not None and hasattr(obj, "bevy_physics") and compound_parent(obj) is None
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        obj = context.object
-        if not _draw_native_checks(layout, context, obj, "RIGID_BODY"):
-            return
-        physics = obj.bevy_physics
-        kind = rigid_body_kind(obj.rigid_body)
-        _labeled_row(layout, "Exports As").label(text=f"{BODY_LABELS[kind]} Body")
-        if kind == "DYNAMIC":
-            layout.prop(physics, "auto_mass")
-            layout.prop(physics, "gravity_scale")
-            layout.prop(physics, "ccd")
-            _draw_native_axes(layout, physics, "lock_translation", "Lock Position")
-            _draw_native_axes(layout, physics, "lock_rotation", "Lock Rotation")
-        if kind != "STATIC":
-            layout.prop(physics, "linear_velocity")
-            layout.prop(physics, "angular_velocity")
-
-
-class BEVY_PT_physics_collisions(bpy.types.Panel):
-    bl_label = "Bevy"
-    bl_idname = "BEVY_PT_physics_collisions"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "physics"
-    bl_parent_id = "PHYSICS_PT_rigid_body_collisions"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.rigid_body is not None and hasattr(obj, "bevy_physics") and obj.rigid_body.collision_shape != "COMPOUND"
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        obj = context.object
-        if not _draw_native_checks(layout, context, obj, "COLLIDER"):
-            return
-        physics = obj.bevy_physics
-        column = layout.column(align=True)
-        column.prop(physics, "sensor")
-        column.prop(physics, "events")
-        column.prop(physics, "collision_only")
-        layout.prop(physics, "use_layers")
-        if not physics.use_layers:
-            return
-        names = layer_names(context.scene)
-        for prop, text in (("memberships", "Belongs To"), ("filters", "Collides With")):
-            _labeled_row(layout, text)
-            _draw_layer_grid(layout, physics, prop, names)
-        if not any(physics.memberships) or not any(physics.filters):
-            layout.label(text="Collides with nothing", icon="INFO")
-
-
-class BEVY_PT_physics_joint(bpy.types.Panel):
-    bl_label = "Bevy"
-    bl_idname = "BEVY_PT_physics_joint"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "physics"
-    bl_parent_id = "PHYSICS_PT_rigid_body_constraint"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.rigid_body_constraint is not None and hasattr(obj, "bevy_physics")
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        obj = context.object
-        constraint = obj.rigid_body_constraint
-        width = context.region.width if context.region else 300
-        if constraint.type in UNSUPPORTED_JOINTS:
-            draw_message(layout, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this constraint out. Use Fixed, Point, Hinge or Slider", width=width)
-            return
-        if not constraint.enabled:
-            draw_message(layout, "The constraint is turned off, so the game leaves it out", icon="INFO", width=width)
-            return
-        if not _draw_native_checks(layout, context, obj, "JOINT"):
-            return
-        kind = JOINTS[constraint.type]
-        physics = obj.bevy_physics
-        _labeled_row(layout, "Exports As").label(text=f"{JOINT_LABELS[kind]} Joint")
-        if kind == "SPHERICAL":
-            row = layout.row(heading="Swing Limit")
-            row.prop(physics, "joint_use_swing", text="")
-            swing = row.row()
-            swing.active = physics.joint_use_swing
-            swing.prop(physics, "joint_swing", text="")
-        if kind != "FIXED":
-            column = layout.column(align=True)
-            column.prop(physics, "joint_linear_damping")
-            column.prop(physics, "joint_angular_damping")
-
-
-def _native_item(obj, kind):
-    return next((item for item in native_components(obj) if item.component_type == kind), None)
-
-
-def draw_visibility(self, context):
-    obj = context.object
-    if obj is None or obj.type not in MESH_TYPES or not hasattr(obj, "bevy_object"):
-        return
-    column = self.layout.column(heading="Bevy")
-    column.active = _card_of(obj, "SHADOWS") is None and left_out_by(obj) is None
-    column.prop(obj.bevy_object, "receive_shadows")
-
-
-class BEVY_PT_light(bpy.types.Panel):
-    bl_label = "Bevy"
-    bl_idname = "BEVY_PT_light"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "data"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        return light_of(context.object) is not None and hasattr(context.object.data, "bevy_light")
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        obj = context.object
-        if not _draw_native_checks(layout, context, obj, "LIGHT"):
-            return
-        _draw_light(layout, obj, -1, obj.data.bevy_light)
-
-
-class BEVY_PT_speaker(bpy.types.Panel):
-    bl_label = "Bevy"
-    bl_idname = "BEVY_PT_speaker"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "data"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        return context.speaker is not None and context.object is not None and hasattr(context.speaker, "bevy_speaker")
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        obj = context.object
-        speaker = context.speaker
-        width = context.region.width if context.region else 300
-        if speaker.muted:
-            draw_message(layout, "Muted, so the game leaves the sound out", icon="INFO", width=width)
-            return
-        if not _draw_native_checks(layout, context, obj, "AUDIO_PLAYER"):
-            return
-        if speaker.sound is None:
-            draw_message(layout, NO_SOUND, width=width)
-        path = sound_file(speaker.sound)
-        if path is not None:
-            row = _labeled_row(layout, "Asset Path")
-            row.label(text=asset_path(path)[0])
-        settings = speaker.bevy_speaker
-        column = layout.column(heading="Playback", align=True)
-        column.prop(settings, "audio_loop")
-        column.prop(settings, "audio_autoplay")
-        layout.prop(settings, "audio_spatial")
-
-
-class BEVY_PT_light_probe(bpy.types.Panel):
-    bl_label = "Bevy"
-    bl_idname = "BEVY_PT_light_probe"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "data"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        return context.lightprobe is not None and context.object is not None and hasattr(context.lightprobe, "bevy_probe")
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        obj = context.object
-        probe = context.lightprobe
-        width = context.region.width if context.region else 300
-        if probe.type not in PROBE_KINDS:
-            draw_message(layout, "Bevy has no planar reflections, so the game leaves this Light Probe out", width=width)
-            return
-        kind = PROBE_KINDS[probe.type]
-        if not _draw_native_checks(layout, context, obj, kind):
-            return
-        settings = probe.bevy_probe
-        if probe.type == "SPHERE":
-            if probe.influence_type != "BOX":
-                draw_message(layout, "Bevy's reflection probes are boxes, so this one reflects in the box around its sphere", icon="INFO", width=width)
-            layout.prop(settings, "intensity")
-            layout.prop(settings, "parallax")
-        else:
-            layout.prop(probe, "intensity")
-            layout.prop(settings, "falloff")
-        item = _native_item(obj, kind)
-        if item is not None:
-            _draw_file(layout, texture_check(obj, item), obj.bevy_object, "probe_file", "Cubemap" if probe.type == "SPHERE" else "Voxels")
-        if probe.type == "SPHERE":
-            layout.prop(settings, "bake_resolution")
-        else:
-            column = layout.column(align=True)
-            column.prop(probe, "resolution_x", text="Bake Voxels X")
-            column.prop(probe, "resolution_y", text="Y")
-            column.prop(probe, "resolution_z", text="Z")
-        _draw_bake_button(layout, obj, -1)
-
-
-class BEVY_PT_material_fog(bpy.types.Panel):
-    bl_label = "Bevy"
-    bl_idname = "BEVY_PT_material_fog"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "material"
-    bl_options = {"DEFAULT_CLOSED"}
-
-    @classmethod
-    def poll(cls, context):
-        material = context.material
-        return material is not None and hasattr(material, "bevy_fog") and volume_shader(material) is not None
-
-    def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        obj = context.object
-        material = context.material
-        width = context.region.width if context.region else 300
-        if volume_shader(material).bl_idname != PRINCIPLED_VOLUME:
-            draw_message(layout, "Bevy fog reads only the Principled Volume shader, so the game leaves this volume out", width=width)
-            return
-        if obj is not None and not _draw_native_checks(layout, context, obj, "FOG_VOLUME"):
-            return
-        layout.label(text="Fog volume in Bevy, the size of the mesh's bounds")
-        settings = material.bevy_fog
-        column = layout.column(align=True)
-        column.prop(settings, "fog_light_tint")
-        column.prop(settings, "fog_light_intensity")
-
-
 class BEVY_PT_object_properties(bpy.types.Panel):
-    bl_label = "Game Components"
+    bl_label = "Components"
     bl_idname = "BEVY_PT_object_properties"
     bl_space_type = "PROPERTIES"
     bl_region_type = "WINDOW"
@@ -940,7 +503,7 @@ class BEVY_PT_object_properties(bpy.types.Panel):
 
 
 class BEVY_PT_view_sidebar(bpy.types.Panel):
-    bl_label = "Game Components"
+    bl_label = "Bevy Components"
     bl_idname = "BEVY_PT_view_sidebar"
     bl_space_type = "VIEW_3D"
     bl_region_type = "UI"
@@ -956,17 +519,6 @@ class BEVY_PT_view_sidebar(bpy.types.Panel):
         draw_components(self.layout, context, context.object)
 
 
-def _overview_entry(obj):
-    version = problem_changes()[0]
-    if _overview["key"] != version:
-        _overview.update(key=version, objects={})
-    pointer = obj.as_pointer()
-    if pointer not in _overview["objects"]:
-        items = components_for(obj)
-        _overview["objects"][pointer] = (list(dict.fromkeys(item.component_type for item in items)), [item.custom_type for item in items if item.component_type == "CUSTOM"])
-    return _overview["objects"][pointer]
-
-
 class BEVY_UL_objects(bpy.types.UIList):
     bl_idname = "BEVY_UL_objects"
 
@@ -975,7 +527,7 @@ class BEVY_UL_objects(bpy.types.UIList):
         split.prop(item, "name", text="", emboss=False, icon_value=layout.icon(item))
         icons = split.row(align=True)
         icons.alignment = "RIGHT"
-        kinds, _type_paths = _overview_entry(item)
+        kinds = list(dict.fromkeys(component.component_type for component in item.bevy_component_data.components if component.component_type))
         for kind in kinds[:OVERVIEW_ICONS]:
             icons.label(text="", icon=COMPONENT_LABELS[kind][1])
         if len(kinds) > OVERVIEW_ICONS:
@@ -987,10 +539,11 @@ class BEVY_UL_objects(bpy.types.UIList):
         pattern = f"*{self.filter_name.lower()}*" if self.filter_name else ""
         flags = []
         for obj in objects:
-            kinds, type_paths = _overview_entry(obj)
-            listed = len(kinds) > 0 and (shown == "ALL" or shown in kinds)
+            items = obj.bevy_component_data.components
+            listed = len(items) > 0 and (shown == "ALL" or any(item.component_type == shown for item in items))
             if listed and pattern:
-                listed = any(fnmatchcase(name.lower(), pattern) for name in [obj.name, *type_paths]) != self.use_filter_invert
+                names = [obj.name] + [item.custom_type for item in items if item.component_type == "CUSTOM"]
+                listed = any(fnmatchcase(name.lower(), pattern) for name in names) != self.use_filter_invert
             flags.append(self.bitflag_filter_item if listed else 0)
         return flags, bpy.types.UI_UL_list.sort_items_by_name(objects, "name") if self.use_filter_sort_alpha else []
 
@@ -1041,7 +594,7 @@ def _draw_play_target(layout, context, width):
         draw_message(layout, str(error), width=width)
         layout.operator("preferences.addon_show", text="Open Preferences", icon="PREFERENCES").module = __package__
         return
-    draw_message(layout, "Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", "CONSOLE", width)
+    layout.label(text="Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", icon="CONSOLE")
     if not BEVY_OT_export_glb.remembered(context.scene):
         draw_message(layout, "Export the scene once, then Play exports it again each time", "INFO", width)
 
@@ -1195,22 +748,6 @@ class BEVY_PT_scene_collision_layers(bpy.types.Panel):
         grid = layout.grid_flow(row_major=False, columns=2, even_columns=True, align=True)
         for layer in range(LAYER_COUNT):
             grid.prop(layers, f"layer_{layer}", text=str(layer))
-
-
-class BEVY_PT_collection_components(bpy.types.Panel):
-    bl_label = "Game Components"
-    bl_idname = "BEVY_PT_collection_components"
-    bl_space_type = "PROPERTIES"
-    bl_region_type = "WINDOW"
-    bl_context = "collection"
-
-    @classmethod
-    def poll(cls, context):
-        collection = getattr(context, "collection", None)
-        return collection is not None and context.scene is not None and collection != context.scene.collection
-
-    def draw(self, context):
-        draw_collection_components(self.layout, context, context.collection)
 
 
 class BEVY_PT_collection_prefab(bpy.types.Panel):

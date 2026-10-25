@@ -9,19 +9,16 @@ import bpy
 from mathutils import Matrix, Quaternion, Vector
 
 from .changes import flush_changes, revision
-from .collection import COLLECTION_KINDS, collection_entries, collections_changed, from_collection, left_out
 from .files import inside
 from .fingerprint import bake_parts, read_record, stale_message
 from .gizmo import PRIMITIVE_SHAPES
 from .metadata import component_errors, light_of, light_size, visibility_range_problems
-from .native import MESH_TYPES, PRINCIPLED_VOLUME, UNSUPPORTED_JOINTS, asset_path, bounds, fog_source, is_native, sound_file
-from .property import AUDIO_FORMATS, COMPONENT_LABELS
+from .property import AUDIO_FORMATS
 from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_order
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .schema import short_name
-from .system import children_map, collider_sources, component_kinds, component_of, components_for, export_settings, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, shared_items, subtree
+from .system import MESH_TYPES, asset_path, children_map, component_kinds, component_of, components_for, export_settings, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 CheckOptions = namedtuple("CheckOptions", ("destination", "animations", "modifiers", "assets", "key"))
@@ -39,16 +36,6 @@ MISSING_FILES = {
     "LIGHTMAP": "No lightmap baked yet, so the mesh gets no baked light",
 }
 TEXTURE_CACHE_LIMIT = 256
-CENTER_TOLERANCE = 1e-3
-BLENDER_SHAPE_LABELS = {
-    "CUBOID": "Box",
-    "SPHERE": "Sphere",
-    "CAPSULE": "Capsule",
-    "CYLINDER": "Cylinder",
-    "CONE": "Cone",
-}
-FOG_INPUTS = ("Color", "Density", "Anisotropy", "Absorption Color")
-GLOW_INPUTS = ("Emission Strength", "Blackbody Intensity")
 SHADER_MIXES = {"MIX_SHADER", "ADD_SHADER"}
 GLTF_MIXES = {"BSDF_TRANSPARENT", "LIGHT_PATH"}
 UNLIT_SHADERS = {"EMISSION", "BACKGROUND"}
@@ -57,11 +44,8 @@ AMBIENT_WITH_SKY = "Bevy Ambient Light takes the World color, which the Bevy Sky
 PROBLEM_DELAY = 0.5
 MESSAGE_MARGIN = 62
 TAB_MARGIN = 22
-NO_SOUND = "No sound picked, so nothing plays"
-BREAKABLE = "Avian joints don't break on their own, so the game leaves out Breakable. Game code can add JointDisabled to break the joint"
 ISSUE_CACHE_LIMIT = 16384
 UNCACHED_KINDS = {"SCENE_REFERENCE", "LIGHTMAP", "AUDIO_PLAYER", "ANIMATION", *FILE_KINDS}
-COLLECTION_ONLY = "Collections only pass on game and custom components, Navigation and Visibility Range"
 
 _texture_checks = {}
 _problem_counts = {}
@@ -182,7 +166,6 @@ def draw_problem_count(layout, scene):
 def check_objects(objects, destination=None, animations=True, modifiers=True):
     _flush()
     objects = list(objects)
-    collections_changed()
     return _check_list(objects, destination, animations, modifiers) + _prefab_issues(objects, destination, animations, modifiers)
 
 
@@ -193,17 +176,9 @@ def _check_list(objects, destination, animations, modifiers):
     assets = game_assets(bpy.context)
     options = _check_options(destination, animations, modifiers, assets)
     issues = []
-    shared = {}
     for obj in objects:
         issues.extend(_cached_issues(obj, children, exported, options))
         issues.extend(Issue("WARNING", obj, None, message) for message in material_warnings(obj, materials))
-        for pointer in _shared_items(obj):
-            shared.setdefault(pointer, obj)
-    for pointer, obj in shared.items():
-        item = next((item for item in components_for(obj) if from_collection(item) and item.as_pointer() == pointer), None)
-        if item is None:
-            continue
-        issues.extend(Issue(level, obj, item, f"{message}, in collection {item.id_data.name}") for level, message in _item_issues(item, set()))
     issues.extend(_visibility_range_issues(objects))
     return issues
 
@@ -237,12 +212,6 @@ def _has_kinds(obj, kinds):
     return any(item.component_type in kinds for item in components_for(obj))
 
 
-def _shared_items(obj):
-    if _caching():
-        return shared_items(obj)
-    return [item.as_pointer() for item in components_for(obj) if from_collection(item)]
-
-
 def _cached_issues(obj, children, exported, options):
     if not _caching() or _has_kinds(obj, UNCACHED_KINDS):
         return _object_issues(obj, children, exported, *options[:4])
@@ -263,44 +232,6 @@ def _cached_issues(obj, children, exported, options):
         if len(_issue_cache) >= ISSUE_CACHE_LIMIT:
             _issue_cache.clear()
         _issue_cache[key] = (signature, stored)
-    return issues
-
-
-def component_name(item):
-    if item.component_type == "CUSTOM" and item.custom_type.strip():
-        return short_name(item.custom_type)
-    return COMPONENT_LABELS.get(item.component_type, ("Removed Component", "ERROR"))[0]
-
-
-def collection_issues(collection):
-    issues = []
-    custom_types = set()
-    for item in collection.bevy_component_data.components:
-        if not item.component_type:
-            continue
-        if item.component_type in COLLECTION_KINDS:
-            issues.extend(Issue(level, None, item, message) for level, message in _item_issues(item, custom_types))
-        else:
-            issues.append(Issue("WARNING", None, item, f"{COLLECTION_ONLY}, so its objects do not get this one"))
-    return issues
-
-
-def _item_issues(item, custom_types):
-    issues = [("ERROR", error) for error in component_errors(item)]
-    if item.component_type != "CUSTOM" or not item.custom_type.strip():
-        return issues
-    if not TYPE_PATH.fullmatch(item.custom_type):
-        issues.append(("WARNING", f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
-    if item.custom_type in custom_types:
-        issues.append(("WARNING", f"Added more than once, but an entity holds only one {item.custom_type}"))
-    custom_types.add(item.custom_type)
-    game_type = game_types().get(item.custom_type)
-    if item.use_fields and game_type is not None and game_type.others:
-        names = ", ".join(name for name, _rust_type in game_type.others)
-        if game_type.tuple_struct:
-            issues.append(("WARNING", f"Blender cannot set field {names}, and a tuple struct cannot leave fields out, so the game cannot insert {item.custom_type}. Name its fields, or skip that one with #[reflect(skip_serializing)]"))
-        elif not game_type.has_default:
-            issues.append(("WARNING", f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
     return issues
 
 
@@ -401,10 +332,8 @@ def check_game_paths(objects, destination, assets):
 def _object_issues(obj, children, exported, destination=None, animations=True, modifiers=True, assets=None):
     issues = []
     custom_types = set()
-    items = components_for(obj)
-    for item in items:
-        if not from_collection(item):
-            issues.extend(Issue(level, obj, item, message) for level, message in _item_issues(item, custom_types))
+    for item in components_for(obj):
+        issues.extend(Issue("ERROR", obj, item, error) for error in component_errors(item))
         if item.component_type == "COLLIDER":
             issues.extend(Issue("WARNING", obj, item, message) for message in _collider_warnings(obj, item, children))
         elif item.component_type == "RIGID_BODY":
@@ -416,11 +345,9 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
         elif item.component_type == "NAVIGATION":
             issues.extend(Issue("WARNING", obj, item, message) for message in _navigation_warnings(obj, item, children))
         elif item.component_type == "AUDIO_PLAYER":
-            issues.extend(Issue("WARNING", obj, item, message) for message in (_speaker_warnings(obj) if is_native(item) else []) + _audio_warnings(item, assets))
+            issues.extend(Issue("WARNING", obj, item, message) for message in _audio_warnings(item, assets))
         elif item.component_type == "JOINT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _joint_warnings(obj, item, exported))
-            if is_native(item) and obj.rigid_body_constraint.use_breaking:
-                issues.append(Issue("WARNING", obj, item, BREAKABLE))
         elif item.component_type == "SCENE_REFERENCE" and item.scene_file.strip():
             issues.extend(_scene_reference_issues(obj, item, destination))
         elif item.component_type == "ANIMATION":
@@ -435,14 +362,22 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
             issues.append(Issue("WARNING", obj, item, "Density is 0, so the fog is invisible"))
         elif item.component_type == "LIGHT":
             issues.extend(Issue("WARNING", obj, item, message) for message in _light_warnings(obj, item))
-    for entry in collection_entries(obj):
-        if entry.rivals and any(item == entry.item for item in items if from_collection(item)):
-            name = component_name(entry.item)
-            issues.append(Issue("WARNING", obj, entry.item, f"{entry.collection.name} and {', '.join(rival.name for rival in entry.rivals)} both give it {name} with different settings, so it uses {entry.collection.name}'s. Put one collection inside the other to choose"))
-    constraint = getattr(obj, "rigid_body_constraint", None)
-    if constraint is not None and constraint.type in UNSUPPORTED_JOINTS and component_of(obj, "JOINT") is None and not left_out(obj):
-        issues.append(Issue("WARNING", obj, None, f"Bevy has no {UNSUPPORTED_JOINTS[constraint.type]} joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"))
-    issues.extend(_data_issues(obj))
+        elif item.component_type == "CUSTOM" and item.custom_type.strip():
+            if not TYPE_PATH.fullmatch(item.custom_type):
+                issues.append(Issue("WARNING", obj, item, f"\"{item.custom_type}\" is not a Rust type path such as my_game::Health"))
+            if item.custom_type in custom_types:
+                issues.append(Issue("WARNING", obj, item, f"Added more than once, but an entity holds only one {item.custom_type}"))
+            custom_types.add(item.custom_type)
+            game_type = game_types().get(item.custom_type)
+            if item.use_fields and game_type is not None and game_type.others:
+                names = ", ".join(name for name, _rust_type in game_type.others)
+                if game_type.tuple_struct:
+                    issues.append(Issue("WARNING", obj, item, f"Blender cannot set field {names}, and a tuple struct cannot leave fields out, so the game cannot insert {item.custom_type}. Name its fields, or skip that one with #[reflect(skip_serializing)]"))
+                elif not game_type.has_default:
+                    issues.append(Issue("WARNING", obj, item, f"Blender cannot set {names}, so the game needs #[reflect(Default)] on {item.custom_type} to fill them in"))
+    light = light_of(obj)
+    if light is not None and light.type == "AREA" and not any(item.component_type == "LIGHT" for item in obj.bevy_component_data.components):
+        issues.append(Issue("WARNING", obj, None, "glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"))
     shape_keys = obj.data.shape_keys if obj.type == "MESH" else None
     if modifiers and len(obj.modifiers) and shape_keys is not None and len(shape_keys.key_blocks) > 1:
         issues.append(Issue("WARNING", obj, None, "glTF leaves out the shape keys of meshes with modifiers. Apply the modifiers, or turn off Apply Modifiers"))
@@ -583,67 +518,20 @@ def _file_check(filepath, kind, library):
     return _texture_checks[key]
 
 
-def _data_issues(obj):
-    issues = []
-    if left_out(obj):
-        return issues
-    if obj.type == "LIGHT_PROBE" and obj.data.type == "PLANE" and not any(component_of(obj, kind) is not None for kind in FILE_KINDS):
-        issues.append(Issue("WARNING", obj, None, "Bevy has no planar reflections, so the game leaves this Light Probe out"))
-    if obj.type == "SPEAKER" and not obj.data.muted and component_of(obj, "AUDIO_PLAYER") is None:
-        issues.append(Issue("WARNING", obj, None, NO_SOUND))
-    source = fog_source(obj)
-    item = component_of(obj, "FOG_VOLUME")
-    if source is not None and (item is None or is_native(item)):
-        issues.extend(Issue("WARNING", obj, item, message) for message in _fog_warnings(obj, *source))
-    return issues
-
-
-def _speaker_warnings(obj):
-    sound = obj.data.sound
-    if sound.packed_file is not None:
-        return ["The sound is packed into the .blend, but the game loads it from its assets folder. Unpack it there"]
-    if asset_path(sound_file(sound))[1] is None:
-        return [f"{Path(sound_file(sound)).name} is not in an assets folder, so the game looks for it at the top of its assets folder"]
-    return []
-
-
-def _fog_warnings(obj, material, node):
-    if node.bl_idname != PRINCIPLED_VOLUME:
-        return [f"Bevy fog reads only the Principled Volume shader, so the game leaves out {material.name}"]
-    warnings = []
-    if len({slot.material for slot in obj.material_slots if slot.material is not None}) > 1:
-        warnings.append(f"Bevy fills the box with one fog, so the game uses {material.name} only")
-    linked = [name for name in FOG_INPUTS if node.inputs[name].is_linked]
-    if linked:
-        warnings.append(f"Bevy fog is even throughout, so the game takes the {' and '.join(linked)} value{'s' if len(linked) > 1 else ''} and ignores what is plugged in")
-    if any(node.inputs[name].is_linked or node.inputs[name].default_value > 0 for name in GLOW_INPUTS):
-        warnings.append("Bevy fog does not glow, so the game leaves out Emission and Blackbody")
-    size, center = bounds(obj)
-    if max(abs(value) for value in center) > CENTER_TOLERANCE * max(1.0, *size):
-        warnings.append("The mesh is not centered on its origin, but Bevy centers the fog box on it. Use Set Origin > Origin to Geometry")
-    if len(obj.data.vertices) != 8:
-        warnings.append("Bevy fog fills a box, so the game fills this mesh's bounding box")
-    return warnings
-
-
 def _collider_warnings(obj, item, children):
     warnings = []
     targets = [obj]
     if item.collider_shape in SHAPE_LABELS:
-        sources = [source for source, _matrix in collider_sources(obj, children, item)]
+        sources = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER")]
         if not sources:
-            warnings.append(f"The mesh has no faces, so no {SHAPE_LABELS[item.collider_shape]} collider is built" if getattr(item, "collider_own_mesh", False) else f"No mesh on this object or under it, so no {SHAPE_LABELS[item.collider_shape]} collider is built")
+            warnings.append(f"No mesh on this object or under it, so no {SHAPE_LABELS[item.collider_shape]} collider is built")
         if item.collider_shape == "TRIMESH":
             bodies = [owner for owner, body in (inherited(source, "RIGID_BODY") for source in sources) if body is not None and body.rigid_body_kind == "DYNAMIC"]
             if bodies:
                 warnings.append("Triangle meshes collide poorly on Dynamic bodies, use Convex Hull" if bodies[0] == obj else f"Triangle meshes collide poorly on Dynamic bodies such as {bodies[0].name}, use Convex Hull")
-        targets = [source for source, _matrix in collider_sources(obj, children, item, instances=False)]
-    elif item.collider_collision_only and not collider_sources(obj, children, item):
+        targets = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER", instances=False)]
+    elif item.collider_collision_only and not mesh_sources(obj, children, "COLLIDER"):
         warnings.append("Collision Only finds no mesh on this object or under it to hide")
-    if is_native(item) and item.collider_shape in BLENDER_SHAPE_LABELS:
-        size, center = bounds(obj)
-        if max(abs(value) for value in center) > CENTER_TOLERANCE * max(1.0, *size):
-            warnings.append(f"The mesh is not centered on its origin, but Blender and Bevy center the {BLENDER_SHAPE_LABELS[item.collider_shape]} shape on it. Use Set Origin > Origin to Geometry, or add a Collider component with an offset")
     for target in targets:
         ancestor = _uneven_scale_ancestor(target)
         if ancestor is not None:
@@ -658,12 +546,7 @@ def _rigid_body_warnings(obj, item, children):
         warnings.append("Dynamic body has no collider on it or under it, so it has no mass and collides with nothing")
     parent, body = inherited(obj.parent, "RIGID_BODY")
     if body is not None and body.rigid_body_kind != "STATIC":
-        if not is_native(item):
-            warnings.append(f"Moves on its own instead of with {parent.name}. Remove this Rigid Body to make {parent.name} one compound body")
-        elif getattr(parent, "rigid_body", None) is not None and parent == obj.parent:
-            warnings.append(f"Moves on its own instead of with {parent.name}. Set {parent.name}'s Shape to Compound Parent to make them one body")
-        else:
-            warnings.append(f"Moves on its own instead of with {parent.name}. Only direct children of a Rigid Body with the Compound Parent shape join its body")
+        warnings.append(f"Moves on its own instead of with {parent.name}. Remove this Rigid Body to make {parent.name} one compound body")
     if item.rigid_body_kind == "DYNAMIC" and all(item.rigid_body_lock_translation) and all(item.rigid_body_lock_rotation):
         warnings.append("Every axis is locked, so the body never moves. Use a Static or Kinematic body instead")
     return warnings
@@ -710,7 +593,7 @@ def _visibility_range_warnings(obj, item, children):
 
 
 def _shadows_warnings(obj, item, children):
-    if not getattr(item, "shadows_own_mesh", False) and not mesh_sources(obj, children, "SHADOWS"):
+    if not mesh_sources(obj, children, "SHADOWS"):
         return ["No mesh on this object or under it to cast or receive shadows"]
     return []
 
@@ -845,7 +728,7 @@ def _has_collider(obj):
     if component_of(obj, "COLLIDER") is not None:
         return True
     _owner, collider = inherited(obj, "COLLIDER")
-    return collider is not None and collider.collider_shape in SHAPE_LABELS and not getattr(collider, "collider_own_mesh", False) and has_faces(obj)
+    return collider is not None and collider.collider_shape in SHAPE_LABELS and has_faces(obj)
 
 
 def _uneven_scale_ancestor(obj):

@@ -12,20 +12,18 @@ import bpy
 from bpy.app.handlers import persistent
 from mathutils import Matrix
 
-from .changes import collection_users, relatives, revision, touch
-from .collection import COLLECTION_KINDS, collections_changed, from_collection, with_collections
+from .changes import relatives, revision, touch
 from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_scene, sky_component, tuple_fields, variant_names
-from .native import MESH_TYPES, fog_source, physics_components, with_native
 from .prefab import export_directory, filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
 from .schema import SCHEMA_FILE, GameField, SchemaError, find_schema, parse_schema
 
+MESH_TYPES = {"MESH", "CURVE", "SURFACE", "FONT"}
 LAYER_COUNT = 32
 BEVY_AXES = Matrix(((1, 0, 0, 0), (0, 0, 1, 0), (0, -1, 0, 0), (0, 0, 0, 1)))
 CLIPBOARD_TYPE = "bevy_components"
 CLIPBOARD_VERSION = 1
 SNAPSHOT_SKIPPED = {"rna_type", "text_link"}
-DATA_GROUPS = {"LIGHT": "bevy_light", "SPEAKER": "bevy_speaker", "LIGHT_PROBE": "bevy_probe"}
 PRESET_FOLDER = os.path.join("presets", "bevy_components")
 TEXT_OBJECT = "bevy_object"
 TEXT_COMPONENT = "bevy_component"
@@ -35,7 +33,6 @@ PROBLEM_CHANGES = [0, 0.0]
 SCHEMA_CHECK_INTERVAL = 1.0
 
 SUMMARY_LIMIT = 8192
-JOINT_SETTINGS = "joint_"
 _resolved = [None]
 _skipped = [None]
 _summaries = {}
@@ -152,7 +149,7 @@ def components_for(obj):
 
 
 def _components(obj):
-    return with_collections(obj, with_native(obj, [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]))
+    return [item for item in obj.bevy_component_data.components if item.enabled and item.component_type]
 
 
 def _summary(obj):
@@ -162,7 +159,7 @@ def _summary(obj):
         if len(_summaries) >= SUMMARY_LIMIT:
             _summaries.clear()
         items = components_for(obj)
-        found = _summaries[obj.session_uid] = (key, frozenset(item.component_type for item in items), tuple(item.custom_type for item in items if item.component_type == "CUSTOM" and item.custom_type.strip()), tuple(item.as_pointer() for item in items if from_collection(item)))
+        found = _summaries[obj.session_uid] = (key, frozenset(item.component_type for item in items), tuple(item.custom_type for item in items if item.component_type == "CUSTOM" and item.custom_type.strip()))
     return found
 
 
@@ -172,10 +169,6 @@ def component_kinds(obj):
 
 def custom_types(obj):
     return _summary(obj)[2] if hasattr(obj, "bevy_component_data") else ()
-
-
-def shared_items(obj):
-    return _summary(obj)[3] if hasattr(obj, "bevy_component_data") else ()
 
 
 def component_of(obj, kind):
@@ -195,8 +188,6 @@ def inherited(obj, kind):
 
 
 def accepts(obj, kind):
-    if isinstance(obj, bpy.types.Collection):
-        return kind in COLLECTION_KINDS
     if kind == "LIGHT":
         return light_of(obj) is not None
     if kind == "LIGHTMAP":
@@ -238,19 +229,8 @@ def has_faces(obj):
     return obj.type in MESH_TYPES and (obj.type != "MESH" or len(obj.data.polygons) > 0)
 
 
-def owns_mesh(obj, kind):
-    return getattr(component_of(obj, kind), "shadows_own_mesh", False)
-
-
 def mesh_sources(obj, children, kind, instances=True):
-    found = subtree(obj, children, lambda child: component_of(child, kind) is not None and not owns_mesh(child, kind), instances)
-    return [(source, matrix) for source, matrix in found if has_faces(source) and (source == obj or not owns_mesh(source, kind))]
-
-
-def collider_sources(obj, children, item, instances=True):
-    if getattr(item, "collider_own_mesh", False):
-        return [(obj, obj.matrix_world)] if has_faces(obj) else []
-    return mesh_sources(obj, children, "COLLIDER", instances)
+    return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
 
 
 def collision_only_meshes(objects):
@@ -259,7 +239,7 @@ def collision_only_meshes(objects):
     for obj in objects:
         collider = component_of(obj, "COLLIDER")
         if collider is not None and collider.collider_collision_only:
-            hidden.update(source for source, _matrix in collider_sources(obj, children, collider, instances=False))
+            hidden.update(source for source, _matrix in mesh_sources(obj, children, "COLLIDER", instances=False))
     return hidden
 
 
@@ -460,13 +440,11 @@ def restore_component(item, data, owner):
             continue
 
 
-def clipboard_text(obj, items, name=None, references=True, blender=None):
+def clipboard_text(obj, items, name=None, references=True):
     data = {"type": CLIPBOARD_TYPE, "version": CLIPBOARD_VERSION}
     if name is not None:
         data["name"] = name
     data["components"] = [component_snapshot(item, obj, references) for item in items if item.component_type]
-    if blender:
-        data["blender"] = blender
     return json.dumps(data, indent=2, ensure_ascii=False)
 
 
@@ -477,148 +455,16 @@ def read_components(text):
         return None
     if not isinstance(data, dict) or data.get("type") != CLIPBOARD_TYPE or not isinstance(data.get("components"), list):
         return None
-    blender = data.get("blender")
-    return [component for component in data["components"] if isinstance(component, dict)], blender if isinstance(blender, dict) else {}
-
-
-def _struct_snapshot(struct, owner, references):
-    data = {}
-    for prop in struct.bl_rna.properties:
-        if prop.identifier == "rna_type" or prop.is_readonly:
-            continue
-        value = getattr(struct, prop.identifier)
-        if prop.type == "POINTER":
-            data[prop.identifier] = None if value is None else {"self": True} if value == owner else {"object": value.name} if references else None
-        elif getattr(prop, "is_array", False):
-            data[prop.identifier] = list(value)
-        else:
-            data[prop.identifier] = value
-    return data
-
-
-def _restore_struct(struct, data, owner):
-    for name, value in data.items():
-        prop = struct.bl_rna.properties.get(name)
-        if prop is None or prop.is_readonly or name == "rna_type":
-            continue
-        try:
-            setattr(struct, name, _pointer(value, owner) if prop.type == "POINTER" else value)
-        except (TypeError, ValueError, AttributeError):
-            continue
-
-
-def _replace_group(group, data, owner, replaced=lambda name: True):
-    for name in group.bl_rna.properties.keys():
-        if name != "rna_type" and replaced(name):
-            group.property_unset(name)
-    for name in list(group.keys()):
-        if replaced(name):
-            del group[name]
-    restore_component(group, {name: value for name, value in data.items() if replaced(name)}, owner)
-
-
-def blender_snapshot(obj, references=True, physics_only=False):
-    data = {}
-    if obj.rigid_body is not None:
-        data["rigid_body"] = _struct_snapshot(obj.rigid_body, obj, references)
-    if obj.rigid_body_constraint is not None and not physics_only:
-        data["rigid_body_constraint"] = _struct_snapshot(obj.rigid_body_constraint, obj, references)
-    if data:
-        data["bevy_physics"] = component_snapshot(obj.bevy_physics, obj, references)
-    if physics_only:
-        return data
-    settings = obj.bevy_object
-    if obj.type in MESH_TYPES and not (obj.visible_shadow and settings.receive_shadows):
-        data["shadows"] = {"cast": obj.visible_shadow, "receive": settings.receive_shadows}
-    if settings.autoplay:
-        data["autoplay"] = {"speed": settings.speed}
-    group = DATA_GROUPS.get(obj.type)
-    if group is not None and hasattr(obj.data, group):
-        data[group] = component_snapshot(getattr(obj.data, group), obj, references)
-    if obj.bevy_component_data.leave_out:
-        data["leave_out"] = True
-    return data
-
-
-def has_blender_settings(obj):
-    return obj.rigid_body is not None or obj.rigid_body_constraint is not None or obj.type in DATA_GROUPS or obj.bevy_component_data.leave_out or obj.bevy_object.autoplay or obj.type in MESH_TYPES and not (obj.visible_shadow and obj.bevy_object.receive_shadows)
-
-
-def blender_count(data):
-    return len([key for key in data if key not in {"bevy_physics", "leave_out"}])
-
-
-def _with_active(obj, operator):
-    view_layer = bpy.context.view_layer
-    if view_layer is None or view_layer.objects.get(obj.name) != obj:
-        return
-    previous = view_layer.objects.active
-    view_layer.objects.active = obj
-    try:
-        operator()
-    except RuntimeError:
-        pass
-    finally:
-        view_layer.objects.active = previous
-
-
-def _add_constraint():
-    if bpy.context.scene.rigidbody_world is None:
-        bpy.ops.rigidbody.world_add()
-    bpy.ops.rigidbody.constraint_add()
-
-
-def paste_blender(obj, data):
-    if obj.library is not None:
-        return 0
-    pasted = 0
-    pasted_body = False
-    pasted_joint = False
-    body = data.get("rigid_body")
-    if isinstance(body, dict) and obj.type == "MESH":
-        if obj.rigid_body is None:
-            _with_active(obj, bpy.ops.rigidbody.object_add)
-        if obj.rigid_body is not None:
-            _restore_struct(obj.rigid_body, body, obj)
-            pasted_body = True
-            pasted += 1
-    constraint = data.get("rigid_body_constraint")
-    if isinstance(constraint, dict):
-        if obj.rigid_body_constraint is None:
-            _with_active(obj, _add_constraint)
-        if obj.rigid_body_constraint is not None:
-            _restore_struct(obj.rigid_body_constraint, constraint, obj)
-            pasted_joint = True
-            pasted += 1
-    if (pasted_body or pasted_joint) and isinstance(data.get("bevy_physics"), dict):
-        _replace_group(obj.bevy_physics, data["bevy_physics"], obj, lambda name: pasted_joint if name.startswith(JOINT_SETTINGS) else pasted_body)
-    shadows = data.get("shadows")
-    if isinstance(shadows, dict) and obj.type in MESH_TYPES:
-        obj.visible_shadow = bool(shadows.get("cast", True))
-        obj.bevy_object.receive_shadows = bool(shadows.get("receive", True))
-        pasted += 1
-    autoplay = data.get("autoplay")
-    if isinstance(autoplay, dict) and isinstance(autoplay.get("speed", 1.0), (int, float)):
-        obj.bevy_object.autoplay = True
-        obj.bevy_object.speed = autoplay.get("speed", 1.0)
-        pasted += 1
-    group = DATA_GROUPS.get(obj.type)
-    if group is not None and isinstance(data.get(group), dict) and obj.data.library is None and hasattr(obj.data, group):
-        _replace_group(getattr(obj.data, group), data[group], obj)
-        touch_owner(obj.data)
-        pasted += 1
-    if data.get("leave_out") is True:
-        obj.bevy_component_data.leave_out = True
-    return pasted
+    return [component for component in data["components"] if isinstance(component, dict)]
 
 
 def _same_component(item, data):
     return item.component_type == data.get("component_type") and (item.component_type != "CUSTOM" or item.custom_type == data.get("custom_type", item.bl_rna.properties["custom_type"].default))
 
 
-def paste_components(obj, components, scene, blender=None):
+def paste_components(obj, components, scene):
     items = obj.bevy_component_data.components
-    pasted = paste_blender(obj, blender) if blender else 0
+    pasted = 0
     for data in components:
         kind = data.get("component_type")
         if not isinstance(kind, str) or not accepts(obj, kind):
@@ -675,41 +521,23 @@ def copy_to_object(source, destination, obj):
             setattr(destination, prop, obj)
 
 
-def data_users(data):
-    if isinstance(data, bpy.types.Collection):
-        return collection_users(data)
-    if isinstance(data, bpy.types.Material):
-        return [obj for obj in bpy.data.objects if any(slot.material == data for slot in obj.material_slots)]
-    return [obj for obj in bpy.data.objects if data is not None and obj.data == data]
-
-
-def touch_owner(owner):
-    if isinstance(owner, bpy.types.Collection):
-        collections_changed()
-    touch_objects([owner] if isinstance(owner, bpy.types.Object) else data_users(owner))
-
-
 def touch_changed(self, context):
-    touch_owner(getattr(self, "id_data", None))
-    redraw_viewports()
-
-
-def _light_owner(self):
-    owner = getattr(self, "id_data", None)
-    if isinstance(owner, bpy.types.Light):
-        return owner, next(iter(data_users(owner)), None)
-    return light_of(owner), owner
+    obj = getattr(self, "id_data", None)
+    if isinstance(obj, bpy.types.Object):
+        touch_object(obj)
+        redraw_viewports()
 
 
 def light_intensity_toggled(self, context):
-    light, obj = _light_owner(self)
+    obj = getattr(self, "id_data", None)
+    light = light_of(obj)
     if self.light_use_intensity and light is not None and not self.is_property_set("light_intensity"):
         self.light_intensity = light_intensity(light, obj)
     touch_changed(self, context)
 
 
 def light_bias_toggled(self, context):
-    light = _light_owner(self)[0]
+    light = light_of(getattr(self, "id_data", None))
     if self.light_use_bias and light is not None and light.type in SHADOW_DEFAULTS and not self.is_property_set("light_depth_bias"):
         depth, normal, near = SHADOW_DEFAULTS[light.type]
         self.light_depth_bias = depth
@@ -970,22 +798,22 @@ def unlink_component(item):
 
 
 def custom_components(scene, type_path=None):
-    for owner in [*scene.objects, *scene.collection.children_recursive]:
-        if owner.library:
+    for obj in scene.objects:
+        if obj.library:
             continue
-        for item in owner.bevy_component_data.components:
+        for item in obj.bevy_component_data.components:
             if item.component_type == "CUSTOM" and (type_path is None or item.custom_type == type_path):
-                yield owner, item
+                yield obj, item
 
 
 def apply_definitions(scene):
     changed = set()
-    for owner, item in list(custom_components(scene)):
+    for obj, item in list(custom_components(scene)):
         definition = find_definition(scene, item.custom_type)
         if definition is not None and link_component(item, definition):
-            changed.add(owner)
-    for owner in changed:
-        touch_owner(owner)
+            changed.add(obj)
+    if changed:
+        touch_objects(changed)
     redraw_viewports()
 
 
@@ -1001,7 +829,7 @@ def component_text(item):
 def linked_component(text):
     obj = text.get(TEXT_OBJECT)
     link = text.get(TEXT_COMPONENT)
-    if not isinstance(obj, (bpy.types.Object, bpy.types.Collection)) or not isinstance(link, str) or not link:
+    if not isinstance(obj, bpy.types.Object) or not isinstance(link, str) or not link:
         return None, None
     return obj, next((item for item in obj.bevy_component_data.components if item.component_type == "CUSTOM" and item.text_link == link), None)
 
@@ -1085,6 +913,15 @@ def save_cleanup(_scene):
             del obj[EXTRAS_KEY]
 
 
+def asset_path(path):
+    path = Path(path)
+    folders = [parent for parent in path.parents if parent.name.lower() == "assets"]
+    if not folders:
+        return path.name, None
+    root = next((folder for folder in folders if (folder.parent / "Cargo.toml").is_file()), folders[0])
+    return path.relative_to(root).as_posix(), root
+
+
 def bevy_view(view_matrix):
     location, rotation, _scale = (BEVY_AXES @ view_matrix.inverted()).decompose()
     return ",".join(f"{value:.6g}" for value in (*location, rotation.x, rotation.y, rotation.z, rotation.w))
@@ -1122,17 +959,9 @@ class glTF2ExportUserExtension:
 
     def gather_node_hook(self, gltf2_node, blender_object, export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
-        _remove_extra(gltf2_node, "bevy_physics")
-        _remove_extra(gltf2_node, "bevy_object")
         _remove_extra(gltf2_node, "bevy_prefab")
-        _light_extras(gltf2_node)
         reference = instance_node(gltf2_node, blender_object)
         _component_extras(gltf2_node, blender_object, export_settings, [reference] if reference is not None else [])
-        if fog_source(blender_object) is not None:
-            gltf2_node.mesh = None
-
-    def gather_material_hook(self, gltf2_material, _blender_material, _export_settings):
-        _remove_extra(gltf2_material, "bevy_fog")
 
     def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
@@ -1146,7 +975,7 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_game")
         prefab_scene(gltf2_scene, blender_scene)
         world = getattr(blender_scene, "world", None)
-        components = (scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []) + physics_components(blender_scene)
+        components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
         gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}
 
 
@@ -1160,17 +989,6 @@ def _component_extras(gltf2_node, obj, export_settings, extra):
         gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)}
     else:
         _remove_extra(gltf2_node, EXTRAS_KEY)
-
-
-def _light_extras(gltf2_node):
-    extension = gltf2_node.extensions.get("KHR_lights_punctual") if isinstance(gltf2_node.extensions, dict) else None
-    light = getattr(extension, "extension", {}).get("light") if extension is not None else None
-    data = getattr(light, "extension", None)
-    extras = data.get("extras") if isinstance(data, dict) else None
-    if isinstance(extras, dict):
-        extras.pop("bevy_light", None)
-        if not extras:
-            data.pop("extras")
 
 
 def _remove_extra(gltf2_element, key):

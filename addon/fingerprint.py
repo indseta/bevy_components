@@ -5,8 +5,7 @@ import bpy
 import numpy
 from mathutils import Vector
 
-from .bake import box_matrix, job_item
-from .native import fog_source
+from .bake import box_matrix
 from .system import collision_only_meshes, component_of, lightmap_uv_map
 
 GEOMETRY_TYPES = {"MESH", "CURVE", "SURFACE", "META", "FONT", "CURVES", "POINTCLOUD", "VOLUME"}
@@ -30,7 +29,7 @@ def bake_record(scene, view_layer, depsgraph, job, cache):
         parts = bake_parts(scene, view_layer, depsgraph, cache, world=bpy.data.worlds.get(job["world"]))
     else:
         obj = scene.objects[job["object"]]
-        parts = bake_parts(scene, view_layer, depsgraph, cache, obj, job_item(obj, job))
+        parts = bake_parts(scene, view_layer, depsgraph, cache, obj, obj.bevy_component_data.components[job["index"]])
     return json.dumps({"file": job["file"], **parts}, separators=(",", ":"))
 
 
@@ -40,7 +39,7 @@ def bake_parts(scene, view_layer, depsgraph, cache, obj=None, item=None, world=N
     if ("collision_only",) not in cache:
         cache[("collision_only",)] = collision_only_meshes(scene.objects)
     hidden = cache[("collision_only",)]
-    geometry = [other for other in scene.objects if other.type in GEOMETRY_TYPES and _rendered(other, view_layer) and fog_source(other) is None and other not in hidden]
+    geometry = [other for other in scene.objects if other.type in GEOMETRY_TYPES and _rendered(other, view_layer) and other not in hidden]
     if item.component_type == "LIGHTMAP":
         bounds, digest = _geometry(obj, depsgraph, cache)
         uv_map = lightmap_uv_map(obj)

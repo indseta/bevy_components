@@ -33,7 +33,6 @@ pub enum ExportedComponent {
         restitution: Option<f32>,
         memberships: Option<u32>,
         filters: Option<u32>,
-        own_mesh: Option<bool>,
     },
     RigidBody {
         kind: String,
@@ -62,7 +61,6 @@ pub enum ExportedComponent {
     Shadows {
         cast: bool,
         receive: bool,
-        own_mesh: Option<bool>,
     },
     AudioPlayer {
         path: String,
@@ -72,13 +70,9 @@ pub enum ExportedComponent {
         autoplay: bool,
         spatial: bool,
         distance: f32,
-        speed: Option<f32>,
     },
     Light(ExportedLight),
     AmbientLight(ExportedAmbientLight),
-    Gravity {
-        value: [f32; 3],
-    },
     Custom {
         type_path: String,
         data: Value,

@@ -12,19 +12,17 @@ from .bake import BackgroundBake, bake_command, bake_hidden, bake_jobs, bake_sum
 from .export import PROGRESS_INTERVAL, ExportCancelled, ExportError, SceneExport, again, cancel_exports, export_path, finish_export, remembered, running_export, scene_issues, start_export
 from .files import snake_case
 from .fingerprint import bake_record
-from .convert import convert_objects
 from .geometry import fit_shape
 from .metadata import PRIMITIVE_SHAPES, infer_fields
-from .native import asset_path
 from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command
-from .prefab import find_collection, layer_collection
+from .prefab import find_collection
 from .preferences import draw_encoder_status
 from .probe import FILE_KINDS
 from .project import game_assets, game_folder, play_target
 from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, blender_count, blender_snapshot, children_map, clipboard_text, component_of, component_text, components_for, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, has_blender_settings, linked_component, mesh_points, new_identifier, paste_blender, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, touch_owner, unlink_component, viewport_view, write_component_text, write_field
-from .validation import COLLECTION_ONLY, body_kind, check_objects, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, unlink_component, viewport_view, write_component_text, write_field
+from .validation import body_kind, check_objects, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 ACCEPTED_OBJECTS = {
     "LIGHT": "light",
@@ -76,24 +74,14 @@ def stop_bakes():
     _bakes.clear()
 
 
-def _shown(context):
-    return getattr(context, "bevy_collection", None) or context.object
-
-
-def _owner(context):
-    owner = _shown(context)
-    return owner if owner is not None and owner.library is None else None
-
-
 def _editable(context):
-    return _owner(context) is not None
+    return context.object is not None and context.object.library is None
 
 
 def _components(context, index):
-    owner = _owner(context)
-    if owner is None or not 0 <= index < len(owner.bevy_component_data.components):
+    if not _editable(context) or not 0 <= index < len(context.object.bevy_component_data.components):
         return None
-    return owner.bevy_component_data.components
+    return context.object.bevy_component_data.components
 
 
 def _active_definition(context):
@@ -127,14 +115,14 @@ def _missing_uv_maps(jobs):
 
 def _targets(context):
     targets = [obj for obj in context.selected_objects if obj.library is None]
-    if context.object is not None and context.object.library is None and context.object not in targets:
+    if _editable(context) and context.object not in targets:
         targets.append(context.object)
     return targets
 
 
-def _paste(operator, context, components, blender, source):
+def _paste(operator, context, components, source):
     targets = _targets(context)
-    pasted = [paste_components(obj, components, context.scene, blender) for obj in targets]
+    pasted = [paste_components(obj, components, context.scene) for obj in targets]
     redraw_viewports()
     if not any(pasted):
         operator.report({"WARNING"}, f"None of the components in {source} fit the selected objects")
@@ -186,11 +174,11 @@ class BEVY_OT_add_component(bpy.types.Operator):
         return f"Add {properties.type_path} to the active object" if properties.type_path else cls.bl_description
 
     def execute(self, context):
-        obj = _owner(context)
+        obj = context.object
         items = obj.bevy_component_data.components
         defined = self.component_type == "CUSTOM" and self.type_path
         if not accepts(obj, self.component_type):
-            self.report({"WARNING"}, COLLECTION_ONLY if isinstance(obj, bpy.types.Collection) else f"{COMPONENT_LABELS[self.component_type][0]} only works on {ACCEPTED_OBJECTS[self.component_type]} objects")
+            self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} only works on {ACCEPTED_OBJECTS[self.component_type]} objects")
             return {"CANCELLED"}
         if self.component_type != "CUSTOM" and any(existing.component_type == self.component_type for existing in items):
             self.report({"WARNING"}, f"{COMPONENT_LABELS[self.component_type][0]} is already on {obj.name}")
@@ -206,7 +194,7 @@ class BEVY_OT_add_component(bpy.types.Operator):
             item.joint_body2 = obj
         if self.component_type == "ANIMATION":
             item.animation_clip = default_clip(obj)
-        touch_owner(obj)
+        touch_object(obj)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -228,7 +216,7 @@ class BEVY_OT_remove_component(bpy.types.Operator):
         if items is None:
             return {"CANCELLED"}
         items.remove(self.index)
-        touch_owner(_owner(context))
+        touch_object(context.object)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -255,7 +243,7 @@ class BEVY_OT_duplicate_component(bpy.types.Operator):
         duplicate = items.add()
         copy_component(items[self.index], duplicate)
         items.move(len(items) - 1, self.index + 1)
-        touch_owner(_owner(context))
+        touch_object(context.object)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -270,7 +258,7 @@ class BEVY_OT_copy_component_to_selected(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return isinstance(_owner(context), bpy.types.Object) and len(context.selected_objects) > 1
+        return _editable(context) and len(context.selected_objects) > 1
 
     def execute(self, context):
         items = _components(context, self.index)
@@ -316,7 +304,7 @@ class BEVY_OT_reset_component(bpy.types.Operator):
         item.pop(EVENTS_KEY, None)
         if typed:
             reset_fields(item, find_definition(context.scene, item.custom_type))
-        touch_owner(_owner(context))
+        touch_object(context.object)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -348,7 +336,7 @@ class BEVY_OT_move_component(bpy.types.Operator):
         if target == self.index:
             return {"CANCELLED"}
         items.move(self.index, target)
-        touch_owner(_owner(context))
+        touch_object(context.object)
         return {"FINISHED"}
 
 
@@ -383,7 +371,7 @@ class BEVY_OT_lod_preset(bpy.types.Operator):
         item.fade_in_end = fade_in_end
         item.fade_out_start = fade_out_start
         item.fade_out_end = fade_out_end
-        touch_owner(_owner(context))
+        touch_object(context.object)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -410,7 +398,7 @@ class BEVY_OT_set_collision_layers(bpy.types.Operator):
         if items is None or items[self.index].component_type != "COLLIDER":
             return {"CANCELLED"}
         setattr(items[self.index], f"collider_{self.layers.lower()}", (self.enable,) * LAYER_COUNT)
-        touch_owner(_owner(context))
+        touch_object(context.object)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -438,7 +426,7 @@ class BEVY_OT_fit_collider(bpy.types.Operator):
             return {"CANCELLED"}
         for key, value in fit_shape(item.collider_shape, points).items():
             setattr(item, f"collider_{key}", value)
-        touch_owner(_owner(context))
+        touch_object(context.object)
         redraw_viewports()
         return {"FINISHED"}
 
@@ -634,9 +622,9 @@ class BEVY_OT_definition_remove(bpy.types.Operator):
         library.definitions.remove(library.active_index)
         library.active_index = min(library.active_index, len(library.definitions) - 1)
         if find_definition(scene, type_path) is None:
-            for owner, item in list(custom_components(scene, type_path)):
+            for obj, item in list(custom_components(scene, type_path)):
                 if unlink_component(item):
-                    touch_owner(owner)
+                    touch_object(obj)
         apply_definitions(scene)
         return {"FINISHED"}
 
@@ -709,7 +697,7 @@ class BEVY_OT_field_move(bpy.types.Operator):
 class BEVY_OT_copy_to_selected(bpy.types.Operator):
     bl_idname = "bevy_components.copy_to_selected"
     bl_label = "Copy Components to Selected"
-    bl_description = "Replace the components of the other selected objects with the active object's components, and give them its Rigid Body, Rigid Body Constraint, shadow, autoplay and Bevy settings"
+    bl_description = "Replace the components of the other selected objects with the active object's components"
     bl_options = {"REGISTER", "UNDO"}
 
     @classmethod
@@ -718,8 +706,7 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
 
     def execute(self, context):
         source = context.object
-        blender = blender_snapshot(source)
-        copied = 0
+        count = 0
         for obj in context.selected_objects:
             if obj == source or obj.library:
                 continue
@@ -728,11 +715,10 @@ class BEVY_OT_copy_to_selected(bpy.types.Operator):
             for item in source.bevy_component_data.components:
                 if accepts(obj, item.component_type):
                     copy_to_object(item, destination.add(), obj)
-            paste_blender(obj, blender)
             touch_object(obj)
-            copied += 1
+            count += 1
         redraw_viewports()
-        self.report({"INFO"}, f"Copied components to {count(copied, 'object')}")
+        self.report({"INFO"}, f"Copied components to {count} objects")
         return {"FINISHED"}
 
 
@@ -745,14 +731,13 @@ class BEVY_OT_copy_component(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _shown(context) is not None
+        return context.object is not None
 
     def execute(self, context):
-        owner = _shown(context)
-        items = owner.bevy_component_data.components
+        items = context.object.bevy_component_data.components
         if not 0 <= self.index < len(items) or not items[self.index].component_type:
             return {"CANCELLED"}
-        context.window_manager.clipboard = clipboard_text(owner, [items[self.index]])
+        context.window_manager.clipboard = clipboard_text(context.object, [items[self.index]])
         self.report({"INFO"}, f"Copied {COMPONENT_LABELS[items[self.index].component_type][0]}")
         return {"FINISHED"}
 
@@ -760,17 +745,16 @@ class BEVY_OT_copy_component(bpy.types.Operator):
 class BEVY_OT_copy_components(bpy.types.Operator):
     bl_idname = "bevy_components.copy_components"
     bl_label = "Copy Components"
-    bl_description = "Copy the active object's components, with its Rigid Body, Rigid Body Constraint, shadow, autoplay and Bevy settings, to the clipboard, to paste them onto objects in any .blend file"
+    bl_description = "Copy the active object's components to the clipboard, to paste them onto objects in any .blend file"
 
     @classmethod
     def poll(cls, context):
-        return context.object is not None and (any(item.component_type for item in context.object.bevy_component_data.components) or has_blender_settings(context.object))
+        return context.object is not None and any(item.component_type for item in context.object.bevy_component_data.components)
 
     def execute(self, context):
         items = [item for item in context.object.bevy_component_data.components if item.component_type]
-        blender = blender_snapshot(context.object)
-        context.window_manager.clipboard = clipboard_text(context.object, items, blender=blender)
-        self.report({"INFO"}, f"Copied {count(len(items) + blender_count(blender), 'component')}")
+        context.window_manager.clipboard = clipboard_text(context.object, items)
+        self.report({"INFO"}, f"Copied {count(len(items), 'component')}")
         return {"FINISHED"}
 
 
@@ -785,23 +769,23 @@ class BEVY_OT_paste_components(bpy.types.Operator):
         return bool(_targets(context))
 
     def execute(self, context):
-        found = read_components(context.window_manager.clipboard)
-        if found is None or not any(found):
+        components = read_components(context.window_manager.clipboard)
+        if not components:
             self.report({"WARNING"}, "The clipboard holds no Bevy components. Copy some with Copy Components first")
             return {"CANCELLED"}
-        return _paste(self, context, *found, "the clipboard")
+        return _paste(self, context, components, "the clipboard")
 
 
 class BEVY_OT_save_preset(bpy.types.Operator):
     bl_idname = "bevy_components.save_preset"
     bl_label = "Save Components as Preset"
-    bl_description = "Save the active object's components, with its Rigid Body, Rigid Body Constraint, shadow, autoplay and Bevy settings, as a preset that every .blend file lists under Add Component > Presets"
+    bl_description = "Save the active object's components as a preset that every .blend file lists under Add Component > Presets"
 
     name: StringProperty(name="Name", description="Name of the preset. Saving under the name of an existing preset replaces it", default="My Preset")
 
     @classmethod
     def poll(cls, context):
-        if context.object is None or not (any(item.component_type for item in context.object.bevy_component_data.components) or has_blender_settings(context.object)):
+        if context.object is None or not any(item.component_type for item in context.object.bevy_component_data.components):
             cls.poll_message_set("The active object has no components to save")
             return False
         return True
@@ -824,7 +808,7 @@ class BEVY_OT_save_preset(bpy.types.Operator):
         obj = context.object
         path = preset_file(self.name)
         try:
-            path.write_text(clipboard_text(obj, obj.bevy_component_data.components, name=self.name.strip(), references=False, blender=blender_snapshot(obj, references=False)), encoding="utf-8")
+            path.write_text(clipboard_text(obj, obj.bevy_component_data.components, name=self.name.strip(), references=False), encoding="utf-8")
         except OSError as error:
             self.report({"ERROR"}, f"Could not save the preset: {error.strerror or error}")
             return {"CANCELLED"}
@@ -847,14 +831,14 @@ class BEVY_OT_apply_preset(bpy.types.Operator):
     def execute(self, context):
         path = Path(self.filepath)
         try:
-            found = read_components(path.read_text(encoding="utf-8"))
+            components = read_components(path.read_text(encoding="utf-8"))
         except OSError as error:
             self.report({"ERROR"}, f"Could not read the preset: {error.strerror or error}")
             return {"CANCELLED"}
-        if found is None or not any(found):
+        if not components:
             self.report({"ERROR"}, f"{path.name} is not a Bevy Components preset")
             return {"CANCELLED"}
-        return _paste(self, context, *found, f"preset {bpy.path.display_name(path.stem)}")
+        return _paste(self, context, components, f"preset {bpy.path.display_name(path.stem)}")
 
 
 class BEVY_OT_remove_preset(bpy.types.Operator):
@@ -893,7 +877,7 @@ class BEVY_OT_edit_as_text(bpy.types.Operator):
         items = _components(context, self.index)
         if items is None or items[self.index].component_type != "CUSTOM":
             return {"CANCELLED"}
-        obj = _owner(context)
+        obj = context.object
         item = items[self.index]
         if not item.text_link or any(other.text_link == item.text_link for other in items if other != item):
             item.text_link = new_identifier()
@@ -937,7 +921,7 @@ class BEVY_OT_apply_text(bpy.types.Operator):
         if error is not None:
             self.report({"ERROR"}, f"Cannot apply {text.name}: {error}")
             return {"CANCELLED"}
-        touch_owner(obj)
+        touch_object(obj)
         redraw_viewports()
         redraw_properties()
         self.report({"INFO"}, f"Applied {text.name} to {obj.name}")
@@ -975,7 +959,7 @@ class BEVY_OT_select_by_component(bpy.types.Operator):
         return {"FINISHED"}
 
     def _matches(self, obj):
-        items = components_for(obj)
+        items = obj.bevy_component_data.components
         if self.component_type == "ALL":
             return len(items) > 0
         return any(item.component_type == self.component_type and (not self.type_path or item.custom_type == self.type_path) for item in items)
@@ -1005,29 +989,6 @@ class BEVY_OT_select_object(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class BEVY_OT_show_collection(bpy.types.Operator):
-    bl_idname = "bevy_components.show_collection"
-    bl_label = "Show Collection"
-    bl_description = "Make the collection active and show its Bevy Components in Properties > Collection"
-
-    collection: StringProperty(name="Collection")
-
-    @classmethod
-    def poll(cls, context):
-        return context.view_layer is not None
-
-    def execute(self, context):
-        collection = find_collection(self.collection)
-        layer = layer_collection(context.view_layer.layer_collection, collection) if collection is not None else None
-        if layer is None:
-            self.report({"WARNING"}, f"{self.collection} is not in the current view layer")
-            return {"CANCELLED"}
-        context.view_layer.active_layer_collection = layer
-        if context.space_data is not None and context.space_data.type == "PROPERTIES":
-            context.space_data.context = "COLLECTION"
-        return {"FINISHED"}
-
-
 class BEVY_OT_validate(bpy.types.Operator):
     bl_idname = "bevy_components.validate"
     bl_label = "Validate Components"
@@ -1050,82 +1011,6 @@ class BEVY_OT_validate(bpy.types.Operator):
             self.report({"ERROR"}, f"{count(len(errors), 'problem')} {'blocks' if len(errors) == 1 else 'block'} export: {describe(errors[0])}")
             return {"CANCELLED"}
         self.report({"WARNING"}, f"{count(len(issues), 'warning')}: {describe(issues[0])}")
-        return {"FINISHED"}
-
-
-class BEVY_OT_convert_to_native(bpy.types.Operator):
-    bl_idname = "bevy_components.convert_to_native"
-    bl_label = "Convert Components to Blender"
-    bl_description = "Replace components with Blender's own data wherever the game gets the same result: physics with Rigid Bodies and Constraints, Light, Shadows and Animation with the light, object and action settings, Audio Player, Fog Volume and probes with Speaker, fog box and Light Probe child objects. Keeps the other components"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        return context.scene is not None and context.view_layer is not None and context.mode == "OBJECT"
-
-    def execute(self, context):
-        converted, kept = convert_objects(context, context.scene.objects)
-        for obj, reason in kept:
-            print(f"Bevy Components: kept components on {obj.name} because {reason}")
-        if not converted and not kept:
-            self.report({"INFO"}, "No components that Blender data can replace")
-            return {"CANCELLED"}
-        if kept and context.window is not None and not bpy.app.background:
-            rows = [("WARNING", obj.name, f"kept because {reason}") for obj, reason in kept]
-            context.window_manager.popup_menu(lambda menu, _context: draw_issues(menu.layout, rows, 20, "in the system console", select=True), title=f"Converted {count(len(converted), 'object')}, kept components on {count(len(set(obj for obj, _reason in kept)), 'object')}", icon="INFO")
-        if kept:
-            self.report({"WARNING"}, f"Converted {count(len(converted), 'object')}, kept components on {count(len(set(obj for obj, _reason in kept)), 'object')}: {kept[0][0].name} because {kept[0][1]}")
-        else:
-            self.report({"INFO"}, f"Converted {count(len(converted), 'object')} to Blender data")
-        redraw_properties()
-        redraw_viewports()
-        return {"FINISHED"}
-
-
-class BEVY_OT_copy_physics(bpy.types.Operator):
-    bl_idname = "bevy_components.copy_physics"
-    bl_label = "Copy from Active with Bevy Settings"
-    bl_description = "Copy the active object's Rigid Body and its Bevy settings, such as Sensor, Bevy Layers and Gravity Scale, to the selected meshes. Blender's Copy from Active leaves the Bevy settings out"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.rigid_body is not None and len(context.selected_objects) > 1 and context.mode == "OBJECT"
-
-    def execute(self, context):
-        source = context.object
-        physics = blender_snapshot(source, physics_only=True)
-        targets = [obj for obj in context.selected_objects if obj != source and obj.type == "MESH" and obj.library is None]
-        for obj in targets:
-            paste_blender(obj, physics)
-            touch_object(obj)
-        redraw_properties()
-        redraw_viewports()
-        self.report({"INFO"}, f"Copied {source.name}'s Rigid Body to {count(len(targets), 'object')}")
-        return {"FINISHED"}
-
-
-class BEVY_OT_add_constraint(bpy.types.Operator):
-    bl_idname = "bevy_components.add_constraint"
-    bl_label = "Add Rigid Body Constraint"
-    bl_description = "Add Blender's Rigid Body Constraint to the active object, and a Rigid Body World when the scene has none. The game gets it as a Joint"
-    bl_options = {"REGISTER", "UNDO"}
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.object
-        return obj is not None and obj.library is None and obj.rigid_body_constraint is None and context.mode == "OBJECT"
-
-    def execute(self, context):
-        if context.scene.rigidbody_world is None:
-            bpy.ops.rigidbody.world_add()
-        context.view_layer.objects.active = context.object
-        bpy.ops.rigidbody.constraint_add()
-        if context.object.rigid_body_constraint is None:
-            self.report({"ERROR"}, "Blender could not add a Rigid Body Constraint")
-            return {"CANCELLED"}
-        redraw_properties()
         return {"FINISHED"}
 
 
@@ -1693,13 +1578,9 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
                     stored.append(job)
                 continue
             obj = bpy.data.objects.get(job["object"])
-            usable = obj is not None and obj.library is None
-            items = obj.bevy_component_data.components if usable else ()
+            items = obj.bevy_component_data.components if obj is not None and obj.library is None else ()
             matching = [item for item in items if FILE_KINDS.get(item.component_type) == job["kind"]]
-            if job["index"] < 0:
-                item = obj.bevy_object if usable else None
-            else:
-                item = items[job["index"]] if job["index"] < len(items) and items[job["index"]] in matching else matching[0] if len(matching) == 1 else None
+            item = items[job["index"]] if job["index"] < len(items) and items[job["index"]] in matching else matching[0] if len(matching) == 1 else None
             if item is not None:
                 item.probe_file = job["file"]
                 item.bake_fingerprint = job.get("fingerprint", "")

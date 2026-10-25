@@ -1,13 +1,11 @@
 import bpy
 from bpy.app.handlers import persistent
 
-DATA_TYPES = (bpy.types.Mesh, bpy.types.Curve, bpy.types.Light, bpy.types.Speaker, bpy.types.LightProbe)
-SETTING_TYPES = {"BOOLEAN", "INT", "FLOAT", "ENUM", "STRING"}
+DATA_TYPES = (bpy.types.Mesh, bpy.types.Curve, bpy.types.Light)
 
 _revisions = {}
 _identities = {}
 _members = {}
-_settings = {}
 _counter = [0]
 _epoch = [0]
 
@@ -64,17 +62,11 @@ def depsgraph_changed(scene, depsgraph):
         touch(relatives(touched))
 
 
-def collection_users(collection):
-    return [*collection.all_objects, *_instancers(collection)]
-
-
 def _instancers(collection):
     return [obj for obj in bpy.data.objects if obj.instance_type == "COLLECTION" and obj.instance_collection == collection]
 
 
 def _identity(obj):
-    constraint = getattr(obj, "rigid_body_constraint", None)
-    body = getattr(obj, "rigid_body", None)
     return (
         obj.name,
         _uid(obj.parent),
@@ -86,21 +78,7 @@ def _identity(obj):
         tuple(_uid(slot.material) for slot in obj.material_slots),
         obj.hide_render,
         obj.hide_viewport,
-        obj.visible_shadow,
-        (_uid(constraint.object1), _uid(constraint.object2), _values(constraint)) if constraint is not None else None,
-        _values(body) if body is not None else None,
     )
-
-
-def _values(struct):
-    names = _settings.get(type(struct))
-    if names is None:
-        names = _settings[type(struct)] = tuple(prop.identifier for prop in struct.bl_rna.properties if prop.type in SETTING_TYPES and prop.identifier != "rna_type")
-    return tuple(_value(getattr(struct, name)) for name in names)
-
-
-def _value(value):
-    return tuple(value) if hasattr(value, "__len__") and not isinstance(value, str) else value
 
 
 def _uid(data):

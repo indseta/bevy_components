@@ -3,7 +3,6 @@ from math import radians
 import bpy
 from bpy.props import BoolProperty, BoolVectorProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty, IntVectorProperty, PointerProperty, StringProperty
 
-from .native import FOG_SETTINGS, LIGHT_SETTINGS, SPEAKER_SETTINGS
 from .prefab import prefab_toggled
 from .system import LAYER_COUNT, component_of, custom_type_changed, definition_renamed, field_changed, light_bias_toggled, light_intensity_toggled, overview_index, redraw_viewports, select_overview_object, set_variant, touch_changed, type_path_suggestions, variant_index, variant_items
 
@@ -59,13 +58,6 @@ JOINT_TYPES = [
 
 JOINT_LABELS = {identifier: name for identifier, name, _description, _icon, _number in JOINT_TYPES}
 
-CCD_MODES = [
-    ("DEFAULT", "Default", "Sweep fast movement against static and kinematic bodies, so the body does not pass through walls. This is Avian's default"),
-    ("ALL", "All Bodies", "Also sweep against dynamic bodies and colliders without a body, for small fast objects such as bullets"),
-    ("OFF", "Off", "Never sweep, which is cheaper but lets fast bodies pass through thin colliders"),
-]
-CCD_DESCRIPTION = "Continuous collision detection, which sweeps fast bodies along their path so they do not pass through thin colliders"
-
 BAKE_SIZES = (64, 128, 256, 512, 1024)
 LIGHTMAP_SIZES = (64, 128, 256, 512, 1024, 2048)
 AXES = [
@@ -85,10 +77,6 @@ def _get_collision_events(self):
 
 def _set_collision_events(self, value):
     self[EVENTS_KEY] = bool(value)
-
-
-def _get_native_events(self):
-    return bool(self.get(EVENTS_KEY, self.sensor))
 
 
 class BEVY_PG_field(bpy.types.PropertyGroup):
@@ -162,7 +150,11 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
     rigid_body_angular_damping: FloatProperty(name="Angular Damping", description="Slows the body's spin over time", default=0.0, min=0.0, soft_max=10.0, update=touch_changed)
     rigid_body_lock_translation: BoolVectorProperty(name="Lock Position", description="World axes the body cannot move along, on Bevy's axes (Y up)", size=3, default=(False, False, False), update=touch_changed)
     rigid_body_lock_rotation: BoolVectorProperty(name="Lock Rotation", description="World axes the body cannot turn around, on Bevy's axes (Y up)", size=3, default=(False, False, False), update=touch_changed)
-    rigid_body_ccd: EnumProperty(name="Swept CCD", description=CCD_DESCRIPTION, items=CCD_MODES, default="DEFAULT", update=touch_changed)
+    rigid_body_ccd: EnumProperty(name="Swept CCD", description="Continuous collision detection, which sweeps fast bodies along their path so they do not pass through thin colliders", items=[
+        ("DEFAULT", "Default", "Sweep fast movement against static and kinematic bodies, so the body does not pass through walls. This is Avian's default"),
+        ("ALL", "All Bodies", "Also sweep against dynamic bodies and colliders without a body, for small fast objects such as bullets"),
+        ("OFF", "Off", "Never sweep, which is cheaper but lets fast bodies pass through thin colliders"),
+    ], default="DEFAULT", update=touch_changed)
     rigid_body_linear_velocity: FloatVectorProperty(name="Velocity", description="Velocity the body starts with, along Bevy's world axes (Y up). Kinematic bodies keep it until game code changes it", size=3, subtype="XYZ", unit="VELOCITY", update=touch_changed)
     rigid_body_angular_velocity: FloatVectorProperty(name="Angular Velocity", description="Spin per second the body starts with, around Bevy's world axes (Y up). Kinematic bodies keep it until game code changes it", size=3, subtype="XYZ", unit="ROTATION", update=touch_changed)
     show_velocity: BoolProperty(name="Initial Velocity", description="Show the velocity the body starts with", default=False)
@@ -237,54 +229,6 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
 
 class BEVY_PG_object_data(bpy.types.PropertyGroup):
     components: CollectionProperty(type=BEVY_PG_component)
-    leave_out: BoolProperty(name="Leave Out of Bevy", description="Export as plain glTF: Blender's physics, light, speaker, light probe and fog settings and the components of collections do not reach the game. On a collection, this counts for every object in it. Components added in Game Components still export", default=False, update=touch_changed)
-
-
-class BEVY_PG_physics(bpy.types.PropertyGroup):
-    auto_mass: BoolProperty(name="Mass from Volume", description="Let Avian compute the mass from the collider's volume at 1 kg per cubic meter, instead of using the Mass above", default=False, update=touch_changed)
-    gravity_scale: FloatProperty(name="Gravity Scale", description="Multiplies gravity for this body. 0 makes it float and negative values make it rise", default=1.0, soft_min=-2.0, soft_max=2.0, update=touch_changed)
-    ccd: EnumProperty(name="Swept CCD", description=CCD_DESCRIPTION, items=CCD_MODES, default="DEFAULT", update=touch_changed)
-    lock_translation: BoolVectorProperty(name="Lock Position", description="World axes the body cannot move along", size=3, subtype="XYZ", default=(False, False, False), update=touch_changed)
-    lock_rotation: BoolVectorProperty(name="Lock Rotation", description="World axes the body cannot turn around", size=3, subtype="XYZ", default=(False, False, False), update=touch_changed)
-    linear_velocity: FloatVectorProperty(name="Velocity", description="Velocity the body starts with, along the world axes. Kinematic bodies keep it until game code changes it", size=3, subtype="VELOCITY", unit="VELOCITY", update=touch_changed)
-    angular_velocity: FloatVectorProperty(name="Spin", description="Spin per second the body starts with, around the world axes. Kinematic bodies keep it until game code changes it", size=3, subtype="XYZ", unit="ROTATION", update=touch_changed)
-    sensor: BoolProperty(name="Sensor", description="Detect overlaps without producing collision forces, such as a trigger zone", default=False, update=touch_changed)
-    events: BoolProperty(name="Collision Events", description="Send Avian's CollisionStart and CollisionEnd events when this collider starts or stops touching another. On by default for sensors", get=_get_native_events, set=_set_collision_events, update=touch_changed)
-    collision_only: BoolProperty(name="Collision Only", description="Hide the object's mesh in the game while its collider still works, for invisible walls", default=False, update=touch_changed)
-    use_layers: BoolProperty(name="Bevy Layers", description="Use Avian's 32 collision layers, with separate layers to be on and to collide with, instead of the Collision Collections above", default=False, update=touch_changed)
-    memberships: BoolVectorProperty(name="Belongs To", description="Collision layers the collider is on", size=LAYER_COUNT, default=(True,) + (False,) * (LAYER_COUNT - 1), update=touch_changed)
-    filters: BoolVectorProperty(name="Collides With", description="Collision layers the collider touches. Two colliders touch only when each is on a layer the other collides with", size=LAYER_COUNT, default=(True,) * LAYER_COUNT, update=touch_changed)
-    joint_use_swing: BoolProperty(name="Swing Limit", description="Keep the bodies' Z axes within a cone of each other", default=False, update=touch_changed)
-    joint_swing: FloatProperty(name="Swing Limit", description="Largest angle between the bodies' Z axes, the half angle of the cone", default=radians(45), min=0.0, max=radians(180), subtype="ANGLE", update=touch_changed)
-    joint_linear_damping: FloatProperty(name="Damping", description="Slows how fast the bodies move relative to each other", default=0.0, min=0.0, soft_max=10.0, update=touch_changed)
-    joint_angular_damping: FloatProperty(name="Turn Damping", description="Slows how fast the bodies turn relative to each other, so a door or pendulum settles", default=0.0, min=0.0, soft_max=10.0, update=touch_changed)
-
-
-class BEVY_PG_object(bpy.types.PropertyGroup):
-    receive_shadows: BoolProperty(name="Receive Shadows", description="Show shadows cast by other objects on this object in Bevy. Off adds Bevy's NotShadowReceiver to its mesh", default=True, update=touch_changed)
-    autoplay: BoolProperty(name="Autoplay", description="Play the object's active action when the scene loads. The export needs Include Animations", default=False, update=touch_changed)
-    speed: FloatProperty(name="Speed", description="Playback speed, where 1 matches the timing in Blender", default=1.0, min=0.0, soft_max=4.0, update=touch_changed)
-    probe_file: StringProperty(name="File", description="KTX2 file that Bake renders for this light probe and the export embeds in the scene: a cubemap for a sphere, a 3D texture for a volume. A path starting with // is relative to the .blend file", subtype="FILE_PATH", options=PATH_OPTIONS, update=touch_changed)
-    bake_fingerprint: StringProperty(name="Bake Fingerprint", description="What the meshes, lamps and World looked like when Bake rendered the file, so the export checks can tell when it is out of date", options={"HIDDEN"})
-
-
-class BEVY_PG_light(bpy.types.PropertyGroup):
-    __annotations__ = {name: BEVY_PG_component.__annotations__[name] for name in (*LIGHT_SETTINGS, "show_shadows")}
-
-
-class BEVY_PG_speaker(bpy.types.PropertyGroup):
-    __annotations__ = {name: BEVY_PG_component.__annotations__[name] for name in SPEAKER_SETTINGS}
-
-
-class BEVY_PG_fog(bpy.types.PropertyGroup):
-    __annotations__ = {name: BEVY_PG_component.__annotations__[name] for name in FOG_SETTINGS}
-
-
-class BEVY_PG_probe(bpy.types.PropertyGroup):
-    intensity: FloatProperty(name="Intensity", description="Brightness of the reflections. 1 converts Blender's light units at 683 lumens per watt, like the glTF export converts lamps", default=1.0, min=0.0, soft_max=10.0, update=touch_changed)
-    parallax: BoolProperty(name="Parallax Correction", description="Reflect the surroundings as if they lie on the walls of the probe's box, which suits rooms. Turn off for open areas whose surroundings are far away", default=True, update=touch_changed)
-    falloff: FloatProperty(name="Falloff", description="Share of the volume, from its walls inward, over which its light fades out, so that neighbouring volumes blend", default=0.0, min=0.0, max=1.0, subtype="FACTOR", update=touch_changed)
-    bake_resolution: BEVY_PG_component.__annotations__["bake_resolution"]
 
 
 class BEVY_PG_collision_layers(bpy.types.PropertyGroup):
@@ -367,7 +311,7 @@ class BEVY_PG_prefab(bpy.types.PropertyGroup):
 
 
 class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
-    enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport while the Game Components panel in Properties is expanded, never exported", default=True, update=redraw_viewports)
+    enabled: BoolProperty(name="Bevy Components", description="Draw Bevy component previews in the 3D Viewport while the Components panel in Properties is expanded, never exported", default=True, update=redraw_viewports)
     scope: EnumProperty(name="Draw On", items=[
         ("SELECTED", "Selected", "Draw previews for selected objects only"),
         ("ALL", "All", "Draw previews for every visible object with Bevy components"),

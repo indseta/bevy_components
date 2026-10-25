@@ -9,7 +9,7 @@ Requires Blender 4.2+, Bevy 0.20 and Avian 0.8.
 1. Download `bevy_components_<version>.zip` from the [latest release](https://github.com/indseta/bevy_components/releases/latest).
 2. In Blender, open **Edit > Preferences > Get Extensions**, then **Install from Disk...** and pick the ZIP.
 3. Enable **Bevy Components** if it isn't enabled already.
-4. Find it under **Properties > Object > Game Components**, **3D Viewport > N > Bevy** or **3D Viewport > Object > Bevy Components**.
+4. Find it under **Properties > Object > Components**, **3D Viewport > N > Bevy** or **3D Viewport > Object > Bevy Components**.
 
 ## Install the importer
 
@@ -52,7 +52,7 @@ The importer's warnings start with the Blender object's name, such as `crate: In
 
 ## Usage
 
-1. Set up physics, lights, speakers and light probes with Blender's own tools. For your game's components, select an object, press **Add Component** in **Properties > Object > Game Components** and pick one, or start typing to search.
+1. Select an object, press **Add Component** and pick a component, or start typing to search.
 2. Export the scene with **File > Export > Bevy Scene (.glb)**. After that, **Export Again** writes the same file with the same settings, without the file dialog. To export single objects with the options of Blender's glTF export, use **File > Export > Bevy glTF (.glb/.gltf)**.
 3. Put the GLB in your game's `assets/` folder and load it as above. Or set your game's folder as the **Game Project** and press **Play** in **3D Viewport > N > Bevy** to export and run the game in one click.
 
@@ -60,14 +60,12 @@ Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the run
 
 | Component | In Bevy |
 | --- | --- |
-| Blender's Rigid Body and Rigid Body Constraint | Avian bodies, colliders and joints, with a Bevy subpanel in Properties > Physics for sensors, layers and starting velocity |
-| Blender's lights, speakers, light probes, volume boxes and active actions | Bevy lights, `AudioPlayer`, reflection probes, irradiance volumes, `FogVolume` and autoplaying animations, with Bevy settings in each Properties tab |
 | Collider | Avian cuboid, sphere, capsule, cylinder, cone, convex hull or triangle mesh collider, with friction, restitution, collision layers and events |
 | Rigid Body | Avian static, dynamic or kinematic body with mass, damping, locked axes and a starting velocity |
 | Joint | Avian fixed, hinge, slider or ball joint between two bodies |
 | Visibility Range | `VisibilityRange` for levels of detail |
 | Shadows | `NotShadowCaster` and `NotShadowReceiver` |
-| Light | Per-light Bevy settings in place of the light data's |
+| Light | Shadow, volumetric and baked settings for glTF lights, and `RectLight` for area lights |
 | Lightmap, Reflection Probe, Irradiance Volume | Baked lighting, rendered by Cycles in the background |
 | Fog Volume | `FogVolume` |
 | Audio Player | `AudioPlayer` with `PlaybackSettings` |
@@ -76,11 +74,11 @@ Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the run
 | Navigation | `NavigationWalkable` and `NavigationObstacle` tags for a navmesh crate |
 | Custom Component | Any of your game's components, as JSON or with typed fields read from your game |
 
-The World properties add **Bevy Sky** and **Bevy Ambient Light**. In the Collection properties, **Game Components** gives custom components, Navigation and Visibility Range to every object in the collection, and **Bevy Prefab** turns it into a prefab with its own GLB.
+The World properties add **Bevy Sky** and **Bevy Ambient Light**, and **Bevy Prefab** turns a collection into a prefab with its own GLB.
 
 ## Guides
 
-- [Components](docs/components.md): collections, physics, rendering, audio, animation, scene references, navigation and the viewport previews
+- [Components](docs/components.md): physics, rendering, audio, animation, scene references, navigation and the viewport previews
 - [Custom components](docs/custom_components.md): your game's own components, from its code or defined by hand
 - [Lighting](docs/lighting.md): lights, ambient light, the sky, fog, light probes and baked lighting
 - [Exporting](docs/exporting.md): export options, Export Again, hot reload, prefabs and the checks

@@ -87,9 +87,6 @@ def clear_scene():
     for collection in (bpy.data.objects, bpy.data.collections, bpy.data.meshes, bpy.data.lights, bpy.data.cameras, bpy.data.materials, bpy.data.images, bpy.data.node_groups, bpy.data.actions):
         for block in list(collection):
             collection.remove(block)
-    if bpy.context.scene.rigidbody_world is not None:
-        bpy.ops.rigidbody.world_remove()
-    bpy.context.scene.gravity = (0.0, 0.0, -9.81)
     if hasattr(bpy.context.scene, "bevy_component_definitions"):
         bpy.context.scene.bevy_component_definitions.definitions.clear()
     if hasattr(bpy.context.scene, "bevy_collision_layers"):

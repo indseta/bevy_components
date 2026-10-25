@@ -2,7 +2,6 @@ import bpy
 from bpy.props import StringProperty
 from bpy_extras.io_utils import ExportHelper
 
-from .native import rest_frame
 from .system import bevy_export
 
 try:
@@ -21,7 +20,7 @@ def _skipped_message(skipped):
 
 if ExportGLTF2_Base is not None:
     class BEVY_OT_export_gltf(bpy.types.Operator, ExportGLTF2_Base, ExportHelper):
-        """Export as glTF 2.0 with the same options as Blender's glTF export, plus the objects' Bevy components and physics at the simulation's start"""
+        """Export as glTF 2.0 with the same options as Blender's glTF export, plus the objects' Bevy components"""
         bl_idname = "export_scene.bevy_gltf"
         bl_label = "Export Bevy glTF"
 
@@ -34,7 +33,7 @@ if ExportGLTF2_Base is not None:
             return "io_scene_gltf2" in context.preferences.addons and context.scene is not None
 
         def execute(self, context):
-            with bevy_export() as skipped, rest_frame(context.scene):
+            with bevy_export() as skipped:
                 result = ExportGLTF2_Base.execute(self, context)
             if skipped and "FINISHED" in result:
                 self.report({"WARNING"}, _skipped_message(skipped))

@@ -1,5 +1,5 @@
-use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionEventsEnabled, CollisionLayers, Friction, Gravity, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
-use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, ecs::reflect::ReflectCommandExt, gltf::{GltfExtras, GltfSceneExtras}, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
+use avian3d::prelude::{AngularDamping, AngularVelocity, CcdFilter, Collider, CollisionEventsEnabled, CollisionLayers, Friction, GravityScale, LayerMask, LinearDamping, LinearVelocity, LockedAxes, Mass, NoAutoMass, Restitution, RigidBody, Sensor, SweptCcd};
+use bevy::{asset::AssetPath, audio::{PlaybackMode, SpatialScale, Volume}, camera::visibility::VisibilityRange, ecs::reflect::ReflectCommandExt, gltf::GltfExtras, light::{FogVolume, GeneratedEnvironmentMapLight, IrradianceVolume, LightProbe, NotShadowCaster, NotShadowReceiver, ParallaxCorrection}, math::Affine3A, platform::collections::HashMap, prelude::*};
 use serde_json::Value;
 use std::iter;
 use crate::{component::*, custom, data::*, joint::*, light, lightmap, name::object_name, texture::GltfTextures};
@@ -31,11 +31,11 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         warn!("{}: Invalid visibility range", object_name(name));
                     }
                 }
-                ExportedComponent::Collider { shape, size, radius, height, offset, sensor, events, collision_only, friction, restitution, memberships, filters, own_mesh } => {
+                ExportedComponent::Collider { shape, size, radius, height, offset, sensor, events, collision_only, friction, restitution, memberships, filters } => {
                     if let Some(shape) = ColliderShape::from_str(&shape) {
                         let layers = (memberships.is_some() || filters.is_some()).then(|| CollisionLayers::from_bits(memberships.unwrap_or(LayerMask::DEFAULT.0), filters.unwrap_or(LayerMask::ALL.0)));
                         let offset = offset.map_or(Vec3::ZERO, Vec3::from_array);
-                        components.collider = Some(ColliderSpec { shape, size, radius, height, offset, sensor, events: events.unwrap_or_default(), collision_only: collision_only.unwrap_or_default(), own_mesh: own_mesh.unwrap_or_default(), friction, restitution, layers });
+                        components.collider = Some(ColliderSpec { shape, size, radius, height, offset, sensor, events: events.unwrap_or_default(), collision_only: collision_only.unwrap_or_default(), friction, restitution, layers });
                     } else {
                         warn!("{}: Unsupported collider shape", object_name(name));
                     }
@@ -83,7 +83,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     let axis = axis.map(Vec3::from).and_then(Vec3::try_normalize).unwrap_or(Vec3::Y);
                     joint = Some(JointSpec { kind, body1, body2, axis, angle_limits, distance_limits, swing_limit, linear_damping: linear_damping.unwrap_or_default(), angular_damping: angular_damping.unwrap_or_default(), collide });
                 }
-                ExportedComponent::Shadows { cast, receive, own_mesh } => components.shadows = Some(ShadowSettings { cast, receive, own_mesh: own_mesh.unwrap_or_default() }),
+                ExportedComponent::Shadows { cast, receive } => components.shadows = Some(ShadowSettings { cast, receive }),
                 ExportedComponent::Navigation { kind, cost } => {
                     let cost = match cost {
                         Some(value) if value <= 0.0 => {
@@ -102,7 +102,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                         }
                     };
                 }
-                ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance, speed } => {
+                ExportedComponent::AudioPlayer { path, volume, looping, autoplay, spatial, distance } => {
                     if path.is_empty() {
                         warn!("{}: Audio Player has no sound file", object_name(name));
                     } else if audio_sources.is_none() {
@@ -110,7 +110,7 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                     } else {
                         let mode = if looping { PlaybackMode::Loop } else { PlaybackMode::Once };
                         let spatial_scale = (spatial && distance > 0.0).then(|| SpatialScale::new(1.0 / distance));
-                        audio = Some((AudioPlayer::new(asset_server.load(path)), PlaybackSettings { mode, volume: Volume::Linear(volume.max(0.0)), speed: speed.unwrap_or(1.0).max(0.0), paused: !autoplay, spatial, spatial_scale, ..PlaybackSettings::ONCE }));
+                        audio = Some((AudioPlayer::new(asset_server.load(path)), PlaybackSettings { mode, volume: Volume::Linear(volume.max(0.0)), paused: !autoplay, spatial, spatial_scale, ..PlaybackSettings::ONCE }));
                     }
                 }
                 ExportedComponent::Light(light) => {
@@ -120,7 +120,6 @@ pub fn read_gltf_components(mut commands: Commands, nodes: Query<(Entity, &GltfE
                 }
                 ExportedComponent::AmbientLight(_) => warn!("{}: Ambient light belongs on the scene, not on an object", object_name(name)),
                 ExportedComponent::Sky { .. } => warn!("{}: Sky belongs on the scene, not on an object", object_name(name)),
-                ExportedComponent::Gravity { .. } => warn!("{}: Gravity belongs on the scene, not on an object", object_name(name)),
                 ExportedComponent::Custom { type_path, data } => match custom::reflected_component(&registry, &type_path, &data, name) {
                     Some(component) => reflected.push(component),
                     None => custom.0.push(BlenderCustomComponent { type_path, data }),
@@ -218,30 +217,6 @@ pub fn decode_extras(value: &str, name: Option<&Name>) -> Option<ExportedData> {
         return None;
     }
     return Some(exported);
-}
-
-pub fn clear_scene_physics(mut commands: Commands, source: Option<Res<GravitySource>>, scenes: Query<(), With<GltfSceneExtras>>) {
-    let Some(source) = source else { return; };
-    if scenes.contains(source.scene) {
-        return;
-    }
-    commands.insert_resource(Gravity(source.previous));
-    commands.remove_resource::<GravitySource>();
-}
-
-pub fn apply_scene_physics(mut commands: Commands, gravity: Option<Res<Gravity>>, source: Option<Res<GravitySource>>, scenes: Query<(Entity, &GltfSceneExtras, Option<&Name>), Without<DecodedScenePhysics>>) {
-    let mut previous = source.map(|source| source.previous).or(gravity.map(|gravity| gravity.0));
-    for (entity, extras, name) in &scenes {
-        commands.entity(entity).insert(DecodedScenePhysics);
-        let Some(exported) = decode_extras(&extras.value, name) else { continue; };
-        for component in exported.components {
-            if let ExportedComponent::Gravity { value } = component {
-                let restored = *previous.get_or_insert(Gravity::default().0);
-                commands.insert_resource(Gravity(Vec3::from_array(value)));
-                commands.insert_resource(GravitySource { scene: entity, previous: restored });
-            }
-        }
-    }
 }
 
 pub fn apply_default_bodies(mut commands: Commands, candidates: Query<Entity, With<DefaultStaticBody>>, parents: Query<&ChildOf>, bodies: Query<(), With<RigidBody>>) {
@@ -371,7 +346,6 @@ pub fn play_animations(mut commands: Commands, animations: Query<(Entity, &Pendi
 
 pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mesh3d), Without<ProcessedMesh>>, parents: Query<&ChildOf>, specs: Query<&ImportedComponents>) {
     for (entity, _mesh) in &meshes {
-        let owner = parents.get(entity).ok().map(ChildOf::parent);
         let mut cursor = Some(entity);
         let mut visibility = None;
         let mut collider = None;
@@ -382,11 +356,11 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
                 if visibility.is_none() {
                     visibility = spec.visibility_range.clone();
                 }
-                if collider.is_none() && spec.collider.is_some() {
-                    collider = Some(spec.collider.clone().filter(|collider| !collider.own_mesh || Some(current) == owner));
+                if collider.is_none() {
+                    collider = spec.collider.clone();
                 }
                 if shadows.is_none() {
-                    shadows = spec.shadows.filter(|shadows| !shadows.own_mesh || Some(current) == owner);
+                    shadows = spec.shadows;
                 }
                 if visibility.is_some() && collider.is_some() && shadows.is_some() {
                     break;
@@ -400,7 +374,7 @@ pub fn apply_mesh_components(mut commands: Commands, meshes: Query<(Entity, &Mes
         if let Some(range) = visibility {
             target.insert(range);
         }
-        if let Some(spec) = collider.flatten() {
+        if let Some(spec) = collider {
             if spec.collision_only {
                 target.insert(Visibility::Hidden);
             }

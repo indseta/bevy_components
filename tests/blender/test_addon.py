@@ -20,7 +20,7 @@ import gpu
 import numpy
 from mathutils import Matrix, Quaternion, Vector
 
-from sample_scene import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, SOUNDS, add_component, add_empty, add_instance, add_light, add_material, add_mesh, add_prefab, animate, apply_lod_preset, build_sample_scene, clear_scene, define_component, export_props, export_sample_scene, install_addon, layers, move_to, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
+from sample_scene import COMPRESSED_FIXTURES, CUBEMAP, FIXTURE, IRRADIANCE_VOLUME, LIGHTMAP, PROP, SCHEMA, add_component, add_empty, add_instance, add_light, add_material, add_mesh, add_prefab, animate, apply_lod_preset, build_sample_scene, clear_scene, define_component, export_props, export_sample_scene, install_addon, layers, move_to, pick_sound, read_gltf, select, set_fields, uninstall_addon, use_game_schema
 
 LAYOUT = bpy.types.UILayout.bl_rna
 ICONS = set(LAYOUT.functions["label"].parameters["icon"].enum_items.keys())
@@ -554,17 +554,16 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_prefab"))
-        self.assertTrue(hasattr(bpy.types.Collection, "bevy_component_data"))
-        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "export_scene.bevy_gltf", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "bevy_components.show_collection", "bevy_components.copy_physics"):
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "export_scene.bevy_gltf"):
             self.assertTrue(_operator_exists(idname), idname)
-        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_advanced", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_components", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
+        for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
         for idname in ("BEVY_FH_glb", "BEVY_FH_gltf"):
             self.assertIsNotNone(bpy.types.FileHandler.bl_rna_get_subclass_py(idname), idname)
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
-        self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Game Components", "object"))
+        self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Components", "object"))
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
         self.assertIn(addon.menu.export_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
         self.assertIn(addon.menu.bake_status, bpy.types.STATUSBAR_HT_header._dyn_ui_initialize())
@@ -574,7 +573,6 @@ class TestRegistration(unittest.TestCase):
         for menu in (bpy.types.VIEW3D_MT_object, bpy.types.VIEW3D_MT_object_context_menu):
             self.assertIn(addon.menu.object_menu, menu._dyn_ui_initialize())
         self.assertIn(addon.menu.select_menu, bpy.types.VIEW3D_MT_select_object._dyn_ui_initialize())
-        self.assertIn(addon.menu.rigid_body_menu, bpy.types.VIEW3D_MT_object_rigid_body._dyn_ui_initialize())
         self.assertIn(addon.menu.text_header, bpy.types.TEXT_HT_header._dyn_ui_initialize())
         for name in ("depsgraph_update_post", "undo_post", "redo_post", "load_post"):
             self.assertIn(addon.system.problems_changed, getattr(bpy.app.handlers, name))
@@ -595,7 +593,7 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(_operator_exists("bevy_components.add"))
 
     def test_add_menus_search_on_key_press(self):
-        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_advanced, addon.menu.BEVY_MT_component_add_presets):
+        for menu in (addon.menu.BEVY_MT_component_add, addon.menu.BEVY_MT_component_add_physics, addon.menu.BEVY_MT_component_add_rendering, addon.menu.BEVY_MT_component_add_lighting, addon.menu.BEVY_MT_component_add_presets):
             self.assertEqual(menu.bl_options, {"SEARCH_ON_KEY_PRESS"})
 
     def test_disable_and_enable_keeps_components(self):
@@ -1157,7 +1155,7 @@ class TestPanels(unittest.TestCase):
         for kind in ("VISIBILITY_RANGE", "COLLIDER", "RIGID_BODY", "CUSTOM", "SHADOWS", "AUDIO_PLAYER", "JOINT", "SCENE_REFERENCE", "ANIMATION"):
             add_component(self.obj, kind)
         collider = self.obj.bevy_component_data.components[1]
-        for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE", "CYLINDER", "CONE"):
+        for shape in ("TRIMESH", "CONVEX", "CUBOID", "SPHERE", "CAPSULE"):
             collider.collider_shape = shape
             panel = FakePanel(self)
             self.assertTrue(addon.panel.BEVY_PT_object_properties.poll(bpy.context))
@@ -1205,32 +1203,29 @@ class TestPanels(unittest.TestCase):
         add_component(self.obj, "CUSTOM")
         menu = FakePanel(self)
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_advanced", "BEVY_MT_component_add_presets"])
-        self.assertEqual([text for text, properties, enabled in menu.layout.buttons()], ["Custom Component", "Navigation", "Visibility Range", "Lightmap", "Scene Reference"])
+        self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets"])
+        self.assertEqual([text for text, properties, enabled in menu.layout.buttons()], ["Custom Component", "Audio Player", "Animation", "Scene Reference", "Navigation"])
         found = {}
-        for menu_type, kinds in ((addon.menu.BEVY_MT_component_add, None), (addon.menu.BEVY_MT_component_add_advanced, ["COLLIDER", "RIGID_BODY", "JOINT", "LIGHT", "SHADOWS", "FOG_VOLUME", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "AUDIO_PLAYER", "ANIMATION"])):
+        for menu_type, kinds in ((addon.menu.BEVY_MT_component_add, None), (addon.menu.BEVY_MT_component_add_physics, ["COLLIDER", "RIGID_BODY", "JOINT"]), (addon.menu.BEVY_MT_component_add_rendering, ["VISIBILITY_RANGE", "SHADOWS"]), (addon.menu.BEVY_MT_component_add_lighting, ["LIGHT", "LIGHTMAP", "REFLECTION_PROBE", "IRRADIANCE_VOLUME", "FOG_VOLUME"])):
             menu = FakePanel(self)
             menu_type.draw(menu, _menu_context(self.obj))
-            buttons = {properties.component_type: enabled for text, properties, enabled in menu.layout.buttons() if hasattr(properties, "component_type")}
+            buttons = {properties.component_type: enabled for text, properties, enabled in menu.layout.buttons()}
             if kinds is not None:
                 self.assertEqual(list(buttons), kinds)
             found.update(buttons)
         self.assertEqual(found, {"CUSTOM": True, "COLLIDER": False, "RIGID_BODY": True, "JOINT": True, "VISIBILITY_RANGE": True, "SHADOWS": True, "LIGHT": False, "FOG_VOLUME": True, "REFLECTION_PROBE": True, "IRRADIANCE_VOLUME": True, "LIGHTMAP": True, "AUDIO_PLAYER": True, "ANIMATION": True, "SCENE_REFERENCE": True, "NAVIGATION": True})
         add_component(self.obj, "AUDIO_PLAYER")
         menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_advanced.draw(menu, _menu_context(self.obj))
+        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
         self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Audio Player"])
-        self.assertEqual(menu.layout.texts()[0], "In place of Blender's settings")
         lamp = add_light("lamp", "POINT", (0, 0, 0))
         menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_advanced.draw(menu, _menu_context(lamp))
+        addon.menu.BEVY_MT_component_add_lighting.draw(menu, _menu_context(lamp))
         self.assertTrue(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Light"])
-        menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(lamp))
         self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Lightmap"])
         add_component(lamp, "LIGHT")
         menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_advanced.draw(menu, _menu_context(lamp))
+        addon.menu.BEVY_MT_component_add_lighting.draw(menu, _menu_context(lamp))
         self.assertFalse(dict((text, enabled) for text, properties, enabled in menu.layout.buttons())["Light"])
 
     def test_component_context_menu_targets_its_component(self):
@@ -1250,7 +1245,7 @@ class TestPanels(unittest.TestCase):
         menu = FakePanel(self)
         with _remembered_exports():
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.convert_to_native", "bevy_components.bake_lighting", "export_scene.bevy_components_glb"])
+        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.bake_lighting", "export_scene.bevy_components_glb"])
         menu = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
@@ -1539,7 +1534,7 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(layout.props()[-6:], ["light_use_intensity", "shadow_soft_size", "use_custom_distance", "light_baked", "light_volumetric", "use_shadow"])
         self.assertIn(("row", "Intensity"), [(name, bound.get("heading")) for name, bound, child in layout.calls])
         self.assertIn("136,600 lm", layout.texts())
-        self.assertIn("20 m (default)", layout.texts())
+        self.assertIn("20 m, Bevy's default", layout.texts())
         self.assertNotIn("light_contact_shadows", layout.props())
         item.light_use_intensity = True
         item.show_shadows = True
@@ -1581,11 +1576,11 @@ class TestPanels(unittest.TestCase):
         self.assertIn("Bevy area lights cast no shadows", " ".join(layout.texts()))
         self.assertNotIn("light_baked", layout.props())
 
-    def test_lights_without_a_light_component_use_their_light_settings(self):
+    def test_area_lights_without_a_light_component_explain_why(self):
         window = add_light("window", "AREA", (0, 0, 0))
-        self.assertIn("Light from Light Properties", self._draw_card(window).texts())
+        self.assertIn("glTF leaves out area lights", " ".join(self._draw_card(window).texts()))
         add_component(window, "LIGHT")
-        self.assertNotIn("Light from Light Properties", self._draw_card(window).texts())
+        self.assertNotIn("glTF leaves out area lights", " ".join(self._draw_card(window).texts()))
 
     def test_world_ambient_light_panel(self):
         panel_type = addon.panel.BEVY_PT_world_ambient_light
@@ -2082,7 +2077,7 @@ class TestCustomFields(unittest.TestCase):
         addon.menu.BEVY_MT_component_add.draw(menu, _menu_context(self.obj))
         buttons = [(text, properties.component_type, getattr(properties, "type_path", ""), enabled) for text, properties, enabled in menu.layout.buttons()]
         self.assertEqual(buttons[:3], [("Custom Component", "CUSTOM", "", True), ("game::Health", "CUSTOM", "game::Health", False), ("game::Wave", "CUSTOM", "game::Wave", True)])
-        self.assertEqual([button[1] for button in buttons[3:]], ["NAVIGATION", "VISIBILITY_RANGE", "LIGHTMAP", "SCENE_REFERENCE"])
+        self.assertEqual(buttons[-1], ("Navigation", "NAVIGATION", "", True))
 
     def test_component_context_menu_edits_defined_fields(self):
         define_component("game::Health", ("amount", "INT", 100))
@@ -2297,8 +2292,6 @@ class TestChanges(unittest.TestCase):
         self.assertEqual(changed(), ["box"])
         rock.parent = crate
         self.assertEqual(changed(), ["box", "rock"])
-        crate.visible_shadow = False
-        self.assertEqual(changed(), ["box", "rock"])
         bpy.data.objects.remove(helper)
         self.assertEqual(changed(), [])
         addon.system.touch_object(rock)
@@ -2416,6 +2409,8 @@ class TestViewport(unittest.TestCase):
         self.assertFalse(gizmo.poll(bpy.context))
         lamp = add_light("lamp", "POINT", (0, 0, 0))
         select(lamp)
+        self.assertFalse(gizmo.poll(bpy.context))
+        add_component(lamp, "LIGHT")
         self.assertTrue(gizmo.poll(bpy.context))
         self.assertEqual(addon.gizmo._get_light_range(), 20.0)
         addon.gizmo._set_light_range((7.5,))
@@ -2805,9 +2800,6 @@ class TestViewport(unittest.TestCase):
             self.settings.volumes = True
         collider.collider_shape = "SPHERE"
         self.assertEqual(addon.gizmo._get_handle_value(0), 0.5)
-        sphere = _add_object(bpy.ops.object.lightprobe_add, type="SPHERE")
-        self.assertEqual(addon.system.component_kinds(sphere), {"REFLECTION_PROBE"})
-        self.assertIsNone(addon.gizmo.handle_item(sphere, self.settings))
 
     def test_convex_hull_preview_is_the_real_hull(self):
         collider = add_component(self.obj, "COLLIDER", collider_shape="CONVEX")
@@ -3151,78 +3143,6 @@ class TestWorkflow(unittest.TestCase):
             self.assertFalse(path.exists())
             self.assertEqual(addon.system.presets(), [])
 
-    def test_copy_paste_and_presets_carry_blender_settings(self):
-        crate = self.obj
-        _rigid_body(crate, shape="BOX")
-        crate.rigid_body.mass = 4.0
-        crate.rigid_body.friction = 0.9
-        crate.bevy_physics.gravity_scale = 0.5
-        crate.bevy_physics.sensor = True
-        crate.bevy_physics.events = False
-        crate.visible_shadow = False
-        add_component(crate, "CUSTOM", type_path="my_game::Crate", custom_json="{}")
-        expected = _native(crate)
-        clipboard = SimpleNamespace(clipboard="")
-        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_components, _clipboard_context(crate, crate, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Copied 3 components")]))
-        self.assertEqual(sorted(json.loads(clipboard.clipboard)["blender"]), ["bevy_physics", "rigid_body", "shadows"])
-        target = add_mesh(bpy.ops.mesh.primitive_cube_add, "target", location=(3, 0, 0))
-        _rigid_body(target, "PASSIVE", "SPHERE")
-        target.bevy_physics.ccd = "ALL"
-        marker = add_empty("marker", (6, 0, 0))
-        result = _execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(target, target, marker, clipboard=clipboard))
-        self.assertEqual(result, ({"FINISHED"}, [({"INFO"}, "Added 3 components from the clipboard to 2 objects")]))
-        self.assertEqual((target.rigid_body.type, target.rigid_body.collision_shape, target.rigid_body.mass), ("ACTIVE", "BOX", 4.0))
-        self.assertEqual((target.bevy_physics.ccd, target.bevy_physics.sensor, target.bevy_physics.events), ("DEFAULT", True, False))
-        self.assertFalse(target.visible_shadow)
-        self.assertEqual(_native(target), expected)
-        self.assertIsNone(marker.rigid_body)
-        self.assertEqual(_stored(marker)["components"], [{"type": "custom", "type_path": "my_game::Crate", "data": {}}])
-        rocks = [add_mesh(bpy.ops.mesh.primitive_cube_add, f"rock_{index}", location=(index * 3, 4, 0)) for index in range(2)]
-        _constraint(rocks[0], "HINGE", crate)
-        rocks[0].bevy_physics.joint_angular_damping = 3.0
-        context = SimpleNamespace(object=crate, selected_objects=[crate, *rocks], mode="OBJECT")
-        self.assertTrue(addon.operator.BEVY_OT_copy_physics.poll(context))
-        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_physics, context), ({"FINISHED"}, [({"INFO"}, "Copied subject's Rigid Body to 2 objects")]))
-        for rock in rocks:
-            self.assertEqual((rock.rigid_body.mass, rock.bevy_physics.gravity_scale, rock.bevy_physics.sensor), (4.0, 0.5, True))
-            self.assertTrue(rock.visible_shadow)
-            self.assertEqual(len(rock.bevy_component_data.components), 0)
-        self.assertEqual(rocks[0].bevy_physics.joint_angular_damping, 3.0)
-        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", location=(0, 8, 0))
-        _rigid_body(frame, "PASSIVE", "BOX")
-        hinge = add_empty("hinge", (0, 10, 0))
-        constraint = _constraint(hinge, "HINGE", frame, hinge)
-        constraint.use_limit_ang_z = True
-        hinge.bevy_physics.joint_angular_damping = 2.0
-        door = add_empty("door", (0, 12, 0))
-        select(hinge, door)
-        bpy.context.view_layer.objects.active = hinge
-        self.assertEqual(bpy.ops.bevy_components.copy_to_selected(), {"FINISHED"})
-        self.assertEqual((door.rigid_body_constraint.type, door.rigid_body_constraint.object1, door.rigid_body_constraint.object2, door.rigid_body_constraint.use_limit_ang_z), ("HINGE", frame, door, True))
-        self.assertEqual(door.bevy_physics.joint_angular_damping, 2.0)
-        with tempfile.TemporaryDirectory() as folder, mock.patch.object(addon.system, "preset_folder", lambda create=False: Path(folder)):
-            select(hinge)
-            self.assertEqual(bpy.ops.bevy_components.save_preset(name="Hinge"), {"FINISHED"})
-            data = json.loads((Path(folder) / "hinge.json").read_text(encoding="utf-8"))
-            self.assertEqual((data["components"], data["blender"]["rigid_body_constraint"]["object1"]), ([], None))
-            gate = add_empty("gate", (0, 14, 0))
-            select(gate)
-            self.assertEqual(bpy.ops.bevy_components.apply_preset(filepath=str(Path(folder) / "hinge.json")), {"FINISHED"})
-            self.assertEqual((gate.rigid_body_constraint.type, gate.rigid_body_constraint.object1, gate.bevy_physics.joint_angular_damping), ("HINGE", None, 2.0))
-
-    def test_copy_and_paste_carry_light_settings(self):
-        lamp = add_light("lamp", "POINT", (0, 0, 3))
-        lamp.data.bevy_light.light_volumetric = True
-        clipboard = SimpleNamespace(clipboard="")
-        self.assertEqual(_execute(addon.operator.BEVY_OT_copy_components, _clipboard_context(lamp, lamp, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Copied 1 component")]))
-        other = add_light("other", "SPOT", (4, 0, 3))
-        twin = bpy.data.objects.new("twin", other.data)
-        bpy.context.scene.collection.objects.link(twin)
-        self.assertEqual(_execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(other, other, clipboard=clipboard)), ({"FINISHED"}, [({"INFO"}, "Added 1 component from the clipboard to 1 object")]))
-        self.assertTrue(other.data.bevy_light.light_volumetric)
-        self.assertTrue(_by_type(_stored(twin)["components"])["light"]["volumetric"])
-        self.assertEqual(_execute(addon.operator.BEVY_OT_paste_components, _clipboard_context(self.obj, self.obj, clipboard=clipboard)), ({"CANCELLED"}, [({"WARNING"}, "None of the components in the clipboard fit the selected objects")]))
-
     def test_preset_names_become_snake_case_files(self):
         with tempfile.TemporaryDirectory() as folder, mock.patch.object(addon.system, "preset_folder", lambda create=False: Path(folder)):
             self.assertEqual(addon.system.preset_file("  Enemy Spawner 2 ").name, "enemy_spawner_2.json")
@@ -3344,7 +3264,7 @@ class TestWorkflow(unittest.TestCase):
         with _remembered_exports():
             addon.menu.BEVY_MT_object_menu.draw(menu, _menu_context(self.obj))
         self.assertEqual(menu.layout.menus(), ["BEVY_MT_component_add"])
-        self.assertEqual([(text, enabled) for text, properties, enabled in menu.layout.buttons()], [("Copy All to Selected", True), ("Copy Components", True), ("Paste Components", True), ("Validate All Objects", True), ("Convert Components to Blender", True), ("Export Again", False)])
+        self.assertEqual([(text, enabled) for text, properties, enabled in menu.layout.buttons()], [("Copy All to Selected", True), ("Copy Components", True), ("Paste Components", True), ("Validate All Objects", True), ("Export Again", False)])
         menu = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.BEVY_MT_object_menu.draw(menu, _menu_context(self.obj))
@@ -3444,1102 +3364,6 @@ class TestWorkflow(unittest.TestCase):
                 self.assertEqual(set(panel.layout.operators()), {"bevy_components.validate"} if counted else set())
 
 
-NATIVE_COLLIDER = {**DEFAULT_COLLIDER, "filters": 1, "own_mesh": True}
-BLENDER_BODY = {**DYNAMIC_BODY, "mass": 1.0, "linear_damping": 0.04, "angular_damping": 0.1}
-
-
-def _rigid_body(obj, kind="ACTIVE", shape=None):
-    select(obj)
-    bpy.ops.rigidbody.object_add(type=kind)
-    if shape is not None:
-        obj.rigid_body.collision_shape = shape
-    return obj.rigid_body
-
-
-def _constraint(obj, kind, first=None, second=None):
-    select(obj)
-    if "FINISHED" not in bpy.ops.bevy_components.add_constraint():
-        raise RuntimeError(f"Could not add a constraint to {obj.name}")
-    constraint = obj.rigid_body_constraint
-    constraint.type = kind
-    constraint.object1 = first
-    constraint.object2 = second
-    return constraint
-
-
-def _native(obj):
-    return _rounded(addon.system.object_components(obj))
-
-
-def _by_type(components):
-    return {component["type"]: {key: value for key, value in component.items() if key != "own_mesh"} for component in components}
-
-
-def _shaped(name, operator, matrix=None, **options):
-    obj = add_mesh(operator, name, **options)
-    if matrix is not None:
-        obj.data.transform(matrix)
-        obj.data.update()
-    bpy.context.view_layer.update()
-    return obj
-
-
-class TestNativePhysics(unittest.TestCase):
-    def setUp(self):
-        clear_scene()
-
-    def tearDown(self):
-        clear_scene()
-
-    def _messages(self):
-        bpy.context.view_layer.update()
-        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.data.objects)]
-
-    def test_rigid_bodies_export_as_bodies_and_colliders(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2, location=(0, 0, 5))
-        body = _rigid_body(crate)
-        body.mass = 3.0
-        body.friction = 0.8
-        body.restitution = 0.25
-        self.assertEqual(_native(crate), [{**BLENDER_BODY, "mass": 3.0}, {"type": "collider", "shape": "convex", **NATIVE_COLLIDER, "offset": None, "friction": 0.8, "restitution": 0.25}])
-        body.collision_collections[0] = False
-        body.collision_collections[3] = True
-        self.assertEqual([(component.get("memberships"), component.get("filters")) for component in _native(crate)][1], (8, 8))
-        body.kinematic = True
-        self.assertEqual(_native(crate)[0], KINEMATIC_BODY)
-        body.kinematic = False
-        body.enabled = False
-        self.assertEqual(_native(crate)[0], STATIC_BODY)
-        body.enabled = True
-        body.type = "PASSIVE"
-        self.assertEqual(_native(crate)[0], STATIC_BODY)
-        select(crate)
-        bpy.ops.rigidbody.object_remove()
-        self.assertEqual(addon.system.components_for(crate), [])
-
-    def test_shapes_follow_the_mesh(self):
-        cases = (
-            (_shaped("box", bpy.ops.mesh.primitive_cube_add, Matrix.Diagonal((1.0, 1.5, 2.0, 1.0)), size=2), "BOX", {"shape": "cuboid", "size": [2.0, 4.0, 3.0]}),
-            (_shaped("ball", bpy.ops.mesh.primitive_uv_sphere_add, radius=0.75), "SPHERE", {"shape": "sphere", "radius": 0.75}),
-            (_shaped("capsule", bpy.ops.mesh.primitive_cube_add, Matrix.Diagonal((0.5, 0.5, 1.5, 1.0)), size=2), "CAPSULE", {"shape": "capsule", "radius": 0.5, "height": 2.0}),
-            (_shaped("pillar", bpy.ops.mesh.primitive_cylinder_add, radius=0.5, depth=3), "CYLINDER", {"shape": "cylinder", "radius": 0.5, "height": 3.0}),
-            (_shaped("cone", bpy.ops.mesh.primitive_cone_add, radius1=1, depth=2), "CONE", {"shape": "cone", "radius": 1.0, "height": 2.0}),
-            (_shaped("hull", bpy.ops.mesh.primitive_ico_sphere_add, radius=1), "CONVEX_HULL", {"shape": "convex", "offset": None}),
-            (_shaped("floor", bpy.ops.mesh.primitive_plane_add, size=4), "MESH", {"shape": "trimesh", "offset": None}),
-        )
-        for obj, shape, expected in cases:
-            _rigid_body(obj, "PASSIVE", shape)
-            collider = _by_type(_native(obj))["collider"]
-            self.assertEqual({key: collider[key] for key in expected}, expected, obj.name)
-            self.assertEqual(collider.get("offset", [0.0, 0.0, 0.0]) or [0.0, 0.0, 0.0], [0.0, 0.0, 0.0], obj.name)
-        self.assertEqual(self._messages(), [])
-
-    def test_bevy_settings_fill_in_what_blender_lacks(self):
-        ball = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "ball", radius=0.5)
-        _rigid_body(ball, shape="SPHERE")
-        physics = ball.bevy_physics
-        physics.auto_mass = True
-        physics.gravity_scale = 0.5
-        physics.ccd = "ALL"
-        physics.lock_translation = (True, False, False)
-        physics.lock_rotation = (False, True, False)
-        physics.linear_velocity = (1.0, 2.0, 3.0)
-        physics.angular_velocity = (0.0, 0.0, 1.0)
-        physics.events = True
-        physics.collision_only = True
-        physics.use_layers = True
-        physics.memberships = [index == 1 for index in range(addon.property.LAYER_COUNT)]
-        physics.filters = [index == 2 for index in range(addon.property.LAYER_COUNT)]
-        self.assertEqual(_native(ball), [{**BLENDER_BODY, "mass": None, "gravity_scale": 0.5, "ccd": "all", "lock_translation": [True, False, False], "lock_rotation": [False, False, True], "linear_velocity": [1.0, 3.0, -2.0], "angular_velocity": [0.0, 1.0, 0.0]}, {"type": "collider", "shape": "sphere", **NATIVE_COLLIDER, "events": True, "collision_only": True, "memberships": 2, "filters": 4}])
-        zone = add_mesh(bpy.ops.mesh.primitive_cube_add, "zone", size=2)
-        _rigid_body(zone, "PASSIVE", "BOX")
-        zone.bevy_physics.sensor = True
-        self.assertEqual(_by_type(_native(zone))["collider"], {"type": "collider", "shape": "cuboid", **{key: value for key, value in NATIVE_COLLIDER.items() if key != "own_mesh"}, "size": [2.0, 2.0, 2.0], "sensor": True, "events": True})
-        zone.bevy_physics.events = False
-        self.assertFalse(_by_type(_native(zone))["collider"]["events"])
-
-    def test_compound_parents_join_their_children(self):
-        cart = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart", size=1)
-        _rigid_body(cart, shape="COMPOUND")
-        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel", radius=0.5, depth=0.2, location=(0, 0, -0.5))
-        wheel.parent = cart
-        _rigid_body(wheel, shape="CYLINDER")
-        self.assertEqual([component["type"] for component in _native(cart)], ["rigid_body"])
-        self.assertEqual([component["type"] for component in _native(wheel)], ["collider"])
-        self.assertEqual(self._messages(), [])
-        wheel.parent = None
-        self.assertEqual(self._messages(), ["cart: Dynamic body has no collider on it or under it, so it has no mass and collides with nothing"])
-        wheel.parent = cart
-        cart.rigid_body.collision_shape = "BOX"
-        self.assertEqual(self._messages(), ["wheel: Moves on its own instead of with cart. Set cart's Shape to Compound Parent to make them one body"])
-
-    def test_constraints_export_as_joints(self):
-        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door", size=1, location=(1, 0, 0))
-        _rigid_body(door, shape="BOX")
-        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", size=1, location=(-1, 0, 0))
-        _rigid_body(frame, "PASSIVE", "BOX")
-        hinge = add_empty("hinge", (0, 0, 0))
-        constraint = _constraint(hinge, "HINGE", frame, door)
-        constraint.use_limit_ang_z = True
-        constraint.limit_ang_z_lower = -1.0
-        constraint.limit_ang_z_upper = 1.5
-        hinge.bevy_physics.joint_angular_damping = 2.0
-        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "body1": "frame", "body2": "door", "angle_limits": [-1.0, 1.5], "angular_damping": 2.0}])
-        constraint.type = "SLIDER"
-        constraint.use_limit_lin_x = True
-        constraint.limit_lin_x_lower = -0.5
-        constraint.limit_lin_x_upper = 2.0
-        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "kind": "prismatic", "body1": "frame", "body2": "door", "axis": [1.0, 0.0, 0.0], "distance_limits": [-0.5, 2.0], "angular_damping": 2.0}])
-        constraint.type = "POINT"
-        hinge.bevy_physics.joint_use_swing = True
-        hinge.bevy_physics.joint_swing = 0.5
-        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "kind": "spherical", "body1": "frame", "body2": "door", "swing_limit": 0.5, "angular_damping": 2.0}])
-        constraint.type = "FIXED"
-        constraint.disable_collisions = False
-        self.assertEqual(_native(hinge), [{**DEFAULT_JOINT, "kind": "fixed", "body1": "frame", "body2": "door", "axis": None, "linear_damping": None, "angular_damping": None, "collide": True}])
-        self.assertEqual(self._messages(), [])
-        constraint.type = "GENERIC"
-        self.assertEqual(addon.system.components_for(hinge), [])
-        self.assertEqual(self._messages(), ["hinge: Bevy has no Generic joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider"])
-        constraint.type = "HINGE"
-        constraint.enabled = False
-        self.assertEqual(addon.system.components_for(hinge), [])
-
-    def test_components_override_blender_physics(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
-        _rigid_body(crate)
-        add_component(crate, "COLLIDER", collider_shape="SPHERE", collider_radius=2.0)
-        self.assertEqual(_by_type(_native(crate))["collider"], {"type": "collider", "shape": "sphere", **DEFAULT_COLLIDER, "radius": 2.0})
-        self.assertEqual(_native(crate)[1], BLENDER_BODY)
-        select(crate)
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_collisions.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), [])
-        self.assertIn("The Collider component in Object > Game Components replaces these settings in Bevy", " ".join(panel.layout.texts()))
-
-    def test_scene_gravity_is_exported_when_it_changes(self):
-        scene = bpy.context.scene
-        scene.gravity = (0.0, 0.0, -3.0)
-        self.assertEqual(addon.native.physics_components(scene), [])
-        bpy.ops.rigidbody.world_add()
-        self.assertEqual(addon.native.physics_components(scene), [{"type": "gravity", "value": [0.0, -3.0, 0.0]}])
-        scene.rigidbody_world.effector_weights.gravity = 0.5
-        self.assertEqual(addon.native.physics_components(scene), [{"type": "gravity", "value": [0.0, -1.5, 0.0]}])
-        scene.use_gravity = False
-        self.assertEqual(addon.native.physics_components(scene), [{"type": "gravity", "value": [0.0, 0.0, 0.0]}])
-        scene.use_gravity = True
-        scene.rigidbody_world.effector_weights.gravity = 1.0
-        scene.gravity = (0.0, 0.0, -9.81)
-        self.assertEqual(addon.native.physics_components(scene), [])
-        with tempfile.TemporaryDirectory() as directory:
-            scene.gravity = (1.0, 0.0, -3.0)
-            gltf = export_sample_scene(Path(directory) / "gravity.glb")
-            self.assertEqual(json.loads(gltf["scenes"][0]["extras"]["bevy_components"])["components"], [{"type": "gravity", "value": [1.0, -3.0, 0.0]}])
-
-    def test_plain_gltf_export_reads_blender_physics_when_it_runs(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
-        add_component(crate, "SHADOWS", shadows_cast=False)
-        _rigid_body(crate, "PASSIVE", "BOX")
-        crate.rigid_body.friction = 0.9
-
-        def exported():
-            with tempfile.TemporaryDirectory() as directory:
-                path = Path(directory) / "plain.glb"
-                bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", export_extras=True)
-                node = read_gltf(path)["nodes"][0]
-            return _rounded(json.loads(node["extras"]["bevy_components"])["components"])
-
-        components = exported()
-        self.assertEqual([component["type"] for component in components], ["shadows", "rigid_body", "collider"])
-        self.assertEqual(components[2]["friction"], 0.9)
-        select(crate)
-        bpy.ops.rigidbody.object_remove()
-        self.assertEqual([component["type"] for component in exported()], ["shadows"])
-
-    def test_bevy_gltf_export_acts_like_the_gltf_export_with_components(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
-        add_component(crate, "COLLIDER", collider_shape="SPHERE", collider_radius=1.5)
-        add_component(crate, "CUSTOM", custom_type="game::Loot", custom_json='{"gold": 3}')
-        broken = add_component(crate, "CUSTOM", custom_type="game::Broken", custom_json="{")
-        crate["note"] = "left out"
-        rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", location=(4, 0, 0))
-        add_component(rock, "VISIBILITY_RANGE")
-        select(crate)
-        operator = addon.gltf.BEVY_OT_export_gltf
-        self.assertEqual(operator.bl_idname, "export_scene.bevy_gltf")
-        self.assertTrue(issubclass(operator, sys.modules["io_scene_gltf2"].ExportGLTF2_Base))
-        self.assertEqual(addon.gltf.BEVY_FH_gltf.bl_export_operator, operator.bl_idname)
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "crate.glb"
-            reference = add_component(crate, "SCENE_REFERENCE", scene_file=str(Path(directory) / "props" / "tree.glb"))
-            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True), {"FINISHED"})
-            gltf = read_gltf(path)
-            bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True)
-            plain = read_gltf(path)
-        self.assertEqual(addon.gltf._skipped_message(["crate: invalid JSON in Custom Component"]), "Left out 1 Bevy component that cannot export: crate: invalid JSON in Custom Component. See Validate All Objects")
-        self.assertEqual(addon.gltf._skipped_message([f"crate: problem {index}" for index in range(5)]), "Left out 5 Bevy components that cannot export: crate: problem 0; crate: problem 1; crate: problem 2 and 2 more. See Validate All Objects")
-        with addon.system.bevy_export() as skipped:
-            addon.system.object_components(crate, None, addon.system._skipped[0])
-        self.assertEqual([message.split(":")[:2] for message in skipped], [["crate", " Custom JSON for game"]])
-        self.assertEqual([node["name"] for node in gltf["nodes"]], ["crate"])
-        extras = gltf["nodes"][0]["extras"]
-        self.assertEqual(list(extras), ["bevy_components"])
-        components = _rounded(json.loads(extras["bevy_components"])["components"])
-        self.assertEqual([component["type"] for component in components], ["collider", "custom", "scene_reference"])
-        self.assertEqual((components[0]["radius"], components[1]["data"], components[2]["path"]), (1.5, {"gold": 3}, "props/tree.glb"))
-        self.assertNotIn("extras", plain["nodes"][0])
-        self.assertTrue(reference.enabled and broken.enabled)
-        self.assertNotIn("bevy_components", crate)
-
-    def test_export_puts_bodies_back_where_they_start(self):
-        scene = bpy.context.scene
-        ground = add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=20)
-        _rigid_body(ground, "PASSIVE", "MESH")
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1, location=(0, 0, 5))
-        _rigid_body(crate, shape="BOX")
-        scene.rigidbody_world.point_cache.frame_end = 100
-        for frame in range(1, 41):
-            scene.frame_set(frame)
-        self.assertLess(crate.matrix_world.translation.z, 4.0)
-        try:
-            with tempfile.TemporaryDirectory() as directory:
-                gltf = export_sample_scene(Path(directory) / "rest.glb")
-            nodes = {node["name"]: node for node in gltf["nodes"]}
-            self.assertEqual(_rounded(nodes["crate"]["translation"]), [0.0, 5.0, 0.0])
-            self.assertEqual(scene.frame_current, 40)
-            self.assertLess(crate.matrix_world.translation.z, 4.0)
-        finally:
-            scene.frame_set(1)
-
-    def test_convert_replaces_components_with_blender_physics(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
-        add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_friction=0.8)
-        add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC", rigid_body_use_mass=True, rigid_body_mass=4.0, rigid_body_lock_rotation=(False, True, False), rigid_body_linear_velocity=(0.0, 0.0, 2.0))
-        add_component(crate, "SHADOWS", shadows_cast=False)
-        ground = add_mesh(bpy.ops.mesh.primitive_plane_add, "ground", size=10, location=(0, 0, -2))
-        add_component(ground, "COLLIDER", collider_shape="TRIMESH")
-        trigger = add_mesh(bpy.ops.mesh.primitive_cube_add, "trigger", size=2, location=(4, 0, 0))
-        add_component(trigger, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_sensor=True, collider_memberships=layers(3), collider_filters=layers(3))
-        ghost = add_mesh(bpy.ops.mesh.primitive_cube_add, "ghost", size=2, location=(8, 0, 0))
-        add_component(ghost, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_memberships=layers(1), collider_filters=layers(2))
-        cart = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart", size=1, location=(0, 6, 0))
-        add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC")
-        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel", radius=0.5, depth=0.2, location=(0, 6, -0.5))
-        wheel.parent = cart
-        wheel.matrix_parent_inverse = cart.matrix_world.inverted()
-        add_component(wheel, "COLLIDER", collider_shape="CYLINDER", collider_radius=0.5, collider_height=0.2)
-        hinge = add_empty("hinge", (0, 0, 2))
-        add_component(hinge, "JOINT", joint_kind="REVOLUTE", joint_body1=crate, joint_use_limits=True, joint_angle_min=-0.5, joint_angle_max=0.5)
-        offset = add_mesh(bpy.ops.mesh.primitive_cube_add, "offset", size=2, location=(0, -6, 0))
-        add_component(offset, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_offset=(0.0, 1.0, 0.0))
-        holder = add_empty("holder", (0, -10, 0))
-        add_component(holder, "RIGID_BODY", rigid_body_kind="DYNAMIC")
-        slide = add_empty("slide", (0, -12, 0))
-        add_component(slide, "JOINT", joint_kind="PRISMATIC", joint_body1=crate)
-        house = add_mesh(bpy.ops.mesh.primitive_cube_add, "house", size=2, location=(0, -16, 0))
-        add_component(house, "COLLIDER", collider_shape="TRIMESH")
-        chimney = add_mesh(bpy.ops.mesh.primitive_cube_add, "chimney", size=0.5, location=(0, -16, 1.5))
-        chimney.parent = house
-        chimney.matrix_parent_inverse = house.matrix_world.inverted()
-        bpy.context.view_layer.update()
-        before = {obj.name: _by_type(_native(obj)) for obj in bpy.data.objects if obj.bevy_component_data.components}
-        converted, kept = addon.convert.convert_objects(bpy.context, bpy.context.scene.objects)
-        self.assertEqual(sorted(obj.name for obj in converted), ["cart", "crate", "ghost", "ground", "hinge", "trigger", "wheel"])
-        self.assertEqual(sorted((obj.name, reason) for obj, reason in kept), [
-            ("holder", "Blender only gives meshes a Rigid Body"),
-            ("house", "its collider also covers the meshes of child objects"),
-            ("offset", "its collider's size or offset differs from the mesh, which Blender's shape always fits"),
-            ("slide", "its axis is Y, while Blender's Slider moves along X"),
-        ])
-        self.assertEqual(([item.component_type for item in crate.bevy_component_data.components], crate.visible_shadow), ([], False))
-        self.assertEqual((crate.rigid_body.type, crate.rigid_body.collision_shape, cart.rigid_body.collision_shape, wheel.rigid_body.collision_shape, hinge.rigid_body_constraint.type), ("ACTIVE", "BOX", "COMPOUND", "CYLINDER", "HINGE"))
-        self.assertTrue(ghost.bevy_physics.use_layers)
-        self.assertEqual(list(trigger.rigid_body.collision_collections)[:4], [False, False, False, True])
-        self.assertIsNone(offset.rigid_body)
-        self.assertEqual([item.component_type for item in offset.bevy_component_data.components], ["COLLIDER"])
-        for obj in converted:
-            after = _by_type(_native(obj))
-            expected = before[obj.name]
-            if obj in (crate, ground, wheel):
-                self.assertEqual((expected["collider"]["filters"], after["collider"]["filters"]), (4294967295, 1), obj.name)
-                expected["collider"]["filters"] = 1
-            if obj in (ground, trigger, ghost):
-                expected["rigid_body"] = STATIC_BODY
-            self.assertEqual(after, expected, obj.name)
-        self.assertEqual(bpy.ops.bevy_components.convert_to_native(), {"FINISHED"})
-        self.assertEqual([item.component_type for item in offset.bevy_component_data.components], ["COLLIDER"])
-        clear_scene()
-        self.assertEqual(bpy.ops.bevy_components.convert_to_native(), {"CANCELLED"})
-
-    def test_failed_conversions_keep_the_bevy_physics_settings(self):
-        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door", size=2)
-        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", size=2, location=(3, 0, 0))
-        bpy.context.view_layer.objects.active = door
-        bpy.ops.rigidbody.world_add()
-        bpy.ops.rigidbody.constraint_add(type="HINGE")
-        door.rigid_body_constraint.object1 = frame
-        door.bevy_physics.joint_angular_damping = 2.0
-        door.bevy_physics.joint_use_swing = True
-        add_component(door, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2), collider_offset=(0.0, 1.0, 0.0))
-        converted, kept = addon.convert.convert_objects(bpy.context, [door])
-        self.assertEqual((list(converted), [(obj.name, reason) for obj, reason in kept]), ([], [("door", "its collider's size or offset differs from the mesh, which Blender's shape always fits")]))
-        self.assertIsNone(door.rigid_body)
-        self.assertEqual((door.rigid_body_constraint.type, door.bevy_physics.joint_angular_damping, door.bevy_physics.joint_use_swing), ("HINGE", 2.0, True))
-
-    def test_convert_keeps_default_layers_that_other_colliders_rely_on(self):
-        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", size=2)
-        add_component(wall, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2))
-        probe = add_empty("probe", (5, 0, 0))
-        add_component(probe, "COLLIDER", collider_shape="SPHERE", collider_memberships=layers(4), collider_filters=layers(0))
-        converted, kept = addon.convert.convert_objects(bpy.context, [wall])
-        self.assertEqual(converted, [wall])
-        self.assertTrue(wall.bevy_physics.use_layers)
-        self.assertEqual((_by_type(_native(wall))["collider"]["memberships"], _by_type(_native(wall))["collider"]["filters"]), (1, 4294967295))
-
-    def test_checks_for_blender_physics(self):
-        shifted = _shaped("shifted", bpy.ops.mesh.primitive_cube_add, Matrix.Translation((0.0, 0.0, 1.0)), size=1)
-        _rigid_body(shifted, "PASSIVE", "BOX")
-        self.assertEqual(self._messages(), ["shifted: The mesh is not centered on its origin, but Blender and Bevy center the Box shape on it. Use Set Origin > Origin to Geometry, or add a Collider component with an offset"])
-        shifted.rigid_body.collision_shape = "CONVEX_HULL"
-        self.assertEqual(self._messages(), [])
-        floor = add_mesh(bpy.ops.mesh.primitive_plane_add, "floor", size=4)
-        _rigid_body(floor, "ACTIVE", "MESH")
-        self.assertEqual(self._messages(), ["floor: Triangle meshes collide poorly on Dynamic bodies, use Convex Hull"])
-        floor.rigid_body.type = "PASSIVE"
-        edges = bpy.data.objects.new("edges", bpy.data.meshes.new("edges"))
-        bpy.context.scene.collection.objects.link(edges)
-        edges.data.from_pydata([(0, 0, 0), (1, 0, 0)], [(0, 1)], [])
-        _rigid_body(edges, "PASSIVE", "CONVEX_HULL")
-        self.assertEqual(self._messages(), ["edges: The mesh has no faces, so no Convex Hull collider is built"])
-
-    def test_bevy_subpanels_sit_under_blender_physics(self):
-        self.assertEqual([panel.bl_parent_id for panel in (addon.panel.BEVY_PT_physics_rigid_body, addon.panel.BEVY_PT_physics_collisions, addon.panel.BEVY_PT_physics_joint)], ["PHYSICS_PT_rigid_body", "PHYSICS_PT_rigid_body_collisions", "PHYSICS_PT_rigid_body_constraint"])
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
-        self.assertFalse(addon.panel.BEVY_PT_physics_rigid_body.poll(bpy.context))
-        _rigid_body(crate, shape="COMPOUND")
-        self.assertTrue(addon.panel.BEVY_PT_physics_rigid_body.poll(bpy.context))
-        self.assertFalse(addon.panel.BEVY_PT_physics_collisions.poll(bpy.context))
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_rigid_body.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), ["auto_mass", "gravity_scale", "ccd", *["lock_translation"] * 3, *["lock_rotation"] * 3, "linear_velocity", "angular_velocity"])
-        self.assertIn("Dynamic Body", panel.layout.texts())
-        crate.rigid_body.type = "PASSIVE"
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_rigid_body.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), [])
-        part = add_mesh(bpy.ops.mesh.primitive_cube_add, "part", size=0.5)
-        part.parent = crate
-        _rigid_body(part, shape="BOX")
-        self.assertFalse(addon.panel.BEVY_PT_physics_rigid_body.poll(bpy.context))
-        self.assertTrue(addon.panel.BEVY_PT_physics_collisions.poll(bpy.context))
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_collisions.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), ["sensor", "events", "collision_only", "use_layers"])
-        part.bevy_physics.use_layers = True
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_collisions.draw(panel, bpy.context)
-        self.assertEqual((panel.layout.props().count("memberships"), panel.layout.props().count("filters")), (addon.property.LAYER_COUNT, addon.property.LAYER_COUNT))
-        hinge = add_empty("hinge", (0, 0, 0))
-        select(hinge)
-        self.assertFalse(addon.panel.BEVY_PT_physics_joint.poll(bpy.context))
-        constraint = _constraint(hinge, "POINT", crate, part)
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_joint.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), ["joint_use_swing", "joint_swing", "joint_linear_damping", "joint_angular_damping"])
-        constraint.type = "FIXED"
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_joint.draw(panel, bpy.context)
-        self.assertEqual(panel.layout.props(), [])
-        constraint.type = "MOTOR"
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_joint.draw(panel, bpy.context)
-        self.assertIn("Bevy has no Motor joint, so the game leaves this constraint out. Use Fixed, Point, Hinge or Slider", " ".join(panel.layout.texts()))
-        select(crate)
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_object_properties.draw(panel, bpy.context)
-        self.assertIn("Rigid Body from Physics", panel.layout.texts())
-
-    def test_physics_menu_offers_blender_physics_first(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
-        menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_physics.draw(menu, _menu_context(crate))
-        self.assertEqual(menu.layout.operators(), ["rigidbody.object_add", "bevy_components.add_constraint"])
-        self.assertEqual([enabled for text, properties, enabled in menu.layout.buttons()][:2], [True, True])
-        _rigid_body(crate)
-        _constraint(crate, "FIXED")
-        menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_physics.draw(menu, _menu_context(crate))
-        self.assertEqual([enabled for text, properties, enabled in menu.layout.buttons()][:2], [False, False])
-        empty = add_empty("empty", (0, 0, 0))
-        menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add_physics.draw(menu, _menu_context(empty))
-        self.assertEqual([enabled for text, properties, enabled in menu.layout.buttons()][:2], [False, True])
-
-    def test_viewport_draws_blender_physics(self):
-        pillar = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "pillar", radius=0.5, depth=2)
-        _rigid_body(pillar, "PASSIVE", "CYLINDER")
-        self.assertEqual(_extents(_collider_lines(pillar, addon.system.component_of(pillar, "COLLIDER"), 1000)), (0.5, 0.5, 1.0))
-        pillar.rigid_body.collision_shape = "CONE"
-        self.assertEqual(_extents(_collider_lines(pillar, addon.system.component_of(pillar, "COLLIDER"), 1000)), (0.5, 0.5, 1.0))
-        settings = bpy.context.scene.bevy_component_previews
-        self.assertEqual(addon.system.component_kinds(pillar), {"RIGID_BODY", "COLLIDER"})
-        self.assertIsNone(addon.gizmo.handle_item(pillar, settings))
-        hinge = add_empty("hinge", (0, 0, 3))
-        _constraint(hinge, "HINGE", pillar)
-        settings.scope = "SELECTED"
-        try:
-            select(pillar)
-            self.assertIn(hinge, addon.overlay.joint_objects(bpy.context, settings, addon.overlay.preview_objects(bpy.context, settings)))
-        finally:
-            settings.property_unset("scope")
-
-
-POINT_LIGHT = {**DEFAULT_LIGHT, "kind": "point", "radius": 0.25}
-
-
-def _volume_material(name, values):
-    material = bpy.data.materials.new(name)
-    if bpy.app.version < (5, 0, 0):
-        material.use_nodes = True
-    nodes = material.node_tree.nodes
-    for node in [node for node in nodes if node.bl_idname != "ShaderNodeOutputMaterial"]:
-        nodes.remove(node)
-    output = next((node for node in nodes if node.bl_idname == "ShaderNodeOutputMaterial"), None) or nodes.new("ShaderNodeOutputMaterial")
-    volume = nodes.new("ShaderNodeVolumePrincipled")
-    material.node_tree.links.new(volume.outputs["Volume"], output.inputs["Volume"])
-    for key, value in values.items():
-        volume.inputs[key].default_value = value
-    return material, volume
-
-
-def _add_object(operator, **options):
-    operator(**options)
-    return bpy.context.object
-
-
-class TestNativeLighting(unittest.TestCase):
-    def setUp(self):
-        clear_scene()
-
-    def tearDown(self):
-        clear_scene()
-
-    def _messages(self):
-        bpy.context.view_layer.update()
-        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.data.objects)]
-
-    def _panel(self, panel_type, context):
-        panel = FakePanel(self)
-        panel_type.draw(panel, context)
-        return panel.layout
-
-    def test_lights_export_their_bevy_settings(self):
-        lamp = add_light("lamp", "POINT", (0, 0, 3), shadow_soft_size=0.25, energy=10)
-        self.assertEqual(_native(lamp), [POINT_LIGHT])
-        twin = bpy.data.objects.new("twin", lamp.data)
-        bpy.context.scene.collection.objects.link(twin)
-        lamp.data.bevy_light.light_volumetric = True
-        lamp.data.bevy_light.light_use_intensity = True
-        self.assertEqual(_stored(twin)["components"], [{**POINT_LIGHT, "intensity": 6830.0, "volumetric": True}])
-        lamp.data.use_shadow = False
-        self.assertEqual(self._messages(), ["lamp: Volumetric needs Shadows, or the light makes no light shafts", "twin: Volumetric needs Shadows, or the light makes no light shafts"])
-        window = add_light("window", "AREA", (0, 4, 3), size=2, size_y=1, shape="RECTANGLE", energy=5)
-        self.assertEqual({key: value for key, value in _native(window)[0].items() if key in {"kind", "intensity", "size"}}, {"kind": "area", "intensity": 3415.0, "size": [2.0, 1.0]})
-        select(lamp)
-        context = SimpleNamespace(object=lamp, scene=bpy.context.scene, region=None, space_data=None, view_layer=bpy.context.view_layer, selected_objects=[])
-        self.assertTrue(addon.panel.BEVY_PT_light.poll(context))
-        layout = self._panel(addon.panel.BEVY_PT_light, context)
-        self.assertIn("light_volumetric", layout.props())
-        self.assertNotIn("shadow_soft_size", layout.props())
-        self.assertIn("Volumetric needs Shadows, or the light makes no light shafts", " ".join(layout.texts()))
-        add_component(lamp, "LIGHT")
-        self.assertIn("The Light component in Object > Game Components replaces these settings in Bevy", " ".join(self._panel(addon.panel.BEVY_PT_light, context).texts()))
-        with tempfile.TemporaryDirectory() as directory:
-            gltf = export_sample_scene(Path(directory) / "lights.glb")
-        lights = gltf["extensions"]["KHR_lights_punctual"]["lights"]
-        self.assertFalse(any("bevy_light" in light.get("extras", {}) for light in lights))
-        self.assertFalse(any("bevy_object" in node.get("extras", {}) for node in gltf["nodes"]))
-        self.assertTrue(_by_type(_extras(gltf, next(node for node in gltf["nodes"] if node["name"] == "twin"))["components"])["light"]["volumetric"])
-
-    def test_shadows_follow_ray_visibility(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
-        self.assertEqual(_native(crate), [])
-        crate.visible_shadow = False
-        self.assertEqual(_native(crate), [{"type": "shadows", "cast": False, "receive": True, "own_mesh": True}])
-        crate.visible_shadow = True
-        crate.bevy_object.receive_shadows = False
-        self.assertEqual(_stored(crate)["components"], [{"type": "shadows", "cast": True, "receive": False, "own_mesh": True}])
-        marker = add_empty("marker", (0, 0, 2))
-        marker.visible_shadow = False
-        self.assertEqual(_native(marker), [])
-        self.assertEqual(self._messages(), [])
-        context = SimpleNamespace(object=crate)
-        panel = FakePanel(self)
-        addon.panel.draw_visibility(panel, context)
-        self.assertEqual(panel.layout.props(), ["receive_shadows"])
-        room = add_empty("room", (0, 0, 0))
-        add_component(room, "SHADOWS", shadows_cast=True, shadows_receive=False)
-        chest = add_mesh(bpy.ops.mesh.primitive_cube_add, "chest", size=1)
-        chest.parent = room
-        chest.visible_shadow = False
-        lid = add_mesh(bpy.ops.mesh.primitive_cube_add, "lid", size=0.5, location=(0, 0, 1))
-        lid.parent = chest
-        self.assertEqual([source.name for source, _matrix in addon.system.mesh_sources(room, addon.system.children_map(bpy.data.objects), "SHADOWS")], ["lid"])
-
-    def test_speakers_export_as_audio_players(self):
-        speaker = _add_object(bpy.ops.object.speaker_add, location=(0, 0, 1))
-        speaker.name = "bell"
-        self.assertEqual(_native(speaker), [])
-        self.assertEqual(self._messages(), ["bell: No sound picked, so nothing plays"])
-        context = SimpleNamespace(object=speaker, speaker=speaker.data, scene=bpy.context.scene, region=None, space_data=None, view_layer=bpy.context.view_layer, selected_objects=[])
-        self.assertIn("No sound picked, so nothing plays", " ".join(self._panel(addon.panel.BEVY_PT_speaker, context).texts()))
-        speaker.data.sound = bpy.data.sounds.load(str(SOUNDS / "chime.ogg"))
-        speaker.data.volume = 0.5
-        speaker.data.pitch = 1.5
-        speaker.data.distance_reference = 3.0
-        speaker.data.bevy_speaker.audio_loop = True
-        self.assertEqual(_native(speaker), [{**DEFAULT_AUDIO, "path": "sounds/chime.ogg", "volume": 0.5, "loop": True, "distance": 3.0, "speed": 1.5}])
-        self.assertEqual(self._messages(), [])
-        self.assertTrue(addon.panel.BEVY_PT_speaker.poll(context))
-        layout = self._panel(addon.panel.BEVY_PT_speaker, context)
-        self.assertIn("sounds/chime.ogg", layout.texts())
-        self.assertEqual(layout.props(), ["audio_loop", "audio_autoplay", "audio_spatial"])
-        speaker.data.muted = True
-        self.assertEqual(_native(speaker), [])
-        self.assertEqual(self._messages(), [])
-        self.assertEqual(" ".join(self._panel(addon.panel.BEVY_PT_speaker, context).texts()).strip(), "Muted, so the game leaves the sound out")
-        speaker.data.muted = False
-        with tempfile.TemporaryDirectory() as directory:
-            loose = Path(directory) / "bell.ogg"
-            loose.write_bytes((SOUNDS / "chime.ogg").read_bytes())
-            speaker.data.sound = bpy.data.sounds.load(str(loose))
-            self.assertEqual(self._messages(), ["bell: bell.ogg is not in an assets folder, so the game looks for it at the top of its assets folder"])
-            speaker.data.sound.pack()
-            self.assertEqual(self._messages(), ["bell: The sound is packed into the .blend, but the game loads it from its assets folder. Unpack it there"])
-
-    def test_light_probes_export_as_probes(self):
-        sphere = _add_object(bpy.ops.object.lightprobe_add, type="SPHERE", location=(0, 0, 1))
-        sphere.name = "room"
-        sphere.data.influence_distance = 2.0
-        sphere.data.falloff = 0.25
-        sphere.data.bevy_probe.intensity = 2.0
-        self.assertEqual(_native(sphere), [{"type": "reflection_probe", "size": [4.0, 4.0, 4.0], "falloff": [0.25, 0.25, 0.25], "intensity": 1366.0, "parallax_correction": True, "file": None}])
-        volume = _add_object(bpy.ops.object.lightprobe_add, type="VOLUME", location=(0, 6, 1))
-        volume.name = "hall"
-        volume.data.resolution_x, volume.data.resolution_y, volume.data.resolution_z = 4, 6, 3
-        volume.data.bevy_probe.falloff = 0.5
-        self.assertEqual(_native(volume), [{"type": "irradiance_volume", "size": [2.0, 2.0, 2.0], "falloff": [0.5, 0.5, 0.5], "intensity": 683.0, "file": None}])
-        plane = _add_object(bpy.ops.object.lightprobe_add, type="PLANE", location=(0, 12, 1))
-        plane.name = "mirror"
-        self.assertEqual(_native(plane), [])
-        self.assertEqual(self._messages(), ["hall: No voxel texture, so the volume adds no light", "mirror: Bevy has no planar reflections, so the game leaves this Light Probe out", "room: No cubemap, so the probe adds no reflections"])
-        jobs = addon.bake.lighting_jobs(bpy.data.objects, "//lighting")
-        self.assertEqual([(job["object"], job["index"], job["kind"]) for job in jobs], [("hall", -1, "VOXELS"), ("room", -1, "CUBEMAP")])
-        self.assertEqual(jobs[0]["counts"], [4, 3, 6])
-        context = SimpleNamespace(object=sphere, lightprobe=sphere.data, scene=bpy.context.scene, region=None, space_data=None, view_layer=bpy.context.view_layer, selected_objects=[])
-        layout = self._panel(addon.panel.BEVY_PT_light_probe, context)
-        self.assertEqual([prop for prop in layout.props() if prop != "probe_file"], ["intensity", "parallax", "bake_resolution"])
-        self.assertIn("Bevy's reflection probes are boxes, so this one reflects in the box around its sphere", " ".join(layout.texts()))
-        context.object, context.lightprobe = plane, plane.data
-        self.assertEqual(" ".join(self._panel(addon.panel.BEVY_PT_light_probe, context).texts()).strip(), "Bevy has no planar reflections, so the game leaves this Light Probe out")
-
-    def test_volume_boxes_export_as_fog(self):
-        fog = add_mesh(bpy.ops.mesh.primitive_cube_add, "fog", size=2, location=(0, 0, 1))
-        fog.data.transform(Matrix.Diagonal((2.0, 3.0, 1.0, 1.0)))
-        fog.data.update()
-        bpy.context.view_layer.update()
-        material, volume = _volume_material("mist", {"Color": (0.25, 0.5, 0.5, 1.0), "Density": 0.2, "Absorption Color": (0.25, 0.25, 0.25, 1.0), "Anisotropy": 0.3})
-        fog.data.materials.append(material)
-        material.bevy_fog.fog_light_intensity = 2.0
-        self.assertEqual(_native(fog), [{"type": "fog_volume", "size": [4.0, 2.0, 6.0], "color": [0.73536, 1.0, 1.0], "density": 0.2, "absorption": 0.29167, "scattering": 0.5, "anisotropy": 0.3, "light_tint": [1.0, 1.0, 1.0], "light_intensity": 2.0}])
-        self.assertEqual(self._messages(), [])
-        context = SimpleNamespace(object=fog, material=material, scene=bpy.context.scene, region=None, space_data=None, view_layer=bpy.context.view_layer, selected_objects=[])
-        self.assertTrue(addon.panel.BEVY_PT_material_fog.poll(context))
-        self.assertEqual(self._panel(addon.panel.BEVY_PT_material_fog, context).props(), ["fog_light_tint", "fog_light_intensity"])
-        self.assertFalse(addon.panel.BEVY_PT_material_fog.poll(SimpleNamespace(material=add_material("wood"))))
-        with tempfile.TemporaryDirectory() as directory:
-            gltf = export_sample_scene(Path(directory) / "fog.glb")
-        node = next(node for node in gltf["nodes"] if node["name"] == "fog")
-        self.assertNotIn("mesh", node)
-        self.assertEqual([component["type"] for component in _extras(gltf, node)["components"]], ["fog_volume"])
-        self.assertNotIn("mist", [material["name"] for material in gltf.get("materials", [])])
-        noise = material.node_tree.nodes.new("ShaderNodeTexNoise")
-        material.node_tree.links.new(noise.outputs["Fac"], volume.inputs["Density"])
-        volume.inputs["Emission Strength"].default_value = 1.0
-        fog.data.transform(Matrix.Translation((0.0, 0.0, 1.0)))
-        fog.data.update()
-        self.assertEqual(self._messages(), [
-            "fog: Bevy fog is even throughout, so the game takes the Density value and ignores what is plugged in",
-            "fog: Bevy fog does not glow, so the game leaves out Emission and Blackbody",
-            "fog: The mesh is not centered on its origin, but Bevy centers the fog box on it. Use Set Origin > Origin to Geometry",
-        ])
-        scatter = material.node_tree.nodes.new("ShaderNodeVolumeScatter")
-        material.node_tree.links.new(scatter.outputs["Volume"], next(node for node in material.node_tree.nodes if node.bl_idname == "ShaderNodeOutputMaterial").inputs["Volume"])
-        self.assertEqual(_native(fog), [])
-        self.assertEqual(self._messages(), ["fog: Bevy fog reads only the Principled Volume shader, so the game leaves out mist"])
-
-    def test_active_actions_autoplay(self):
-        ball = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "ball", radius=0.5)
-        animate(ball, "bounce", "location", 2, [(1, 0.0), (20, 2.0)])
-        self.assertEqual(_native(ball), [])
-        select(ball)
-        layout = self._panel(addon.panel.BEVY_PT_object_properties, bpy.context)
-        self.assertIn("Autoplay bounce", layout.texts())
-        self.assertNotIn("speed", layout.props())
-        ball.bevy_object.autoplay = True
-        self.assertEqual(_stored(ball)["components"], [{"type": "animation", "clip": "bounce", "repeat": False, "speed": 1.0}])
-        ball.animation_data.action.use_cyclic = True
-        ball.bevy_object.speed = 2.0
-        self.assertEqual(_native(ball), [{"type": "animation", "clip": "bounce", "repeat": True, "speed": 2.0}])
-        layout = self._panel(addon.panel.BEVY_PT_object_properties, bpy.context)
-        self.assertEqual([prop for prop in layout.props() if prop in {"autoplay", "use_cyclic", "speed"}], ["autoplay", "use_cyclic", "speed"])
-        self.assertEqual(self._messages(), [])
-
-    def test_convert_replaces_lighting_components(self):
-        lamp = add_light("lamp", "POINT", (0, 0, 3))
-        twin = bpy.data.objects.new("twin", lamp.data)
-        bpy.context.scene.collection.objects.link(twin)
-        add_component(lamp, "LIGHT", light_volumetric=True)
-        spot = add_light("spot", "SPOT", (2, 0, 3))
-        add_component(spot, "LIGHT", light_contact_shadows=True, light_use_intensity=True, light_intensity=500.0)
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1, location=(0, 3, 0))
-        add_component(crate, "SHADOWS", shadows_cast=False)
-        room = add_empty("room", (0, 6, 0))
-        add_component(room, "SHADOWS", shadows_receive=False)
-        stool = add_mesh(bpy.ops.mesh.primitive_cube_add, "stool", size=1, location=(0, 6, 0))
-        stool.parent = room
-        add_component(stool, "SHADOWS", shadows_cast=True)
-        ball = add_mesh(bpy.ops.mesh.primitive_uv_sphere_add, "ball", radius=0.5, location=(3, 3, 0))
-        animate(ball, "bounce", "location", 2, [(1, 0.0), (20, 2.0)])
-        add_component(ball, "ANIMATION", animation_clip="bounce", animation_loop=True, animation_speed=1.5)
-        bell = add_empty("bell", (3, 6, 1))
-        add_component(bell, "AUDIO_PLAYER", audio_path="sounds/chime.ogg", audio_volume=0.5, audio_loop=True, audio_distance=3.0)
-        loud = add_empty("loud", (3, 7, 1))
-        add_component(loud, "AUDIO_PLAYER", audio_path="sounds/chime.ogg", audio_volume=2.0)
-        missing = add_empty("missing", (3, 8, 1))
-        add_component(missing, "AUDIO_PLAYER", audio_path="sounds/none.ogg")
-        mist = add_empty("mist", (6, 0, 1))
-        add_component(mist, "FOG_VOLUME", volume_size=(4.0, 2.0, 6.0), fog_color=(0.5, 0.8, 1.0), fog_density=0.2, fog_absorption=0.9, fog_scattering=0.7, fog_anisotropy=0.3, fog_light_intensity=1.5)
-        cellar = add_empty("cellar", (6, 6, 1))
-        add_component(cellar, "REFLECTION_PROBE", volume_size=(8.0, 3.0, 5.0), volume_falloff=0.2, probe_intensity=1000.0, probe_file=str(CUBEMAP))
-        hall = add_empty("hall", (12, 0, 1))
-        add_component(hall, "IRRADIANCE_VOLUME", volume_size=(10.0, 4.0, 6.0), bake_voxels=(10, 4, 6))
-        bpy.context.scene.bevy_glb_export.filepath = str(FIXTURE)
-        bpy.context.view_layer.update()
-        before = {obj.name: _by_type(_native(obj)) for obj in bpy.data.objects}
-        converted, kept = addon.convert.convert_objects(bpy.context, bpy.context.scene.objects)
-        self.assertEqual(sorted(obj.name for obj in converted), ["ball", "bell", "cellar", "crate", "hall", "mist", "spot"])
-        self.assertEqual(sorted((obj.name, reason) for obj, reason in kept), [
-            ("lamp", "twin shares its light data and would get these Light settings too"),
-            ("loud", "its Audio Player volume is above 1, the most a Speaker allows"),
-            ("missing", "its Audio Player sound sounds/none.ogg is not in the game's assets folder, so a Speaker cannot load it"),
-            ("room", "its Shadows component covers the meshes of child objects, while Blender sets shadows on each mesh object"),
-            ("stool", "room's Shadows component would reach its mesh"),
-        ])
-        self.assertEqual((spot.data.bevy_light.light_intensity, crate.visible_shadow, ball.bevy_object.autoplay, ball.animation_data.action.use_cyclic), (500.0, False, True, True))
-        self.assertFalse(lamp.data.bevy_light.light_volumetric)
-        for obj in (spot, crate, ball):
-            self.assertEqual(_by_type(_native(obj)), before[obj.name], obj.name)
-        children = {child.parent.name: child for child in bpy.data.objects if child.parent is not None and child.parent.name in {"bell", "mist", "cellar", "hall"}}
-        self.assertEqual({name: (child.name, child.type) for name, child in children.items()}, {"bell": ("bell_speaker", "SPEAKER"), "mist": ("mist_fog", "MESH"), "cellar": ("cellar_probe", "LIGHT_PROBE"), "hall": ("hall_probe", "LIGHT_PROBE")})
-        self.assertEqual(_native(children["bell"]), [before["bell"]["audio_player"]])
-        self.assertEqual(_native(children["cellar"]), [{**before["cellar"]["reflection_probe"], "size": [2.0, 2.0, 2.0]}])
-        self.assertEqual(_rounded(tuple(children["cellar"].scale)), (4.0, 2.5, 1.5))
-        self.assertEqual((children["hall"].data.resolution_x, children["hall"].data.resolution_y, children["hall"].data.resolution_z), (10, 6, 4))
-        fog = _native(children["mist"])[0]
-        self.assertEqual({key: fog[key] for key in ("size", "color", "anisotropy", "light_intensity")}, {key: before["mist"]["fog_volume"][key] for key in ("size", "color", "anisotropy", "light_intensity")})
-        self.assertAlmostEqual(fog["density"] * (fog["absorption"] + fog["scattering"]), 0.2 * (0.9 + 0.7), places=4)
-        self.assertAlmostEqual(fog["density"] * fog["scattering"], 0.2 * 0.7, places=4)
-        for obj in (bell, mist, cellar, hall, spot, crate, ball):
-            self.assertEqual(len(obj.bevy_component_data.components), 0, obj.name)
-        self.assertEqual(bpy.ops.bevy_components.convert_to_native(), {"FINISHED"})
-        self.assertEqual(len([obj for obj in bpy.data.objects if obj.parent == bell]), 1)
-
-
-WALKABLE = {"type": "navigation", "kind": "walkable", "cost": 2.0}
-
-
-def _collection(name, *objects, parent=None):
-    collection = bpy.data.collections.new(name)
-    (parent or bpy.context.scene.collection).children.link(collection)
-    for obj in objects:
-        collection.objects.link(obj)
-    return collection
-
-
-def _add_to(collection, kind, type_path="", **values):
-    with bpy.context.temp_override(bevy_collection=collection):
-        if "FINISHED" not in bpy.ops.bevy_components.add(component_type=kind, type_path=type_path):
-            raise RuntimeError(f"Could not add {kind} to {collection.name}")
-    item = collection.bevy_component_data.components[-1]
-    for name, value in values.items():
-        setattr(item, name, value)
-    return item
-
-
-def _components(obj):
-    return [addon.metadata.serialize_component(item) for item in addon.system.components_for(obj)]
-
-
-class TestCollectionComponents(unittest.TestCase):
-    def setUp(self):
-        clear_scene()
-        for library in list(bpy.data.libraries):
-            bpy.data.libraries.remove(library)
-
-    def tearDown(self):
-        clear_scene()
-        for library in list(bpy.data.libraries):
-            bpy.data.libraries.remove(library)
-
-    def _messages(self):
-        bpy.context.view_layer.update()
-        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.context.scene.objects)]
-
-    def _context(self, obj, **values):
-        return SimpleNamespace(**{"object": obj, "scene": bpy.context.scene, "region": None, "space_data": None, "view_layer": bpy.context.view_layer, "selected_objects": [], **values})
-
-    def test_overview_and_select_include_blender_and_collection_components(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
-        _rigid_body(crate)
-        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1, location=(3, 0, 0))
-        add_mesh(bpy.ops.mesh.primitive_cube_add, "plain", size=1, location=(6, 0, 0))
-        _add_to(_collection("Ground", rock), "CUSTOM", type_path="my_game::Ground")
-        bpy.context.view_layer.update()
-        ui_list = SimpleNamespace(filter_name="", use_filter_invert=False, use_filter_sort_alpha=False, bitflag_filter_item=1 << 30)
-        self.assertEqual(_shown_in_overview(ui_list), ["crate", "rock"])
-        ui_list.filter_name = "ground"
-        self.assertEqual(_shown_in_overview(ui_list), ["rock"])
-        row = FakeLayout(self)
-        addon.panel.BEVY_UL_objects.draw_item(ui_list, bpy.context, row, bpy.context.scene, crate, 0, bpy.context.scene.bevy_component_overview, "active")
-        self.assertIn(addon.property.COMPONENT_LABELS["RIGID_BODY"][1], [bound.get("icon") for name, bound, layout in row.calls if name == "label"])
-        self.assertEqual(bpy.ops.bevy_components.select_by_component(component_type="RIGID_BODY"), {"FINISHED"})
-        self.assertEqual(bpy.context.selected_objects, [crate])
-        self.assertEqual(bpy.ops.bevy_components.select_by_component(component_type="CUSTOM", type_path="my_game::Ground"), {"FINISHED"})
-        self.assertEqual(bpy.context.selected_objects, [rock])
-        menu = FakePanel(self)
-        addon.menu.BEVY_MT_select_by_component.draw(menu, bpy.context)
-        self.assertIn(("CUSTOM", "my_game::Ground"), [(properties.component_type, getattr(properties, "type_path", "")) for text, properties, enabled in menu.layout.buttons()])
-
-    def test_checks_survive_collection_components_removed_from_a_script(self):
-        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
-        ground = _collection("Ground", rock)
-        _add_to(ground, "CUSTOM", type_path="my_game::Ground", custom_json="{")
-        with mock.patch.object(addon.validation, "_caching", lambda: True):
-            self.assertEqual(self._messages(), ["rock: invalid JSON in Custom Component, in collection Ground"])
-            ground.bevy_component_data.components.clear()
-            self.assertNotIn("rock: invalid JSON in Custom Component, in collection Ground", self._messages())
-
-    def test_collections_give_their_components_to_every_member(self):
-        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
-        pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
-        lamp = add_light("lamp", "POINT", (0, 0, 3))
-        ground = _collection("Ground", rock, pebble, lamp)
-        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
-        _add_to(ground, "CUSTOM", type_path="my_game::Ground", custom_json='{"slip": 1}')
-        ground_tag = {"type": "custom", "type_path": "my_game::Ground", "data": {"slip": 1}}
-        self.assertEqual(_stored(rock)["components"], [WALKABLE, ground_tag])
-        self.assertEqual(_stored(lamp)["components"][1:], [ground_tag])
-        self.assertEqual(self._messages(), [])
-        with bpy.context.temp_override(bevy_collection=ground):
-            self.assertEqual(bpy.ops.bevy_components.add(component_type="COLLIDER"), {"CANCELLED"})
-        mud = _collection("Mud", pebble, parent=ground)
-        _add_to(mud, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=4.0)
-        self.assertEqual(_stored(pebble)["components"], [{**WALKABLE, "cost": 4.0}, ground_tag])
-        add_component(rock, "NAVIGATION", navigation_kind="OBSTACLE")
-        self.assertEqual(_stored(rock)["components"], [OBSTACLE, ground_tag])
-        rock.bevy_component_data.components[0].enabled = False
-        self.assertEqual(_stored(rock)["components"], [WALKABLE, ground_tag])
-        boulder = add_mesh(bpy.ops.mesh.primitive_cube_add, "boulder", size=1, location=(6, 0, 0))
-        ground.objects.link(boulder)
-        bpy.context.view_layer.update()
-        self.assertEqual(_components(boulder), [WALKABLE, ground_tag])
-        ground.bevy_component_data.components[0].navigation_cost = 3.0
-        self.assertEqual(_stored(boulder)["components"][0]["cost"], 3.0)
-        with tempfile.TemporaryDirectory() as directory:
-            gltf = export_sample_scene(Path(directory) / "ground.glb")
-        nodes = {node["name"]: node for node in gltf["nodes"]}
-        self.assertEqual(_extras(gltf, nodes["boulder"])["components"], [{**WALKABLE, "cost": 3.0}, ground_tag])
-        self.assertEqual(_extras(gltf, nodes["pebble"])["components"], [{**WALKABLE, "cost": 4.0}, ground_tag])
-        self.assertFalse(any("bevy_component_data" in json.dumps(element.get("extras", {})) for key in ("nodes", "scenes") for element in gltf[key]))
-        with bpy.context.temp_override(bevy_collection=ground):
-            self.assertEqual(bpy.ops.bevy_components.remove(index=1), {"FINISHED"})
-        self.assertEqual(_stored(boulder)["components"], [{**WALKABLE, "cost": 3.0}])
-        bpy.data.collections.remove(mud)
-        self.assertEqual(_components(pebble), [{**WALKABLE, "cost": 3.0}])
-
-    def test_collections_that_disagree_warn_and_nesting_picks_the_winner(self):
-        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
-        ground = _collection("Ground", rock)
-        swamp = _collection("Swamp", rock)
-        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
-        _add_to(swamp, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
-        self.assertEqual(self._messages(), [])
-        swamp.bevy_component_data.components[0].navigation_cost = 5.0
-        self.assertEqual(self._messages(), ["rock: Ground and Swamp both give it Navigation with different settings, so it uses Ground's. Put one collection inside the other to choose"])
-        self.assertEqual(_stored(rock)["components"], [WALKABLE])
-        bpy.context.scene.collection.children.unlink(swamp)
-        ground.children.link(swamp)
-        self.assertEqual(self._messages(), [])
-        self.assertEqual(_components(rock), [{**WALKABLE, "cost": 5.0}])
-        add_component(rock, "NAVIGATION", navigation_kind="OBSTACLE")
-        self.assertEqual(_components(rock), [OBSTACLE])
-
-    def test_collection_cards_report_problems_once(self):
-        stones = [add_mesh(bpy.ops.mesh.primitive_cube_add, f"stone_{index}", size=1, location=(index * 2, 0, 0)) for index in range(3)]
-        marker = add_empty("marker", (0, 4, 0))
-        rubble = _collection("Rubble", *stones, marker)
-        custom = _add_to(rubble, "CUSTOM", type_path="my_game::Rubble", custom_json="{")
-        _add_to(rubble, "VISIBILITY_RANGE", fade_in_start=10.0, fade_in_end=5.0)
-        self.assertEqual(sorted(self._messages()), [
-            "marker: No mesh on this object or under it to show or hide",
-            "stone_0: Visibility Range must satisfy 0 <= in.start <= in.end <= out.start <= out.end, in collection Rubble",
-            "stone_0: invalid JSON in Custom Component, in collection Rubble",
-        ])
-        self.assertEqual([(issue.level, issue.message) for issue in addon.validation.collection_issues(rubble)], [("ERROR", "invalid JSON in Custom Component"), ("ERROR", "Visibility Range must satisfy 0 <= in.start <= in.end <= out.start <= out.end")])
-        with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(RuntimeError, "invalid JSON in Custom Component, in collection Rubble"):
-                export_sample_scene(Path(directory) / "rubble.glb")
-        custom.custom_json = '{"weight": 2}'
-        with bpy.context.temp_override(bevy_collection=rubble):
-            self.assertEqual(bpy.ops.bevy_components.lod_preset(index=1, preset="MID"), {"FINISHED"})
-        self.assertEqual(_stored(stones[2])["components"][1], {"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False})
-        with bpy.context.temp_override(bevy_collection=rubble):
-            self.assertEqual(bpy.ops.bevy_components.edit_as_text(index=0), {"FINISHED"})
-        text = bpy.data.texts["Rubble Rubble.json"]
-        self.assertEqual(text["bevy_object"], rubble)
-        text.from_string('{"weight": 7}')
-        self.assertEqual(_execute(addon.operator.BEVY_OT_apply_text, SimpleNamespace(space_data=SimpleNamespace(text=text))), ({"FINISHED"}, [({"INFO"}, "Applied Rubble Rubble.json to Rubble")]))
-        self.assertEqual(_stored(stones[1])["components"][0]["data"], {"weight": 7})
-        bpy.data.texts.remove(text)
-        rubble.bevy_component_data.components.add().component_type = "COLLIDER"
-        self.assertEqual(addon.validation.collection_issues(rubble)[-1].message, "Collections only pass on game and custom components, Navigation and Visibility Range, so its objects do not get this one")
-        self.assertNotIn("collider", json.dumps(_stored(stones[0])))
-
-    def test_typed_collection_components_follow_their_definition(self):
-        define_component("my_game::Loot", ("gold", "INT", 5))
-        chest = add_mesh(bpy.ops.mesh.primitive_cube_add, "chest", size=1)
-        loot = _collection("Loot", chest)
-        item = _add_to(loot, "CUSTOM", type_path="my_game::Loot")
-        self.assertTrue(item.use_fields)
-        self.assertEqual(_stored(chest)["components"], [{"type": "custom", "type_path": "my_game::Loot", "data": {"gold": 5}}])
-        set_fields(item, gold=9)
-        self.assertEqual(_stored(chest)["components"][0]["data"], {"gold": 9})
-        library = bpy.context.scene.bevy_component_definitions
-        library.definitions[0].name = "my_game::Treasure"
-        self.assertEqual(item.custom_type, "my_game::Treasure")
-        self.assertEqual(_stored(chest)["components"][0]["type_path"], "my_game::Treasure")
-        library.active_index = 0
-        self.assertEqual(bpy.ops.bevy_components.definition_remove(), {"FINISHED"})
-        self.assertFalse(item.use_fields)
-        self.assertEqual(_stored(chest)["components"][0]["data"], {"gold": 9})
-
-    def test_collection_panel_and_inherited_rows(self):
-        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
-        pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
-        ground = _collection("Ground", rock, pebble)
-        context = self._context(rock, collection=ground)
-        self.assertTrue(addon.panel.BEVY_PT_collection_components.poll(context))
-        self.assertFalse(addon.panel.BEVY_PT_collection_components.poll(self._context(rock, collection=bpy.context.scene.collection)))
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_collection_components.draw(panel, context)
-        self.assertEqual(panel.layout.menus(), ["BEVY_MT_component_add"])
-        self.assertIn("Link objects to it with Ctrl+L > Link to Collection", " ".join(panel.layout.texts()))
-        menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_add.draw(menu, SimpleNamespace(bevy_collection=ground, object=rock, scene=bpy.context.scene))
-        self.assertEqual([text for text, properties, enabled in menu.layout.buttons()], ["Custom Component", "Navigation", "Visibility Range"])
-        self.assertEqual(menu.layout.menus(), [])
-        self.assertIn(("context_pointer_set", "bevy_collection"), [(name, bound.get("name")) for name, bound, layout in menu.layout.calls])
-        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE")
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_collection_components.draw(panel, context)
-        self.assertIn("2 objects get these components, unless the object or a collection inside this one sets its own", " ".join(panel.layout.texts()))
-        self.assertIn("Navigation", panel.layout.texts())
-        self.assertIn("navigation_kind", panel.layout.props())
-        menu = FakePanel(self)
-        addon.menu.BEVY_MT_component_context_menu.draw(menu, SimpleNamespace(bevy_collection=ground, object=rock, bevy_component=ground.bevy_component_data.components[0], scene=bpy.context.scene))
-        self.assertNotIn("Copy to Selected", menu.layout.texts())
-        self.assertIn("Remove", menu.layout.texts())
-        panel = FakePanel(self)
-        addon.panel.draw_components(panel.layout, self._context(rock), rock)
-        self.assertIn("Navigation from Ground", panel.layout.texts())
-        button = next(properties for text, properties, enabled in panel.layout.buttons() if getattr(properties, "collection", None) == "Ground")
-        add_component(rock, "NAVIGATION", navigation_kind="OBSTACLE")
-        panel = FakePanel(self)
-        addon.panel.draw_components(panel.layout, self._context(rock), rock)
-        self.assertIn("Replaced by the Navigation on this object", " ".join(panel.layout.texts()))
-        bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection
-        space = SimpleNamespace(type="PROPERTIES", context="OBJECT")
-        self.assertEqual(_execute(addon.operator.BEVY_OT_show_collection, self._context(rock, space_data=space), collection=button.collection), ({"FINISHED"}, []))
-        self.assertEqual(space.context, "COLLECTION")
-        self.assertEqual(bpy.context.view_layer.active_layer_collection.collection, ground)
-
-    def test_linked_collections_carry_their_components(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
-        props = _collection("Props", crate)
-        _add_to(props, "CUSTOM", type_path="my_game::Prop", custom_json="{}")
-        with tempfile.TemporaryDirectory() as directory:
-            library = Path(directory) / "props.blend"
-            bpy.data.libraries.write(str(library), {props})
-            clear_scene()
-            with bpy.data.libraries.load(str(library), link=True) as (source, target):
-                target.collections = ["Props"]
-            linked = target.collections[0]
-            bpy.context.scene.collection.children.link(linked)
-            crate = next(obj for obj in bpy.data.objects if obj.library is not None)
-            _add_to(_collection("Loot", crate), "NAVIGATION", navigation_kind="OBSTACLE")
-            self.assertEqual(_components(crate), [OBSTACLE, {"type": "custom", "type_path": "my_game::Prop", "data": {}}])
-            panel = FakePanel(self)
-            addon.panel.BEVY_PT_collection_components.draw(panel, self._context(crate, collection=linked))
-            self.assertIn("Linked from props.blend, so edit its components in that file", " ".join(panel.layout.texts()))
-            gltf = export_sample_scene(Path(directory) / "level.glb")
-        node = next(node for node in gltf["nodes"] if node["name"] == "crate")
-        self.assertEqual(_extras(gltf, node)["components"], [OBSTACLE, {"type": "custom", "type_path": "my_game::Prop", "data": {}}])
-
-    def test_prefabs_change_with_their_collection_components(self):
-        box = add_mesh(bpy.ops.mesh.primitive_cube_add, "box", size=1)
-        crate = _collection("Crate", box)
-        settings = addon.prefab.prefab_settings(bpy.context.scene.bevy_glb_export)
-        before = addon.prefab.prefab_fingerprint(crate, settings, bpy.context.scene)
-        _add_to(_collection("Breakable", box), "CUSTOM", type_path="my_game::Breakable", custom_json="{}")
-        self.assertNotEqual(addon.prefab.prefab_fingerprint(crate, settings, bpy.context.scene), before)
-
-
-class TestLeaveOut(unittest.TestCase):
-    def setUp(self):
-        clear_scene()
-
-    def tearDown(self):
-        clear_scene()
-
-    def _messages(self):
-        bpy.context.view_layer.update()
-        return [addon.validation.describe(issue) for issue in addon.validation.check_objects(bpy.data.objects)]
-
-    def _context(self, obj, **values):
-        return SimpleNamespace(**{"object": obj, "scene": bpy.context.scene, "region": None, "space_data": None, "view_layer": bpy.context.view_layer, "selected_objects": [], **values})
-
-    def _texts(self, obj):
-        panel = FakePanel(self)
-        addon.panel.draw_components(panel.layout, self._context(obj), obj)
-        return panel.layout
-
-    def test_objects_left_out_export_only_their_own_components(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=1)
-        _rigid_body(crate, shape="BOX")
-        crate.visible_shadow = False
-        add_component(crate, "CUSTOM", type_path="my_game::Helper", custom_json="{}")
-        _add_to(_collection("Ground", crate), "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
-        self.assertEqual([component["type"] for component in _native(crate)], ["custom", "rigid_body", "collider", "shadows", "navigation"])
-        self.assertNotIn("leave_out", self._texts(add_mesh(bpy.ops.mesh.primitive_cube_add, "plain", size=1, location=(4, 0, 0))).props())
-        layout = self._texts(crate)
-        self.assertIn("leave_out", layout.props())
-        self.assertIn("Collider from Physics", layout.texts())
-        crate.bevy_component_data.leave_out = True
-        self.assertEqual(_stored(crate)["components"], [{"type": "custom", "type_path": "my_game::Helper", "data": {}}])
-        layout = self._texts(crate)
-        self.assertIn("leave_out", layout.props())
-        self.assertNotIn("Collider from Physics", layout.texts())
-        self.assertNotIn("Navigation from Ground", layout.texts())
-        self.assertIn("Exports as plain glTF, without components from Blender's settings or collections", " ".join(layout.texts()))
-        self.assertIn("Helper", layout.texts())
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_rigid_body.draw(panel, self._context(crate))
-        self.assertIn("Left out of Bevy in Object > Game Components, so the game gets none of these settings", " ".join(panel.layout.texts()))
-        self.assertNotIn("gravity_scale", panel.layout.props())
-        panel = FakePanel(self)
-        addon.panel.draw_visibility(panel, SimpleNamespace(object=crate))
-        self.assertFalse(_prop_layout(panel.layout, "receive_shadows").active)
-        self.assertEqual(self._messages(), [])
-        with tempfile.TemporaryDirectory() as directory:
-            gltf = export_sample_scene(Path(directory) / "left_out.glb")
-        node = next(node for node in gltf["nodes"] if node["name"] == "crate")
-        self.assertEqual(_extras(gltf, node)["components"], [{"type": "custom", "type_path": "my_game::Helper", "data": {}}])
-        crate.bevy_component_data.leave_out = False
-        self.assertEqual(len(_stored(crate)["components"]), 5)
-
-    def test_left_out_data_objects_export_as_plain_glTF(self):
-        fog = add_mesh(bpy.ops.mesh.primitive_cube_add, "fog", size=2)
-        fog.data.materials.append(_volume_material("haze", {"Density": 0.5})[0])
-        lamp = add_light("lamp", "POINT", (0, 0, 3))
-        mirror = _add_object(bpy.ops.object.lightprobe_add, type="PLANE", location=(4, 0, 0))
-        speaker = _add_object(bpy.ops.object.speaker_add, location=(0, 4, 0))
-        hinge = add_empty("hinge", (0, 0, 0))
-        _constraint(hinge, "MOTOR")
-        self.assertEqual(sorted(self._messages()), sorted([
-            "hinge: Bevy has no Motor joint, so the game leaves this Rigid Body Constraint out. Use Fixed, Point, Hinge or Slider",
-            f"{mirror.name}: Bevy has no planar reflections, so the game leaves this Light Probe out",
-            f"{speaker.name}: No sound picked, so nothing plays",
-        ]))
-        for obj in (fog, lamp, mirror, speaker, hinge):
-            obj.bevy_component_data.leave_out = True
-        self.assertEqual(self._messages(), [])
-        self.assertEqual(_native(fog), [])
-        self.assertEqual(_native(lamp), [])
-        with tempfile.TemporaryDirectory() as directory:
-            gltf = export_sample_scene(Path(directory) / "plain.glb")
-        nodes = {node["name"]: node for node in gltf["nodes"]}
-        self.assertIn("mesh", nodes["fog"])
-        self.assertNotIn("bevy_components", nodes["fog"].get("extras") or {})
-        self.assertNotIn("bevy_components", nodes["lamp"].get("extras") or {})
-        fog.bevy_component_data.leave_out = False
-        self.assertEqual([component["type"] for component in _native(fog)], ["fog_volume"])
-
-    def test_collections_leave_out_every_member(self):
-        rock = add_mesh(bpy.ops.mesh.primitive_cube_add, "rock", size=1)
-        _rigid_body(rock, "PASSIVE", "MESH")
-        pebble = add_mesh(bpy.ops.mesh.primitive_cube_add, "pebble", size=1, location=(3, 0, 0))
-        ground = _collection("Ground", rock, pebble)
-        _add_to(ground, "NAVIGATION", navigation_kind="WALKABLE", navigation_cost=2.0)
-        reference = _collection("Reference")
-        blockout = _collection("Blockout", rock, parent=reference)
-        self.assertEqual([component["type"] for component in _native(rock)], ["rigid_body", "collider", "navigation"])
-        reference.bevy_component_data.leave_out = True
-        self.assertEqual(_components(rock), [])
-        self.assertNotIn("bevy_components", rock)
-        self.assertEqual(_components(pebble), [WALKABLE])
-        layout = self._texts(rock)
-        self.assertIn("Left out of Bevy by collection Reference", layout.texts())
-        self.assertIn("Reference", [getattr(properties, "collection", None) for text, properties, enabled in layout.buttons()])
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_physics_collisions.draw(panel, self._context(rock))
-        self.assertIn("Left out of Bevy by collection Reference, so the game gets none of these settings", " ".join(panel.layout.texts()))
-        panel = FakePanel(self)
-        addon.panel.BEVY_PT_collection_components.draw(panel, self._context(rock, collection=reference))
-        self.assertIn("leave_out", panel.layout.props())
-        self.assertIn("Every object in this collection and the collections inside it exports as plain glTF", " ".join(panel.layout.texts()))
-        self.assertNotIn("Link objects to it with Ctrl+L", " ".join(panel.layout.texts()))
-        blockout.bevy_component_data.leave_out = True
-        reference.bevy_component_data.leave_out = False
-        self.assertEqual(_components(rock), [])
-        blockout.objects.unlink(rock)
-        bpy.context.view_layer.update()
-        self.assertEqual([component["type"] for component in _components(rock)], ["rigid_body", "collider", "navigation"])
-
-    def test_left_out_compound_parents_free_their_children(self):
-        cart = add_mesh(bpy.ops.mesh.primitive_cube_add, "cart", size=1)
-        _rigid_body(cart, shape="COMPOUND")
-        wheel = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "wheel", radius=0.5, depth=0.2, location=(0, 0, -0.5))
-        wheel.parent = cart
-        _rigid_body(wheel, shape="CYLINDER")
-        self.assertEqual([component["type"] for component in _native(wheel)], ["collider"])
-        self.assertFalse(addon.panel.BEVY_PT_physics_rigid_body.poll(self._context(wheel)))
-        cart.bevy_component_data.leave_out = True
-        self.assertEqual([component["type"] for component in _native(wheel)], ["rigid_body", "collider"])
-        self.assertTrue(addon.panel.BEVY_PT_physics_rigid_body.poll(self._context(wheel)))
-        self.assertEqual(self._messages(), [])
-
-    def test_convert_keeps_components_on_left_out_objects(self):
-        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
-        add_component(crate, "COLLIDER", collider_shape="CUBOID", collider_size=(2, 2, 2))
-        crate.bevy_component_data.leave_out = True
-        converted, kept = addon.convert.convert_objects(bpy.context, [crate])
-        self.assertEqual(converted, [])
-        self.assertEqual(kept, [(crate, "it is left out of Bevy, so Blender's settings would not reach the game")])
-        self.assertIsNone(crate.rigid_body)
-        self.assertEqual([component["type"] for component in _stored(crate)["components"]], ["collider"])
-
-
 class TestValidation(unittest.TestCase):
     def setUp(self):
         clear_scene()
@@ -4551,28 +3375,6 @@ class TestValidation(unittest.TestCase):
     def test_sample_scene_is_clean(self):
         build_sample_scene()
         self.assertEqual(self._messages(), [])
-
-    def test_checks_follow_blender_physics_settings(self):
-        door = add_mesh(bpy.ops.mesh.primitive_cube_add, "door")
-        _rigid_body(door, "ACTIVE", "BOX")
-        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", location=(3, 0, 0))
-        _rigid_body(wall, "PASSIVE", "BOX")
-        hinge = add_empty("hinge", (1.5, 0, 0))
-        constraint = _constraint(hinge, "HINGE", door, wall)
-        constraint.use_limit_ang_z = True
-        constraint.limit_ang_z_lower = -0.5
-        constraint.limit_ang_z_upper = 0.5
-        bpy.context.view_layer.update()
-        with mock.patch.object(addon.validation, "_caching", lambda: True):
-            self.assertEqual(self._messages(), [])
-            constraint.limit_ang_z_lower = 1.0
-            self.assertIn("hinge: Joint limit Min is above Max", self._messages())
-            constraint.limit_ang_z_lower = -0.5
-            door.rigid_body.collision_shape = "MESH"
-            self.assertEqual(self._messages(), ["door: Triangle meshes collide poorly on Dynamic bodies, use Convex Hull"])
-            door.rigid_body.collision_shape = "BOX"
-            constraint.use_breaking = True
-            self.assertEqual(self._messages(), [f"hinge: {addon.validation.BREAKABLE}"])
 
     def test_messages_wrap_to_the_panel_width(self):
         text = "Export the scene once, then Play exports it again each time"
@@ -5044,14 +3846,12 @@ class TestValidation(unittest.TestCase):
         add_component(spot, "LIGHT")
         self.assertEqual(self._messages(spot), ["spot: Bevy spot lights are round, so this square spot becomes round"])
         window = add_light("window", "AREA", (0, 0, 0), shape="DISK", size=1.5)
-        self.assertEqual(self._messages(window), ["window: Bevy area lights are rectangles, so this disk becomes a 1.5 × 1.5 m rectangle"])
+        self.assertEqual(self._messages(window), ["window: glTF leaves out area lights. Add a Light component to export this one as a Bevy rectangle light"])
         light = add_component(window, "LIGHT", light_volumetric=True)
         self.assertEqual(self._messages(window), ["window: Bevy area lights are rectangles, so this disk becomes a 1.5 × 1.5 m rectangle"])
         window.data.shape = "ELLIPSE"
         window.data.size_y = 0.5
         self.assertEqual(self._messages(window), ["window: Bevy area lights are rectangles, so this ellipse becomes a 1.5 × 0.5 m rectangle"])
-        window.data.shape = "RECTANGLE"
-        self.assertEqual(self._messages(window), [])
         light.enabled = False
         self.assertEqual(self._messages(window), [])
         stray = add_mesh(bpy.ops.mesh.primitive_cube_add, "stray")
@@ -5327,6 +4127,79 @@ def _all_scenes_report():
     operator = SimpleNamespace(report=mock.Mock())
     result = addon.operator.BEVY_OT_export_all_scenes.execute(operator, bpy.context)
     return result, operator.report.call_args.args
+
+
+class TestBevyGltf(unittest.TestCase):
+    def setUp(self):
+        clear_scene()
+
+    def test_bevy_gltf_export_acts_like_the_gltf_export_with_components(self):
+        crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
+        add_component(crate, "COLLIDER", collider_shape="SPHERE", collider_radius=1.5)
+        add_component(crate, "CUSTOM", custom_type="game::Loot", custom_json='{"gold": 3}')
+        broken = add_component(crate, "CUSTOM", custom_type="game::Broken", custom_json="{")
+        crate["note"] = "left out"
+        rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", location=(4, 0, 0))
+        add_component(rock, "VISIBILITY_RANGE")
+        select(crate)
+        operator = addon.gltf.BEVY_OT_export_gltf
+        self.assertEqual(operator.bl_idname, "export_scene.bevy_gltf")
+        self.assertTrue(issubclass(operator, sys.modules["io_scene_gltf2"].ExportGLTF2_Base))
+        self.assertEqual(addon.gltf.BEVY_FH_gltf.bl_export_operator, operator.bl_idname)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "crate.glb"
+            reference = add_component(crate, "SCENE_REFERENCE", scene_file=str(Path(directory) / "props" / "tree.glb"))
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True), {"FINISHED"})
+            gltf = read_gltf(path)
+            bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True)
+            plain = read_gltf(path)
+        self.assertEqual(addon.gltf._skipped_message(["crate: invalid JSON in Custom Component"]), "Left out 1 Bevy component that cannot export: crate: invalid JSON in Custom Component. See Validate All Objects")
+        self.assertEqual(addon.gltf._skipped_message([f"crate: problem {index}" for index in range(5)]), "Left out 5 Bevy components that cannot export: crate: problem 0; crate: problem 1; crate: problem 2 and 2 more. See Validate All Objects")
+        with addon.system.bevy_export() as skipped:
+            addon.system.object_components(crate, None, addon.system._skipped[0])
+        self.assertEqual([message.split(":")[:2] for message in skipped], [["crate", " Custom JSON for game"]])
+        self.assertEqual([node["name"] for node in gltf["nodes"]], ["crate"])
+        extras = gltf["nodes"][0]["extras"]
+        self.assertEqual(list(extras), ["bevy_components"])
+        components = _rounded(json.loads(extras["bevy_components"])["components"])
+        self.assertEqual([component["type"] for component in components], ["collider", "custom", "scene_reference"])
+        self.assertEqual((components[0]["radius"], components[1]["data"], components[2]["path"]), (1.5, {"gold": 3}, "props/tree.glb"))
+        self.assertNotIn("extras", plain["nodes"][0])
+        self.assertTrue(reference.enabled and broken.enabled)
+        self.assertNotIn("bevy_components", crate)
+
+    def test_single_prefab_exports_its_collider_and_lods(self):
+        lamp = add_empty("lamp", (0, 0, 0))
+        collider = add_component(lamp, "COLLIDER", collider_shape="CYLINDER", collider_radius=0.3, collider_height=2.0, collider_offset=(0, 1, 0))
+        near = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "lamp_lod0", vertices=32, radius=0.3, depth=2, location=(0, 0, 1))
+        far = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "lamp_lod1", vertices=8, radius=0.3, depth=2, location=(0, 0, 1))
+        for mesh, preset in ((near, "NEAR"), (far, "MID")):
+            mesh.parent = lamp
+            add_component(mesh, "VISIBILITY_RANGE")
+            apply_lod_preset(mesh, preset)
+        add_mesh(bpy.ops.mesh.primitive_plane_add, "street", size=10)
+        self.assertEqual(_extents(_collider_lines(lamp, collider, 1000)), (0.3, 0.3, 1.0))
+        collider.collider_shape = "CONE"
+        self.assertEqual(addon.metadata.component_errors(collider), [])
+        self.assertEqual(_extents(_collider_lines(lamp, collider, 1000)), (0.3, 0.3, 1.0))
+        collider.collider_height = 0
+        self.assertEqual(addon.metadata.component_errors(collider), ["collider height must be positive"])
+        collider.collider_shape = "CYLINDER"
+        collider.collider_height = 2.0
+        select(lamp, near, far)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "lamp.glb"
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True), {"FINISHED"})
+            gltf = read_gltf(path)
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertEqual(set(nodes), {"lamp", "lamp_lod0", "lamp_lod1"})
+        exported = _rounded(json.loads(nodes["lamp"]["extras"]["bevy_components"])["components"])
+        self.assertEqual([(component["type"], component["shape"], component["radius"], component["height"], component["offset"]) for component in exported], [("collider", "cylinder", 0.3, 2.0, [0.0, 1.0, 0.0])])
+        ranges = {name: _rounded(json.loads(nodes[name]["extras"]["bevy_components"])["components"]) for name in ("lamp_lod0", "lamp_lod1")}
+        self.assertEqual(ranges, {
+            "lamp_lod0": [{"type": "visibility_range", "start": [0.0, 0.0], "end": [20.0, 25.0], "use_aabb": False}],
+            "lamp_lod1": [{"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False}],
+        })
 
 
 class TestExportOptions(unittest.TestCase):
@@ -5615,7 +4488,7 @@ class TestPlay(unittest.TestCase):
         self.assertEqual((game.name, game.code, game.failed), ("my_game", 0, False))
         layout = self._panel()
         texts = layout.texts()
-        self.assertIn(f"Runs {self.preferences.run_command} in my_game", " ".join(texts))
+        self.assertIn(f"Runs {self.preferences.run_command} in my_game", texts)
         self.assertIn("my_game closed", texts)
         self.assertIn("Unnamed object: Invalid visibility range", texts)
         self.assertEqual([(text, properties.name) for text, properties, enabled in layout.buttons() if hasattr(properties, "name")], [("subject: Invalid mass", "subject")])
@@ -5662,7 +4535,7 @@ class TestPlay(unittest.TestCase):
         importer = Path(__file__).resolve().parents[2] / "importer"
         self.preferences.viewer_folder = str(importer)
         self.assertEqual(addon.project.play_target(bpy.context), (importer, addon.play.VIEWER_COMMAND))
-        self.assertIn("Opens the scene in the importer's viewer", " ".join(self._panel().texts()))
+        self.assertIn("Opens the scene in the importer's viewer", self._panel().texts())
         self.preferences.game_folder = str(self.project)
         self.assertEqual(addon.project.play_target(bpy.context), (self.project, "cargo run"))
         self.assertEqual(next(bound["placeholder"] for name, bound, layout in self._panel().calls if name == "prop" and bound["property"] == "folder"), str(self.project))
@@ -5733,10 +4606,10 @@ class TestPlay(unittest.TestCase):
 
     def test_nested_assets_folders_follow_the_game_project(self):
         sound = Path(self.directory.name) / "studio" / "assets" / "sfx" / "assets" / "hit.ogg"
-        self.assertEqual(addon.native.asset_path(str(sound)), ("hit.ogg", sound.parent))
-        (Path(self.directory.name) / "studio" / "Cargo.toml").parent.mkdir(parents=True, exist_ok=True)
+        self.assertEqual(addon.system.asset_path(str(sound)), ("hit.ogg", sound.parent))
+        (Path(self.directory.name) / "studio").mkdir(parents=True, exist_ok=True)
         (Path(self.directory.name) / "studio" / "Cargo.toml").write_text("[package]\n")
-        self.assertEqual(addon.native.asset_path(str(sound)), ("sfx/assets/hit.ogg", sound.parents[2]))
+        self.assertEqual(addon.system.asset_path(str(sound)), ("sfx/assets/hit.ogg", sound.parents[2]))
 
     def test_the_game_schema_is_read_from_the_game_project(self):
         (self.project / SCHEMA.name).write_bytes(SCHEMA.read_bytes())
