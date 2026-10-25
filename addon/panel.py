@@ -3,15 +3,16 @@ from fnmatch import fnmatchcase
 
 import bpy
 
+from .export import EXPORT_LABEL, remembered
 from .menu import BEVY_MT_component_add, BEVY_MT_component_context_menu, BEVY_MT_object_context_menu, draw_export_again, draw_export_all
 from .metadata import BEVY_LIGHT_RANGE, FIELD_VALUES, PRIMITIVE_SHAPES, invalid_names, joint_limits_inverted, light_amount, light_intensity, light_of, light_unit, validate_items
-from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_glb, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
+from .operator import BEVY_OT_bake_lighting, BEVY_OT_definition_add, BEVY_OT_definition_remove, BEVY_OT_edit_as_text, BEVY_OT_export_gltf, BEVY_OT_field_add, BEVY_OT_field_move, BEVY_OT_field_remove, BEVY_OT_fit_collider, BEVY_OT_lod_preset, BEVY_OT_pick_file, BEVY_OT_pick_sound, BEVY_OT_play, BEVY_OT_reload_schema, BEVY_OT_remove_component, BEVY_OT_select_by_component, BEVY_OT_set_collision_layers, BEVY_OT_show_game_output, BEVY_OT_stop_game, BEVY_OT_unwrap_lightmap, last_game, running_game
 from .play import VIEWER_COMMAND, PlayError, short_line, split_warning
-from .prefab import PREFAB_OPTIONS, prefab_file, prefab_instances, prefab_owner
+from .prefab import prefab_file, prefab_instances, prefab_owner
 from .project import game_folder, play_target
 from .property import COMPONENT_LABELS, FIELD_LABELS, LAYER_COUNT
 from .schema import short_name
-from .system import ambient_light, component_index, export_settings, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
+from .system import ambient_light, component_index, export_options, exported_objects, game_schema, game_types, layer_names, lightmap_uv_map, panel_body_drawn, panel_header_drawn, sky_lights_scene, world_background, world_color
 from .validation import AMBIENT_WITH_SKY, ambient_doubles_sky, check_object, count, draw_issues, draw_message, draw_problem_count, sky_check, texture_check
 
 OVERVIEW_ICONS = 4
@@ -465,8 +466,8 @@ def draw_components(layout, context, obj):
     row = layout.row()
     row.operator("wm.call_menu", text="Add Component", icon="ADD").name = BEVY_MT_component_add.bl_idname
     row.menu(BEVY_MT_object_context_menu.bl_idname, text="", icon="DOWNARROW_HLT")
-    settings = export_settings(context.scene)
-    issues = check_object(obj, exported_objects(context, settings, selected=False), modifiers=settings.apply_modifiers)
+    settings = export_options(context.scene)
+    issues = check_object(obj, exported_objects(context, settings, limited=False), modifiers=settings.export_apply)
     width = context.region.width if context.region else 300
     for issue in issues:
         if issue.item is None:
@@ -579,8 +580,8 @@ class BEVY_PT_view_export(bpy.types.Panel):
         column = self.layout.column()
         draw_export_again(column, context.scene)
         draw_export_all(column)
-        column.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Scene (.glb)...", icon="EXPORT")
-        if BEVY_OT_export_glb.remembered(context.scene):
+        column.operator(BEVY_OT_export_gltf.bl_idname, text=f"{EXPORT_LABEL}...", icon="EXPORT")
+        if remembered(context.scene):
             column.separator()
             column.prop(context.scene.bevy_glb_export, "export_on_save", text="Export on Save")
 
@@ -595,7 +596,7 @@ def _draw_play_target(layout, context, width):
         layout.operator("preferences.addon_show", text="Open Preferences", icon="PREFERENCES").module = __package__
         return
     layout.label(text="Opens the scene in the importer's viewer" if command == VIEWER_COMMAND else f"Runs {command} in {target.name}", icon="CONSOLE")
-    if not BEVY_OT_export_glb.remembered(context.scene):
+    if not remembered(context.scene):
         draw_message(layout, "Export the scene once, then Play exports it again each time", "INFO", width)
 
 
@@ -783,12 +784,10 @@ class BEVY_PT_collection_prefab(bpy.types.Panel):
             draw_message(layout, f"Scene exports write the prefab when it changed and spawn it at each instance of the collection, {count(len(prefab_instances(collection)), 'instance')} in this file", icon="INFO", width=width)
         row = layout.row()
         row.enabled = path is not None
-        button = row.operator(BEVY_OT_export_glb.bl_idname, text="Export Prefab", icon="EXPORT")
+        button = row.operator(BEVY_OT_export_gltf.bl_idname, text="Export Prefab", icon="EXPORT")
         button.collection = collection.name_full
         button.filepath = str(path or "")
-        options = context.scene.bevy_glb_export
-        for name in PREFAB_OPTIONS:
-            setattr(button, name, getattr(options, name))
+        button.again = True
 
 
 class BEVY_PT_world_sky(bpy.types.Panel):

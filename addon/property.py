@@ -273,18 +273,11 @@ class BEVY_PG_bake_settings(bpy.types.PropertyGroup):
     samples: IntProperty(name="Samples", description="Cycles samples per pixel. More samples give smoother light and take longer", default=128, min=1, soft_max=4096)
     folder: StringProperty(name="Folder", description="Folder for the baked .ktx2 files, where // is the folder of the .blend file", subtype="DIR_PATH", default="//baked_lighting/", options=PATH_OPTIONS)
     lamp_direct: BoolProperty(name="Direct Lamp Light", description="Also bake the light that lamps shine straight onto irradiance volumes. Leave it off when the scene exports its lamps, since Bevy already lights meshes with them", default=False)
-    export_again: EnumProperty(name="Export Again", description="Export the scene again when the bake finishes, to the file and with the settings of its last export", items=(("NONE", "Off", "Only bake"), ("GLB", "Bevy Scene (.glb)", "Export the scene again to the .glb file that the last GLB export wrote")), default="NONE")
+    export_again: EnumProperty(name="Export Again", description="Export the scene again when the bake finishes, to the file and with the settings of its last export", items=(("NONE", "Off", "Only bake"), ("GLB", "Bevy glTF (.glb)", "Export the scene again to the .glb file that its last Bevy glTF export wrote")), default="NONE")
 
 
 class ExportOptions:
     export_on_save: BoolProperty(name="Export on Save", description="Export the scene again with these settings every time the .blend file is saved, so a game built with Bevy's file_watcher feature reloads it", default=False)
-    selected_only: BoolProperty(name="Selected Objects Only", default=False)
-    visible_only: BoolProperty(name="Visible Objects Only", description="Leave out objects hidden in the viewport", default=False)
-    renderable_only: BoolProperty(name="Renderable Objects Only", description="Leave out objects turned off for renders", default=False)
-    apply_modifiers: BoolProperty(name="Apply Modifiers", description="Export meshes with their modifiers applied, as the viewport shows them. glTF then leaves out the shape keys of meshes with modifiers", default=True)
-    include_lights: BoolProperty(name="Include Lights", default=True)
-    include_cameras: BoolProperty(name="Include Cameras", default=False)
-    include_animations: BoolProperty(name="Include Animations", default=False)
     texture_compression: EnumProperty(name="Texture Compression", description="Convert textures to KTX2 with KTX-Software and embed them in the GLB", items=TEXTURE_COMPRESSION, default="DISABLED")
     etc1s_quality: IntProperty(name="ETC1S Quality", description="Higher keeps more detail in ETC1S textures and makes them larger", default=128, min=1, max=255)
     etc1s_effort: IntProperty(name="ETC1S Effort", description="Higher encodes ETC1S textures more slowly with slightly better quality", default=2, min=0, max=6)
@@ -297,6 +290,7 @@ EXPORT_OPTIONS = tuple(ExportOptions.__annotations__)
 
 class BEVY_PG_glb_export(bpy.types.PropertyGroup, ExportOptions):
     filepath: StringProperty(name="GLB File", description="GLB file that the last export wrote, which Export Again writes again", subtype="FILE_PATH", options=PATH_OPTIONS)
+    gltf: StringProperty(name="glTF Settings", description="glTF settings of the last export as JSON, which Export Again uses", options={"HIDDEN"})
 
 
 class BEVY_PG_overview(bpy.types.PropertyGroup):

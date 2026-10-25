@@ -15,7 +15,7 @@ from .metadata import EXTRAS_KEY, SCHEMA_VERSION, addon_version, relative_path, 
 
 FINGERPRINT_VERSION = 1
 SCENE_NAME = "Bevy Prefab Export"
-PREFAB_OPTIONS = ("include_lights", "include_cameras", "include_animations", "apply_modifiers", "texture_compression", "etc1s_quality", "etc1s_effort", "uastc_quality", "uastc_zstd")
+SCENE_ONLY = {"use_selection", "use_visible", "use_renderable", "use_active_collection", "use_active_collection_with_nested", "use_active_scene", "at_collection_center", "export_on_save", "export_loglevel"}
 NUMBERS = {"BOOLEAN", "INT", "FLOAT"}
 SKIPPED = {"rna_type", "name_full", "original", "users", "session_uid", "tag", "is_evaluated", "is_runtime_data", "is_missing", "is_embedded_data", "is_library_indirect", "library", "library_weak_reference", "override_library", "preview", "use_fake_user", "use_extra_user", "is_dirty", "bindcode", "pixels", "select", "location", "width", "height", "dimensions", "node", "links", "internal_links", "parent", "asset_data", "users_collection", "users_scene", "bl_rna"}
 MESH_ARRAYS = (
@@ -26,7 +26,7 @@ MESH_ARRAYS = (
     ("corner_normals", "vector", "f", 3),
 )
 
-Export = namedtuple("Export", ("prefabs", "dropped", "directory", "scene", "collection"))
+Export = namedtuple("Export", ("prefabs", "dropped", "directory", "scene", "collection", "center"))
 
 _active = None
 _records = {}
@@ -107,7 +107,7 @@ def _visit(collection, chain, order, done, cycles):
 
 
 def prefab_settings(options):
-    return {name: getattr(options, name) for name in PREFAB_OPTIONS}
+    return {name: value for name, value in vars(options).items() if name not in SCENE_ONLY}
 
 
 def prefab_fingerprint(collection, settings, scene):
@@ -307,7 +307,7 @@ def _action(action):
 def scene_export(directory):
     global _active
     prefabs = enabled_prefabs()
-    _active = Export(prefabs, prefab_members(prefabs), directory, None, None)
+    _active = Export(prefabs, prefab_members(prefabs), directory, None, None, False)
     try:
         yield
     finally:
@@ -315,7 +315,7 @@ def scene_export(directory):
 
 
 @contextmanager
-def collection_export(collection, source, directory):
+def collection_export(collection, source, directory, center=False):
     global _active
     window = bpy.context.window
     if window is None:
@@ -327,7 +327,7 @@ def collection_export(collection, source, directory):
     scene.frame_current = source.frame_current
     scene.render.fps = source.render.fps
     scene.render.fps_base = source.render.fps_base
-    _active = Export(enabled_prefabs(), set(), directory, scene, collection)
+    _active = Export(enabled_prefabs(), set(), directory, scene, collection, center)
     window.scene = scene
     try:
         with bpy.context.temp_override(window=window, scene=scene, view_layer=scene.view_layers[0]):
@@ -388,14 +388,18 @@ def _drop(vtree, uuid):
         _drop(vtree, child)
 
 
-def instance_node(gltf2_node, obj):
+def _exported_axes(vector, yup):
+    return (vector.x, vector.z, -vector.y) if yup else tuple(vector)
+
+
+def instance_node(gltf2_node, obj, yup=True):
     if _active is None or not isinstance(obj, bpy.types.Object) or obj.instance_type != "COLLECTION" or obj.instance_collection not in _active.prefabs:
         return None
     collection = obj.instance_collection
-    offset = collection.instance_offset
+    offset = _exported_axes(collection.instance_offset, yup)
     rotation = Quaternion((gltf2_node.rotation[3], *gltf2_node.rotation[:3])) if gltf2_node.rotation else Quaternion()
     scale = gltf2_node.scale or (1.0, 1.0, 1.0)
-    translation = Vector(gltf2_node.translation or (0.0, 0.0, 0.0)) + rotation @ Vector((offset.x * scale[0], offset.z * scale[1], -offset.y * scale[2]))
+    translation = Vector(gltf2_node.translation or (0.0, 0.0, 0.0)) + rotation @ Vector([part * size for part, size in zip(offset, scale)])
     gltf2_node.translation = list(translation) if any(translation) else None
     path = prefab_file(collection)
     try:
@@ -405,13 +409,16 @@ def instance_node(gltf2_node, obj):
     return {"type": "scene_reference", "path": located, "scene": 0, "prefab": collection.name_full}
 
 
-def prefab_scene(gltf2_scene, blender_scene):
+def prefab_scene(gltf2_scene, blender_scene, yup=True):
     if _active is None or _active.scene is None or blender_scene != _active.scene:
         return
     collection = _active.collection
     gltf2_scene.name = collection.name
-    offset = collection.instance_offset
-    shift = (offset.x, offset.z, -offset.y)
+    if _active.center:
+        points = [node.translation or (0.0, 0.0, 0.0) for node in gltf2_scene.nodes]
+        shift = tuple(sum(axis) / len(points) for axis in zip(*points)) if points else ()
+    else:
+        shift = _exported_axes(collection.instance_offset, yup)
     if any(shift):
         for node in gltf2_scene.nodes:
             node.translation = [part - moved for part, moved in zip(node.translation or (0.0, 0.0, 0.0), shift)]

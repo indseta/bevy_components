@@ -491,11 +491,21 @@ def _remembered_exports(glb=""):
         settings.filepath = before
 
 
+@contextmanager
+def _remembered_gltf(scene=None, **values):
+    settings = (scene or bpy.context.scene).bevy_glb_export
+    before = settings.gltf
+    settings.gltf = json.dumps(values)
+    try:
+        yield
+    finally:
+        settings.gltf = before
+
+
 def _open_dialog(operator_class, **values):
-    operator = SimpleNamespace(again=False, collection="", filepath="", filename_ext=operator_class.filename_ext, remembered=operator_class.remembered, properties=SimpleNamespace(is_property_set=lambda name: name in values))
-    for name, value in {**{name: None for name in addon.property.EXPORT_OPTIONS}, **values}.items():
+    operator = SimpleNamespace(again=False, collection="", filepath="", filename_ext=operator_class.filename_ext, properties=SimpleNamespace(is_property_set=lambda name: name in values))
+    for name, value in {**{name: None for name in (*addon.system.gltf_defaults(), *addon.property.EXPORT_OPTIONS)}, **values}.items():
         setattr(operator, name, value)
-    operator._recall = MethodType(operator_class._recall, operator)
     with mock.patch.object(addon.operator.ExportHelper, "invoke", return_value={"RUNNING_MODAL"}) as invoke:
         operator_class.invoke(operator, bpy.context, None)
     invoke.assert_called_once()
@@ -508,8 +518,16 @@ def _resolved(path):
 
 def _dialog(test, operator_class, **values):
     properties = getattr(bpy.ops.export_scene, operator_class.bl_idname.partition(".")[2]).get_rna_type()
-    defaults = {name: properties.properties[name].default for name in addon.property.EXPORT_OPTIONS}
-    return SimpleNamespace(layout=FakeLayout(test), bl_rna=properties, **{"filepath": "", "collection": "", **defaults, **values})
+    defaults = {prop.identifier: prop.default for prop in properties.properties if prop.identifier != "rna_type"}
+    return SimpleNamespace(layout=FakeLayout(test), bl_rna=properties, **{**defaults, "filepath": "", "collection": "", **values})
+
+
+class _DialogContext:
+    def __init__(self, space="FILE_BROWSER"):
+        self.space_data = SimpleNamespace(type=space)
+
+    def __getattr__(self, name):
+        return getattr(bpy.context, name)
 
 
 def _again_buttons(layout):
@@ -522,6 +540,8 @@ def _execute(operator_class, context, **values):
     for name in dir(operator_class):
         if name.startswith("_") and not name.startswith("__") and callable(getattr(operator_class, name)):
             setattr(operator, name, MethodType(getattr(operator_class, name), operator))
+        elif name.startswith("_") and not name.startswith("__") and not hasattr(operator, name):
+            setattr(operator, name, getattr(operator_class, name))
     return operator_class.execute(operator, context), reports
 
 
@@ -554,14 +574,15 @@ class TestRegistration(unittest.TestCase):
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_collision_layers"))
         self.assertTrue(hasattr(bpy.types.Scene, "bevy_component_overview"))
         self.assertTrue(hasattr(bpy.types.Collection, "bevy_prefab"))
-        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "export_scene.bevy_components_glb", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "export_scene.bevy_gltf"):
+        for idname in ("bevy_components.fit_collider", "bevy_components.add", "bevy_components.remove", "bevy_components.duplicate", "bevy_components.copy_component_to_selected", "bevy_components.reset", "bevy_components.move", "bevy_components.lod_preset", "bevy_components.set_collision_layers", "bevy_components.pick_sound", "bevy_components.pick_file", "bevy_components.define_fields", "bevy_components.definition_add", "bevy_components.definition_remove", "bevy_components.field_add", "bevy_components.field_remove", "bevy_components.field_move", "bevy_components.copy_to_selected", "bevy_components.validate", "bevy_components.cancel_export", "bevy_components.unwrap_lightmap", "bevy_components.bake_lighting", "bevy_components.play", "bevy_components.stop_game", "bevy_components.show_game_output", "bevy_components.cancel_bake", "bevy_components.export_all_scenes", "bevy_components.copy_component", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.save_preset", "bevy_components.apply_preset", "bevy_components.remove_preset", "bevy_components.edit_as_text", "bevy_components.apply_text", "bevy_components.select_by_component", "export_scene.bevy_gltf"):
             self.assertTrue(_operator_exists(idname), idname)
         for idname in ("BEVY_MT_component_add", "BEVY_MT_component_add_physics", "BEVY_MT_component_add_rendering", "BEVY_MT_component_add_lighting", "BEVY_MT_component_add_presets", "BEVY_MT_component_remove_presets", "BEVY_MT_component_context_menu", "BEVY_MT_object_context_menu", "BEVY_MT_object_menu", "BEVY_MT_select_by_component", "BEVY_PT_object_properties", "BEVY_PT_view_sidebar", "BEVY_PT_view_overview", "BEVY_PT_view_export", "BEVY_PT_view_play", "BEVY_PT_scene_definitions", "BEVY_PT_scene_collision_layers", "BEVY_PT_collection_prefab", "BEVY_PT_world_sky", "BEVY_PT_world_ambient_light", "BEVY_PT_overlay", "BEVY_UL_definitions", "BEVY_UL_fields", "BEVY_UL_objects"):
             self.assertTrue(hasattr(bpy.types, idname), idname)
         for idname in ("BEVY_GGT_collider_handles", "BEVY_GGT_range_handles", "BEVY_GGT_light_handles", "BEVY_GGT_audio_handles"):
             self.assertIsNotNone(bpy.types.GizmoGroup.bl_rna_get_subclass_py(idname), idname)
-        for idname in ("BEVY_FH_glb", "BEVY_FH_gltf"):
-            self.assertIsNotNone(bpy.types.FileHandler.bl_rna_get_subclass_py(idname), idname)
+        self.assertIsNotNone(bpy.types.FileHandler.bl_rna_get_subclass_py("BEVY_FH_gltf"))
+        self.assertIsNone(bpy.types.FileHandler.bl_rna_get_subclass_py("BEVY_FH_glb"))
+        self.assertFalse(_operator_exists("export_scene.bevy_components_glb"))
         self.assertEqual(bpy.types.BEVY_PT_overlay.bl_parent_id, "VIEW3D_PT_overlay")
         self.assertEqual((bpy.types.BEVY_PT_object_properties.bl_label, bpy.types.BEVY_PT_object_properties.bl_context), ("Components", "object"))
         self.assertIn(addon.menu.export_menu, bpy.types.TOPBAR_MT_file_export._dyn_ui_initialize())
@@ -1245,11 +1266,11 @@ class TestPanels(unittest.TestCase):
         menu = FakePanel(self)
         with _remembered_exports():
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
-        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.bake_lighting", "export_scene.bevy_components_glb"])
+        self.assertEqual(menu.layout.operators(), ["bevy_components.copy_to_selected", "bevy_components.copy_components", "bevy_components.paste_components", "bevy_components.validate", "bevy_components.bake_lighting", "export_scene.bevy_gltf"])
         menu = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.BEVY_MT_object_context_menu.draw(menu, _menu_context(self.obj))
-        self.assertEqual(_again_buttons(menu.layout)[-2:], [("Export Bevy Scene (.glb)...", False), ("Export Again (level.glb)", True)])
+        self.assertEqual(_again_buttons(menu.layout)[-2:], [("Export Bevy glTF (.glb)...", False), ("Export Again (level.glb)", True)])
 
     def test_sidebar_without_active_object(self):
         select()
@@ -1701,24 +1722,24 @@ class TestPanels(unittest.TestCase):
         panel = FakePanel(self)
         with _remembered_exports():
             addon.menu.export_menu(panel, bpy.context)
-        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_gltf", "export_scene.bevy_components_glb"])
+        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_gltf"])
         panel = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.menu.export_menu(panel, bpy.context)
-        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_gltf", "export_scene.bevy_components_glb", "export_scene.bevy_components_glb"])
-        self.assertEqual(_again_buttons(panel.layout), [("Bevy glTF (.glb/.gltf)", False), ("Bevy Scene (.glb)", False), ("Export Again (level.glb)", True)])
+        self.assertEqual(panel.layout.operators(), ["export_scene.bevy_gltf", "export_scene.bevy_gltf"])
+        self.assertEqual(_again_buttons(panel.layout), [("Bevy glTF (.glb)", False), ("Export Again (level.glb)", True)])
 
     def test_sidebar_export_panel(self):
         panel = FakePanel(self)
         with _remembered_exports():
             addon.panel.BEVY_PT_view_export.draw(panel, bpy.context)
-        self.assertEqual(_again_buttons(panel.layout), [("Bevy Scene (.glb)...", False)])
+        self.assertEqual(_again_buttons(panel.layout), [("Bevy glTF (.glb)...", False)])
         self.assertEqual([name for name, bound, layout in panel.layout.calls if name == "prop"], [])
         panel = FakePanel(self)
         with _remembered_exports(glb="//level.glb"):
             addon.panel.BEVY_PT_view_export.draw(panel, bpy.context)
-        self.assertEqual(_again_buttons(panel.layout), [("Export Again (level.glb)", True), ("Bevy Scene (.glb)...", False)])
-        self.assertEqual(panel.layout.operators()[0], "export_scene.bevy_components_glb")
+        self.assertEqual(_again_buttons(panel.layout), [("Export Again (level.glb)", True), ("Bevy glTF (.glb)...", False)])
+        self.assertEqual(panel.layout.operators()[0], "export_scene.bevy_gltf")
         self.assertEqual([(bound["data"], bound["text"]) for name, bound, layout in panel.layout.calls if name == "prop"], [(bpy.context.scene.bevy_glb_export, "Export on Save")])
 
     def test_export_all_scenes_needs_more_than_one_scene(self):
@@ -1741,31 +1762,32 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(_again_buttons(panel.layout)[0], ("Export All Scenes (.glb)", False))
 
     def test_export_again_describes_where_it_exports(self):
-        glb = addon.operator.BEVY_OT_export_glb
+        glb = addon.operator.BEVY_OT_export_gltf
         self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False, collection="")), glb.bl_description)
         with _remembered_exports(glb="//level.glb"):
             self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene again to //level.glb with the settings the last export used, without the file dialog")
         with _remembered_exports():
-            self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene once with File > Export > Bevy Scene (.glb), then export it again here with one click")
-        self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False, collection="lamp_post", filepath="/game/assets/props/lamp_post.glb")), "Export lamp_post to lamp_post.glb, with the prefabs inside it, using the scene's export settings")
-        again = bpy.ops.export_scene.bevy_components_glb.get_rna_type().properties["again"]
+            self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True, collection="")), "Export the scene once with File > Export > Bevy glTF (.glb), then export it again here with one click")
+        self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=True, collection="lamp_post", filepath="/game/assets/props/lamp_post.glb")), "Export lamp_post to lamp_post.glb, with the prefabs inside it, using the scene export settings")
+        self.assertEqual(glb.description(bpy.context, SimpleNamespace(again=False, collection="lamp_post", filepath="/game/assets/props/lamp_post.glb")), "Export lamp_post to lamp_post.glb, with the prefabs inside it, using these export settings")
+        again = bpy.ops.export_scene.bevy_gltf.get_rna_type().properties["again"]
         self.assertTrue(again.is_hidden and again.is_skip_save)
 
     def test_status_bar_shows_running_exports(self):
         header = FakePanel(self)
         addon.menu.export_status(header, bpy.context)
         self.assertEqual(header.layout.calls, [])
-        self.assertTrue(bpy.ops.export_scene.bevy_components_glb.poll())
+        self.assertTrue(bpy.ops.export_scene.bevy_gltf.poll())
         self.assertFalse(bpy.ops.bevy_components.cancel_export.poll())
         task = mock.Mock(done=3, total=8)
         with mock.patch.dict(addon.export._exports, {task: None}):
             addon.menu.export_status(header, bpy.context)
-            self.assertFalse(bpy.ops.export_scene.bevy_components_glb.poll())
+            self.assertFalse(bpy.ops.export_scene.bevy_gltf.poll())
             bpy.ops.bevy_components.cancel_export()
         task.cancel.assert_called_once_with()
         self.assertEqual([bound for name, bound, layout in header.layout.calls if name == "progress"], [{"factor": 0.375, "type": "BAR", "text": "Compressing textures 3/8"}])
         self.assertEqual(header.layout.operators(), ["bevy_components.cancel_export"])
-        self.assertTrue(bpy.ops.export_scene.bevy_components_glb.poll())
+        self.assertTrue(bpy.ops.export_scene.bevy_gltf.poll())
 
     def test_status_bar_shows_running_bakes(self):
         header = FakePanel(self)
@@ -1804,12 +1826,11 @@ class TestPanels(unittest.TestCase):
         self.assertEqual(addon.export._exports, {})
 
     def test_cancelled_dialogs_have_nothing_to_stop(self):
-        self.assertIsNone(addon.operator.BEVY_OT_export_glb.cancel(SimpleNamespace(_job=None), bpy.context))
+        self.assertIsNone(addon.operator.BEVY_OT_export_gltf.cancel(SimpleNamespace(_job=None), bpy.context))
         self.assertIsNone(addon.operator.BEVY_OT_bake_lighting.cancel(SimpleNamespace(_task=None), bpy.context))
 
     def test_export_dialog_texture_compression(self):
-        properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
-        include = ["export_on_save", "selected_only", "visible_only", "renderable_only", "include_lights", "include_cameras", "include_animations", "apply_modifiers", "texture_compression"]
+        include = ["export_on_save", "texture_compression"]
         expected = {
             "DISABLED": include,
             "ETC1S": include + ["etc1s_quality", "etc1s_effort"],
@@ -1817,11 +1838,27 @@ class TestPanels(unittest.TestCase):
             "AUTOMATIC": include + ["etc1s_quality", "etc1s_effort", "uastc_quality", "uastc_zstd"],
         }
         for mode, props in expected.items():
-            operator = _dialog(self, addon.operator.BEVY_OT_export_glb, texture_compression=mode)
-            addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+            operator = _dialog(self, addon.operator.BEVY_OT_export_gltf, texture_compression=mode)
+            addon.operator._draw_bevy(operator, operator.layout, bpy.context)
             self.assertEqual(operator.layout.props(), props, mode)
             self.assertIn("Texture Compression", operator.layout.texts())
             self.assertEqual(any(text.startswith("KTX-Software") for text in operator.layout.texts()), mode != "DISABLED", mode)
+
+    def test_export_dialog_is_the_gltf_dialog_with_bevy_settings(self):
+        operator = _dialog(self, addon.operator.BEVY_OT_export_gltf)
+        addon.operator.BEVY_OT_export_gltf.draw(operator, _DialogContext())
+        props = operator.layout.props()
+        self.assertEqual(props[:3], ["export_format", "export_copyright", "will_save_settings"])
+        self.assertLess(props.index("use_selection"), props.index("export_apply"))
+        self.assertEqual(props[-2:], ["export_on_save", "texture_compression"])
+        texts = operator.layout.texts()
+        self.assertLess(texts.index("Include"), texts.index("Bevy"))
+        self.assertLess(texts.index("Bevy"), texts.index("Texture Compression"))
+        self.assertLess(texts.index("Texture Compression"), texts.index("Checks"))
+        properties = bpy.ops.export_scene.bevy_gltf.get_rna_type().properties
+        self.assertEqual([item.identifier for item in properties["export_format"].enum_items], ["GLB"])
+        self.assertEqual({name: properties[name].default for name in ("export_apply", "export_lights", "export_extras", "export_anim_slide_to_zero", "use_active_scene", "will_save_settings")}, dict.fromkeys(("export_apply", "export_lights", "export_extras", "export_anim_slide_to_zero", "use_active_scene", "will_save_settings"), True))
+        self.assertTrue(properties["will_save_settings"].is_skip_save)
 
     def test_preferences_show_encoder_status(self):
         preferences = bpy.context.preferences.addons[addon.__name__].preferences
@@ -2747,16 +2784,12 @@ class TestViewport(unittest.TestCase):
     def test_mesh_previews_follow_apply_modifiers(self):
         collider = add_component(self.obj, "COLLIDER", collider_shape="TRIMESH")
         self.obj.modifiers.new("Array", "ARRAY").count = 3
-        settings = addon.system.export_settings(bpy.context.scene)
         self.assertEqual(len(_collider_lines(self.obj, collider, 2000)), 36)
         self.assertEqual(_extents(_collider_lines(self.obj, collider, 2000)), (5.0, 1.0, 1.0))
         self.assertTrue(addon.overlay.exceeds_edge_limit(self.obj, 20))
-        settings.apply_modifiers = False
-        try:
+        with _remembered_gltf(export_apply=False):
             self.assertEqual(len(_collider_lines(self.obj, collider, 2000)), 12)
             self.assertFalse(addon.overlay.exceeds_edge_limit(self.obj, 20))
-        finally:
-            settings.apply_modifiers = True
 
     def test_labels(self):
         add_component(self.obj, "COLLIDER", collider_shape="CAPSULE", collider_radius=0.25, collider_height=2)
@@ -3694,7 +3727,7 @@ class TestValidation(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, mock.patch.object(addon.validation, "scene_path", side_effect=ValueError("path is on mount 'D:', start on mount 'C:'")):
             path = Path(directory) / "scene.glb"
             with self.assertRaisesRegex(RuntimeError, "Cannot export: holder: windmill.glb is on another drive than the exported scene, so the game cannot load it"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+                bpy.ops.export_scene.bevy_gltf(filepath=str(path))
             self.assertFalse(path.exists())
 
     def test_animation_clips(self):
@@ -3716,7 +3749,7 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(self._messages(), ["blade: open animates nothing on or under mill, so nothing plays"])
         blade.bevy_component_data.components[0].animation_clip = "spin"
         issues = addon.validation.check_objects(bpy.data.objects, animations=False)
-        self.assertEqual([addon.validation.describe(issue) for issue in issues], ["blade: Include Animations is off in the export, so nothing plays", "mill: Include Animations is off in the export, so nothing plays"])
+        self.assertEqual([addon.validation.describe(issue) for issue in issues], ["blade: Animation is off in the export, so nothing plays", "mill: Animation is off in the export, so nothing plays"])
 
     def test_lightmaps(self):
         floor = add_mesh(bpy.ops.mesh.primitive_plane_add, "floor")
@@ -3846,12 +3879,12 @@ class TestValidation(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "1 problem blocks export: Bevy Sky: ground_lightmap.ktx2 is not a cubemap"):
                 bpy.ops.bevy_components.validate()
             with self.assertRaisesRegex(RuntimeError, "Cannot export: Bevy Sky: ground_lightmap.ktx2 is not a cubemap"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+                bpy.ops.export_scene.bevy_gltf(filepath=str(path))
             self.assertFalse(path.exists())
             world.bevy_sky.sky_file = str(Path(directory) / "missing.ktx2")
             self.assertEqual(check(), [("ERROR", "Bevy Sky: Cubemap file missing.ktx2 was not found")])
-            operator = _dialog(self, addon.operator.BEVY_OT_export_glb)
-            addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+            operator = _dialog(self, addon.operator.BEVY_OT_export_gltf)
+            addon.operator._draw_bevy(operator, operator.layout, bpy.context)
             self.assertIn("Bevy Sky: Cubemap file missing.ktx2 was not found", " ".join(operator.layout.texts()))
 
     def test_fog_needs_density(self):
@@ -3909,14 +3942,14 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(bpy.ops.bevy_components.validate(), {"FINISHED"})
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "scene.glb"
-            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(path)), {"FINISHED"})
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path)), {"FINISHED"})
             self.assertEqual(json.loads(read_gltf(path)["nodes"][0]["extras"]["bevy_components"])["components"][0]["shape"], "convex")
             item = add_component(holder, "CUSTOM", custom_json="{broken")
             with self.assertRaisesRegex(RuntimeError, "1 problem blocks export: holder: invalid JSON in Custom Component"):
                 bpy.ops.bevy_components.validate()
             path.unlink()
             with self.assertRaisesRegex(RuntimeError, "Cannot export: holder: invalid JSON in Custom Component"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+                bpy.ops.export_scene.bevy_gltf(filepath=str(path))
             self.assertFalse(path.exists())
             item.enabled = False
 
@@ -3943,14 +3976,14 @@ class TestValidation(unittest.TestCase):
         self.assertEqual(icons, [("Rigid Body", addon.property.COMPONENT_LABELS["RIGID_BODY"][1]), ("Collider", "ERROR"), ("MyComponent", "CANCEL")])
 
     def test_export_dialog_lists_problems(self):
-        properties = bpy.ops.export_scene.bevy_components_glb.get_rna_type()
-        operator = _dialog(self, addon.operator.BEVY_OT_export_glb)
-        addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+        properties = bpy.ops.export_scene.bevy_gltf.get_rna_type()
+        operator = _dialog(self, addon.operator.BEVY_OT_export_gltf)
+        addon.operator._draw_bevy(operator, operator.layout, bpy.context)
         self.assertIn("No problems found", operator.layout.texts())
         for index in range(8):
             add_component(add_empty(f"holder_{index}", (index, 0, 0)), "VISIBILITY_RANGE")
-        operator = _dialog(self, addon.operator.BEVY_OT_export_glb)
-        addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
+        operator = _dialog(self, addon.operator.BEVY_OT_export_gltf)
+        addon.operator._draw_bevy(operator, operator.layout, bpy.context)
         texts = operator.layout.texts()
         self.assertIn("8 warnings", texts)
         self.assertIn("2 more in Validate All Objects", texts)
@@ -4011,22 +4044,43 @@ class TestExport(unittest.TestCase):
 
     def test_export_again_uses_the_remembered_settings(self):
         path = Path(self.directory.name) / "again" / "again.glb"
-        gltf = export_sample_scene(path, include_lights=False)
+        gltf = export_sample_scene(path, export_lights=False, export_yup=True)
         settings = bpy.context.scene.bevy_glb_export
-        self.assertEqual((_resolved(settings.filepath), settings.include_lights, settings.include_animations, settings.texture_compression), (path, False, True, "DISABLED"))
+        options = addon.system.export_options(bpy.context.scene)
+        self.assertEqual((_resolved(settings.filepath), options.export_lights, options.export_animations, options.texture_compression), (path, False, True, "DISABLED"))
+        self.assertEqual(set(json.loads(settings.gltf)), set(addon.gltf.GLTF_OPTIONS) & set(bpy.ops.export_scene.gltf.get_rna_type().properties.keys()))
         self.assertNotIn("KHR_lights_punctual", gltf.get("extensionsUsed", []))
-        dialog = _open_dialog(addon.operator.BEVY_OT_export_glb)
-        self.assertEqual((Path(dialog.filepath), dialog.include_lights, dialog.include_animations), (path, False, True))
-        dialog = _open_dialog(addon.operator.BEVY_OT_export_glb, filepath=str(path.with_name("picked.glb")), include_lights=True)
-        self.assertEqual((Path(dialog.filepath), dialog.include_lights), (path.with_name("picked.glb"), True))
+        dialog = _open_dialog(addon.operator.BEVY_OT_export_gltf)
+        self.assertEqual((Path(dialog.filepath), dialog.export_lights, dialog.export_animations, dialog.export_apply), (path, False, True, True))
+        dialog = _open_dialog(addon.operator.BEVY_OT_export_gltf, filepath=str(path.with_name("picked.glb")), export_lights=True)
+        self.assertEqual((Path(dialog.filepath), dialog.export_lights), (path.with_name("picked.glb"), True))
         path.unlink()
-        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(again=True), {"FINISHED"})
+        self.assertEqual(bpy.ops.export_scene.bevy_gltf(again=True), {"FINISHED"})
         self.assertEqual(read_gltf(path), gltf)
+        once = path.with_name("once")
+        self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(once), export_lights=True, will_save_settings=False), {"FINISHED"})
+        self.assertTrue(once.with_name("once.glb").is_file())
+        self.assertEqual((_resolved(settings.filepath), addon.system.export_options(bpy.context.scene).export_lights), (path, False))
+
+    def test_export_again_carries_over_settings_of_older_exports(self):
+        bpy.context.scene.property_unset("bevy_glb_export")
+        settings = bpy.context.scene.bevy_glb_export
+        try:
+            settings.filepath = "//level.glb"
+            settings["include_lights"] = False
+            settings["selected_only"] = True
+            options = addon.system.export_options(bpy.context.scene)
+            self.assertEqual((options.export_lights, options.use_selection, options.export_animations, options.export_extras, options.export_apply, options.use_active_scene), (False, True, False, True, True, True))
+            settings.gltf = json.dumps({"export_lights": True})
+            options = addon.system.export_options(bpy.context.scene)
+            self.assertEqual((options.export_lights, options.use_selection, options.export_animations), (True, False, True))
+        finally:
+            bpy.context.scene.property_unset("bevy_glb_export")
 
     def test_export_again_needs_an_earlier_export(self):
         with _remembered_exports():
             with self.assertRaisesRegex(RuntimeError, "Nothing to export again yet"):
-                bpy.ops.export_scene.bevy_components_glb(again=True)
+                bpy.ops.export_scene.bevy_gltf(again=True)
 
     def test_light_data_is_read_at_export(self):
         window = bpy.data.objects["window_light"]
@@ -4073,7 +4127,7 @@ class TestExport(unittest.TestCase):
 
     def test_scene_reference_paths_follow_the_exported_scene(self):
         path = Path(self.directory.name) / "scenes" / "scene.glb"
-        gltf = export_sample_scene(path, include_animations=False)
+        gltf = export_sample_scene(path, export_animations=False)
         nodes = {node["name"]: node for node in gltf["nodes"]}
         self.assertEqual(json.loads(nodes["windmill_a"]["extras"]["bevy_components"])["components"], [{**WINDMILL, "path": "../props/windmill.glb"}])
         self.assertEqual(json.loads(nodes["lamp_post_b"]["extras"]["bevy_components"])["components"], [{**LAMP_POST, "path": "../props/lamp_post.glb"}])
@@ -4104,19 +4158,19 @@ class TestExport(unittest.TestCase):
         probe.probe_file = str(Path(self.directory.name) / "missing.ktx2")
         try:
             with self.assertRaisesRegex(RuntimeError, "Cubemap file missing.ktx2 was not found"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+                bpy.ops.export_scene.bevy_gltf(filepath=str(path))
         finally:
             probe.probe_file = str(CUBEMAP)
         self.assertFalse(path.exists())
         with mock.patch.object(addon.export, "_read_file", side_effect=FileNotFoundError(2, "No such file or directory", str(CUBEMAP))):
             with self.assertRaisesRegex(RuntimeError, "Could not embed probe_cubemap.ktx2 in the scene: No such file or directory"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+                bpy.ops.export_scene.bevy_gltf(filepath=str(path))
         self.assertFalse(path.exists())
 
     def test_selected_only(self):
         path = Path(self.directory.name) / "selected.glb"
         select(bpy.data.objects["ball"], bpy.data.objects["player_spawn"])
-        bpy.ops.export_scene.bevy_components_glb(filepath=str(path), selected_only=True)
+        bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True)
         self.assertEqual(sorted(node["name"] for node in read_gltf(path)["nodes"]), ["ball", "player_spawn"])
 
     def test_invalid_components_block_export(self):
@@ -4124,7 +4178,7 @@ class TestExport(unittest.TestCase):
         item = add_component(bpy.data.objects["lamp"], "CUSTOM", custom_json="{broken")
         try:
             with self.assertRaises(RuntimeError):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(path))
+                bpy.ops.export_scene.bevy_gltf(filepath=str(path))
             self.assertFalse(path.exists())
         finally:
             select(bpy.data.objects["lamp"])
@@ -4161,24 +4215,27 @@ class TestBevyGltf(unittest.TestCase):
         crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate", size=2)
         add_component(crate, "COLLIDER", collider_shape="SPHERE", collider_radius=1.5)
         add_component(crate, "CUSTOM", custom_type="game::Loot", custom_json='{"gold": 3}')
-        broken = add_component(crate, "CUSTOM", custom_type="game::Broken", custom_json="{")
-        crate["note"] = "left out"
+        crate["note"] = "kept"
         rock = add_mesh(bpy.ops.mesh.primitive_ico_sphere_add, "rock", location=(4, 0, 0))
         add_component(rock, "VISIBILITY_RANGE")
         select(crate)
-        operator = addon.gltf.BEVY_OT_export_gltf
+        operator = addon.operator.BEVY_OT_export_gltf
         self.assertEqual(operator.bl_idname, "export_scene.bevy_gltf")
         self.assertTrue(issubclass(operator, sys.modules["io_scene_gltf2"].ExportGLTF2_Base))
-        self.assertEqual(addon.gltf.BEVY_FH_gltf.bl_export_operator, operator.bl_idname)
+        self.assertEqual((addon.operator.BEVY_FH_gltf.bl_export_operator, addon.operator.BEVY_FH_gltf.bl_file_extensions), (operator.bl_idname, ".glb"))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "crate.glb"
             reference = add_component(crate, "SCENE_REFERENCE", scene_file=str(Path(directory) / "props" / "tree.glb"))
-            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True), {"FINISHED"})
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True, export_extras=False), {"FINISHED"})
             gltf = read_gltf(path)
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(Path(directory) / "crate.gltf"), use_selection=True), {"FINISHED"})
+            properties = read_gltf(path)
+            self.assertEqual(sorted(file.name for file in Path(directory).iterdir()), ["crate.glb"])
             bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True)
             plain = read_gltf(path)
-        self.assertEqual(addon.gltf._skipped_message(["crate: invalid JSON in Custom Component"]), "Left out 1 Bevy component that cannot export: crate: invalid JSON in Custom Component. See Validate All Objects")
-        self.assertEqual(addon.gltf._skipped_message([f"crate: problem {index}" for index in range(5)]), "Left out 5 Bevy components that cannot export: crate: problem 0; crate: problem 1; crate: problem 2 and 2 more. See Validate All Objects")
+        self.assertEqual(addon.export._skipped_message(["crate: invalid JSON in Custom Component"]), "Left out 1 Bevy component that cannot export: crate: invalid JSON in Custom Component. See Validate All Objects")
+        self.assertEqual(addon.export._skipped_message([f"crate: problem {index}" for index in range(5)]), "Left out 5 Bevy components that cannot export: crate: problem 0; crate: problem 1; crate: problem 2 and 2 more. See Validate All Objects")
+        broken = add_component(crate, "CUSTOM", custom_type="game::Broken", custom_json="{")
         with addon.system.bevy_export() as export:
             addon.system.object_components(crate, None, export.skipped)
         self.assertEqual([message.split(":")[:2] for message in export.skipped], [["crate", " Custom JSON for game"]])
@@ -4188,9 +4245,11 @@ class TestBevyGltf(unittest.TestCase):
         components = _rounded(json.loads(extras["bevy_components"])["components"])
         self.assertEqual([component["type"] for component in components], ["collider", "custom", "scene_reference"])
         self.assertEqual((components[0]["radius"], components[1]["data"], components[2]["path"]), (1.5, {"gold": 3}, "props/tree.glb"))
+        self.assertEqual((sorted(properties["nodes"][0]["extras"]), properties["nodes"][0]["extras"]["note"]), (["bevy_components", "note"], "kept"))
         self.assertNotIn("extras", plain["nodes"][0])
         self.assertTrue(reference.enabled and broken.enabled)
         self.assertNotIn("bevy_components", crate)
+        bpy.context.scene.property_unset("bevy_glb_export")
 
     def test_single_prefab_exports_its_collider_and_lods(self):
         lamp = add_empty("lamp", (0, 0, 0))
@@ -4243,27 +4302,26 @@ class TestBevyGltf(unittest.TestCase):
         select(lamp, near, far, bulb)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "lamp.glb"
-            operator = SimpleNamespace(filepath=str(path), collection="", use_active_collection=False, use_active_collection_with_nested=True, use_selection=True, use_visible=False, use_renderable=False, export_lights=False, export_animations=False, export_apply=False)
-            with addon.system.bevy_export() as export:
-                bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True)
-            self.assertEqual(list(export.objects), [near, far, lamp])
-            self.assertEqual(addon.gltf.export_messages(operator, bpy.context, export), [
+
+            def export(**values):
+                return _execute(addon.operator.BEVY_OT_export_gltf, bpy.context, **{**vars(_dialog(self, addon.operator.BEVY_OT_export_gltf)), "filepath": str(path), "use_selection": True, "will_save_settings": False, **values})
+
+            self.assertEqual(export(export_lights=False, export_apply=False), ({"FINISHED"}, [
+                ({"INFO"}, f"Exported Bevy scene: {path}"),
                 ({"WARNING"}, "Left out bulb, which has a Light component, because Punctual Lights is off. Tick Include > Punctual Lights to export it"),
-                ({"WARNING"}, "Exported with 1 warning: lamp_lod1: Apply Modifiers is off, so this level of detail exports without its Decimate modifier"),
-            ])
-            operator.export_lights = operator.export_apply = True
-            self.assertEqual(addon.gltf.export_messages(operator, bpy.context, export), [])
-            operator.use_selection = operator.export_lights = False
-            self.assertEqual(addon.gltf.export_messages(operator, bpy.context, export)[0][1].split(",")[0], "Left out bulb")
-            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True, export_lights=True), {"FINISHED"})
+                ({"WARNING"}, "Exported with 1 warning, see Validate All Objects: lamp_lod1: Apply Modifiers is off, so this level of detail exports without its Decimate modifier"),
+            ]))
+            self.assertEqual(sorted(node["name"] for node in read_gltf(path)["nodes"]), ["lamp", "lamp_lod0", "lamp_lod1"])
+            self.assertEqual(export(), ({"FINISHED"}, [({"INFO"}, f"Exported Bevy scene: {path}")]))
             gltf = read_gltf(path)
             self.assertEqual(sorted(node["name"] for node in gltf["nodes"]), ["bulb", "lamp", "lamp_lod0", "lamp_lod1"])
             self.assertEqual(json.loads(gltf["scenes"][0]["extras"]["bevy_components"])["components"], [])
-            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(path), selected_only=True), {"FINISHED"})
-            self.assertEqual(json.loads(read_gltf(path)["scenes"][0]["extras"]["bevy_components"])["components"], [])
-            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(path), selected_only=False), {"FINISHED"})
+            self.assertEqual(export(use_selection=False, export_lights=False)[1][1][1].split(",")[0], "Left out bulb")
             self.assertEqual([component["type"] for component in json.loads(read_gltf(path)["scenes"][0]["extras"]["bevy_components"])["components"]], ["ambient_light"])
-            bpy.context.scene.property_unset("bevy_glb_export")
+            bpy.context.view_layer.active_layer_collection = bpy.context.view_layer.layer_collection
+            self.assertEqual(export(use_selection=False, use_active_collection=True)[0], {"FINISHED"})
+            self.assertEqual(json.loads(read_gltf(path)["scenes"][0]["extras"]["bevy_components"])["components"], [])
+            self.assertEqual(bpy.context.scene.bevy_glb_export.filepath, "")
 
 
 class TestExportOptions(unittest.TestCase):
@@ -4283,7 +4341,7 @@ class TestExportOptions(unittest.TestCase):
 
     def test_scene_exports_run_without_an_operator(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "scripted")
-        job = addon.export.SceneExport(self.scene, self.scene.bevy_glb_export, str(self.path))
+        job = addon.export.SceneExport(self.scene, addon.system.export_options(self.scene), str(self.path))
         try:
             messages = addon.export.start_export(job, bpy.context)
         finally:
@@ -4292,7 +4350,7 @@ class TestExportOptions(unittest.TestCase):
         self.assertEqual(_node_names(read_gltf(self.path)), ["scripted"])
         self.assertEqual(self.scene.bevy_glb_export.filepath, "")
         _broken_component(bpy.data.objects["scripted"])
-        job = addon.export.SceneExport(self.scene, self.scene.bevy_glb_export, str(self.path))
+        job = addon.export.SceneExport(self.scene, addon.system.export_options(self.scene), str(self.path))
         with self.assertRaisesRegex(addon.export.ExportError, "^Cannot export: scripted: invalid JSON in Custom Component"):
             addon.export.start_export(job, bpy.context)
         job.release()
@@ -4301,7 +4359,7 @@ class TestExportOptions(unittest.TestCase):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "later")
         self.scene.bevy_glb_export.texture_compression = "ETC1S"
         for cancelled in (True, False):
-            job = addon.export.SceneExport(self.scene, self.scene.bevy_glb_export, str(self.path))
+            job = addon.export.SceneExport(self.scene, addon.system.export_options(self.scene), str(self.path))
             task = mock.Mock(running=False, cancelled=cancelled, error=None, results=[])
             with mock.patch.object(addon.export, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.export, "BackgroundEncode", return_value=task):
                 self.assertIsNone(addon.export.start_export(job, bpy.context, background=True))
@@ -4323,9 +4381,9 @@ class TestExportOptions(unittest.TestCase):
         plane = add_mesh(bpy.ops.mesh.primitive_plane_add, "row")
         plane.modifiers.new("Array", "ARRAY").count = 5
         self.assertEqual(_vertex_count(export_sample_scene(self.path), "row"), 20)
-        self.assertTrue(self.scene.bevy_glb_export.apply_modifiers)
-        self.assertEqual(_vertex_count(export_sample_scene(self.path, apply_modifiers=False), "row"), 4)
-        self.assertFalse(self.scene.bevy_glb_export.apply_modifiers)
+        self.assertTrue(addon.system.export_options(self.scene).export_apply)
+        self.assertEqual(_vertex_count(export_sample_scene(self.path, export_apply=False), "row"), 4)
+        self.assertFalse(addon.system.export_options(self.scene).export_apply)
         self.assertEqual(plane.modifiers[0].count, 5)
 
     def test_meshes_with_modifiers_lose_their_shape_keys(self):
@@ -4335,7 +4393,7 @@ class TestExportOptions(unittest.TestCase):
         blob.modifiers.new("Bevel", "BEVEL")
         primitive = lambda gltf: gltf["meshes"][0]["primitives"][0]
         self.assertNotIn("targets", primitive(export_sample_scene(self.path)))
-        self.assertEqual(len(primitive(export_sample_scene(self.path, apply_modifiers=False))["targets"]), 1)
+        self.assertEqual(len(primitive(export_sample_scene(self.path, export_apply=False))["targets"]), 1)
 
     def test_only_the_active_scene_is_exported(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "here")
@@ -4346,7 +4404,7 @@ class TestExportOptions(unittest.TestCase):
         gltf = export_sample_scene(self.path)
         self.assertEqual((_node_names(gltf), len(gltf["scenes"])), (["here"], 1))
         self.assertEqual(bpy.context.scene, self.scene)
-        self.assertEqual(addon.validation.check_objects(addon.system.exported_objects(bpy.context, self.scene.bevy_glb_export, selected=False)), [])
+        self.assertEqual(addon.validation.check_objects(addon.system.exported_objects(bpy.context, addon.system.export_options(self.scene), limited=False)), [])
 
     def test_hidden_objects_can_be_left_out(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "shown")
@@ -4362,14 +4420,14 @@ class TestExportOptions(unittest.TestCase):
         collection.hide_viewport = True
         unrendered.hide_render = True
         self.assertEqual(_node_names(export_sample_scene(self.path)), ["hidden", "shown", "stored", "unrendered"])
-        self.assertEqual(_node_names(export_sample_scene(self.path, visible_only=True)), ["shown", "unrendered"])
-        self.assertEqual(_node_names(export_sample_scene(self.path, renderable_only=True)), ["hidden", "shown", "stored"])
-        self.assertEqual(_node_names(export_sample_scene(self.path, visible_only=True, renderable_only=True)), ["shown"])
+        self.assertEqual(_node_names(export_sample_scene(self.path, use_visible=True)), ["shown", "unrendered"])
+        self.assertEqual(_node_names(export_sample_scene(self.path, use_renderable=True)), ["hidden", "shown", "stored"])
+        self.assertEqual(_node_names(export_sample_scene(self.path, use_visible=True, use_renderable=True)), ["shown"])
         _broken_component(hidden)
         with self.assertRaisesRegex(RuntimeError, "Cannot export: hidden"):
-            bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path))
-        self.assertEqual(_node_names(export_sample_scene(self.path, visible_only=True)), ["shown", "unrendered"])
-        options = SimpleNamespace(selected_only=False, visible_only=True, renderable_only=False)
+            bpy.ops.export_scene.bevy_gltf(filepath=str(self.path))
+        self.assertEqual(_node_names(export_sample_scene(self.path, use_visible=True)), ["shown", "unrendered"])
+        options = SimpleNamespace(use_selection=False, use_active_collection=False, use_visible=True, use_renderable=False)
         self.assertEqual(sorted(obj.name for obj in addon.system.exported_objects(bpy.context, options)), ["shown", "unrendered"])
 
     def test_failed_exports_keep_the_previous_file(self):
@@ -4379,13 +4437,13 @@ class TestExportOptions(unittest.TestCase):
         export_sample_scene(self.path)
         self.assertEqual((self.path.read_bytes(), self.path.stat().st_mtime_ns), before)
 
-        def broken(job, path, collection, directory):
+        def broken(job, path, collection, directory, center=False):
             Path(path).write_bytes(b"half a scene")
             raise addon.export.ExportError("GLB export failed: disk full")
 
         with mock.patch.object(addon.export.SceneExport, "_export_gltf", broken):
             with self.assertRaisesRegex(RuntimeError, "GLB export failed: disk full"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path))
+                bpy.ops.export_scene.bevy_gltf(filepath=str(self.path))
         self.assertEqual(self.path.read_bytes(), before[0])
         self.assertEqual(sorted(path.name for path in self.path.parent.iterdir()), ["scene.glb"])
 
@@ -4408,18 +4466,20 @@ class TestExportOptions(unittest.TestCase):
         export_sample_scene(self.path)
         self.scene.bevy_glb_export.export_on_save = True
         calls = []
-        exports = SimpleNamespace(bevy_components_glb=lambda mode, **options: calls.append((mode, options)))
+        exports = SimpleNamespace(bevy_gltf=lambda mode, **options: calls.append((mode, options)))
         with mock.patch.object(bpy.ops, "export_scene", exports):
             addon.operator.export_on_save(bpy.data.filepath)
         self.assertEqual(calls, [("INVOKE_DEFAULT", {"again": True})])
 
-    def test_files_from_the_bsn_export_keep_its_settings_out_of_the_glb(self):
+    def test_settings_of_older_exports_stay_out_of_the_glb(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "kept")
         self.scene["bevy_bsn_export"] = {"rust_file": "//src/level.rs", "assets_folder": "", "export_on_save": 1}
+        self.scene["bevy_gltf_export_settings"] = {"use_selection": 1, "export_apply": 1}
         try:
             self.assertEqual([list(scene.get("extras", {})) for scene in export_sample_scene(self.path)["scenes"]], [["bevy_components"]])
         finally:
             del self.scene["bevy_bsn_export"]
+            del self.scene["bevy_gltf_export_settings"]
 
     def test_saving_a_copy_does_not_export(self):
         add_mesh(bpy.ops.mesh.primitive_cube_add, "copied")
@@ -4444,16 +4504,16 @@ class TestExportOptions(unittest.TestCase):
         second.collection.objects.link(bpy.data.objects.new("second_empty", None))
         bpy.context.window.scene = second
         second_path = Path(self.directory.name) / "second.glb"
-        export_sample_scene(second_path, include_lights=False)
+        export_sample_scene(second_path, export_lights=False)
         bpy.context.window.scene = self.scene
         third = bpy.data.scenes.new("third")
         self.path.unlink()
         second_path.unlink()
         result, report = _all_scenes_report()
-        self.assertEqual((result, report), ({"FINISHED"}, ({"WARNING"}, f"Exported 2 scenes: {self.scene.name}, second. Skipped third, export it once with File > Export > Bevy Scene (.glb)")))
+        self.assertEqual((result, report), ({"FINISHED"}, ({"WARNING"}, f"Exported 2 scenes: {self.scene.name}, second. Skipped third, export it once with File > Export > Bevy glTF (.glb)")))
         self.assertEqual((_node_names(read_gltf(self.path)), _node_names(read_gltf(second_path))), (["first_cube"], ["second_empty"]))
         self.assertEqual(bpy.context.scene, self.scene)
-        self.assertFalse(second.bevy_glb_export.include_lights)
+        self.assertFalse(addon.system.export_options(second).export_lights)
         third.bevy_glb_export.filepath = str(Path(self.directory.name) / "third.glb")
         _broken_component(second.objects["second_empty"])
         result, report = _all_scenes_report()
@@ -4464,7 +4524,7 @@ class TestExportOptions(unittest.TestCase):
 
     def test_export_all_scenes_needs_an_earlier_export(self):
         bpy.data.scenes.new("second")
-        self.assertEqual(_all_scenes_report(), ({"CANCELLED"}, ({"WARNING"}, f"No scene was exported yet. Skipped {self.scene.name}, second, export each once with File > Export > Bevy Scene (.glb)")))
+        self.assertEqual(_all_scenes_report(), ({"CANCELLED"}, ({"WARNING"}, f"No scene was exported yet. Skipped {self.scene.name}, second, export each once with File > Export > Bevy glTF (.glb)")))
 
     def test_flattened_materials_export_like_the_warnings_say(self):
         cube = add_mesh(bpy.ops.mesh.primitive_cube_add, "painted")
@@ -4540,7 +4600,7 @@ class TestPlay(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Export the scene once"):
             bpy.ops.bevy_components.play()
         self.assertIn("Export the scene once, then Play exports it again each time", " ".join(self._panel().texts()))
-        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(self.glb)), {"FINISHED"})
+        self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(self.glb)), {"FINISHED"})
         self.glb.write_bytes(b"")
         with mock.patch.object(addon.operator, "viewport_view", return_value="1,3,-2,-0.707107,0,0,0.707107"):
             self.assertEqual(bpy.ops.bevy_components.play(), {"FINISHED"})
@@ -4562,7 +4622,7 @@ class TestPlay(unittest.TestCase):
 
     def test_play_restarts_and_stops_the_game(self):
         self._game("import time\nprint('ready', flush=True)\ntime.sleep(60)\n", "")
-        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(self.glb)), {"FINISHED"})
+        self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(self.glb)), {"FINISHED"})
         self.assertEqual(bpy.ops.bevy_components.play(), {"FINISHED"})
         first = addon.operator.last_game()
         _until(first.output)
@@ -4585,7 +4645,7 @@ class TestPlay(unittest.TestCase):
 
     def test_failed_games_explain_why(self):
         self._game("import sys\nprint(\"thread 'main' panicked at src/main.rs:3:5:\")\nprint('No scene file')\nsys.exit(101)\n", "")
-        self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(self.glb)), {"FINISHED"})
+        self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(self.glb)), {"FINISHED"})
         self.assertEqual(bpy.ops.bevy_components.play(), {"FINISHED"})
         self.assertTrue(addon.operator.last_game().wait(20))
         self.assertIn("my_game stopped with exit code 101: No scene file", " ".join(self._panel().texts()))
@@ -4615,10 +4675,10 @@ class TestPlay(unittest.TestCase):
 
     def test_exports_default_into_the_game_project(self):
         name = addon.files.snake_case(bpy.context.scene.name)
-        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb).filepath, "")
+        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_gltf).filepath, "")
         self.preferences.game_folder = str(self.project)
-        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb).filepath, str(self.project / "assets" / "levels" / f"{name}.glb"))
-        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_glb, filepath=str(self.glb)).filepath, str(self.glb))
+        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_gltf).filepath, str(self.project / "assets" / "levels" / f"{name}.glb"))
+        self.assertEqual(_open_dialog(addon.operator.BEVY_OT_export_gltf, filepath=str(self.glb)).filepath, str(self.glb))
 
     def test_file_pickers_start_in_the_game_assets(self):
         reference = add_component(self.obj, "SCENE_REFERENCE")
@@ -4744,7 +4804,7 @@ class TestPrefabs(unittest.TestCase):
         return [call.args[0].name for call in exported.call_args_list]
 
     def _issues(self):
-        objects = addon.system.exported_objects(bpy.context, bpy.context.scene.bevy_glb_export, selected=False)
+        objects = addon.system.exported_objects(bpy.context, addon.system.export_options(bpy.context.scene), limited=False)
         return [(issue.level, issue.obj.name if issue.obj else None, issue.message) for issue in addon.validation.check_objects(objects, destination=self.level)]
 
     def test_instances_spawn_the_prefab_glb(self):
@@ -4782,10 +4842,10 @@ class TestPrefabs(unittest.TestCase):
         self.assertEqual(self._exported_prefabs(), ["lantern"])
         self.lamp.instance_offset = (0, 9, 0)
         self.assertEqual(self._exported_prefabs(), ["lamp post"])
-        self.assertEqual(self._exported_prefabs(apply_modifiers=False), ["lantern", "lamp post"])
-        self.assertEqual(self._exported_prefabs(apply_modifiers=False), [])
+        self.assertEqual(self._exported_prefabs(export_apply=False), ["lantern", "lamp post"])
+        self.assertEqual(self._exported_prefabs(export_apply=False), [])
         with mock.patch.object(addon.prefab, "addon_version", lambda: "99.0.0"):
-            self.assertEqual(self._exported_prefabs(apply_modifiers=False), ["lantern", "lamp post"])
+            self.assertEqual(self._exported_prefabs(export_apply=False), ["lantern", "lamp post"])
         record = json.loads(self.lamp.bevy_prefab.exported)
         self.assertEqual(record["size"], (self.assets / "props" / "lamp_post.glb").stat().st_size)
 
@@ -4830,9 +4890,9 @@ class TestPrefabs(unittest.TestCase):
         self.assertIn("Bevy Prefab: lamp post", panel.layout.texts())
 
     def test_collection_exporter_exports_only_the_collection(self):
-        self.assertIsNotNone(bpy.types.FileHandler.bl_rna_get_subclass_py("BEVY_FH_glb"))
+        self.assertIsNotNone(bpy.types.FileHandler.bl_rna_get_subclass_py("BEVY_FH_gltf"))
         with bpy.context.temp_override(collection=self.lamp):
-            self.assertEqual(bpy.ops.collection.exporter_add(name="BEVY_FH_glb"), {"FINISHED"})
+            self.assertEqual(bpy.ops.collection.exporter_add(name="BEVY_FH_gltf"), {"FINISHED"})
         exporter = self.lamp.exporters[0]
         target = self.assets / "export" / "lamp.glb"
         exporter.export_properties.filepath = str(target)
@@ -4846,22 +4906,36 @@ class TestPrefabs(unittest.TestCase):
         self.assertTrue((self.assets / "props" / "lantern.glb").is_file())
         self.assertFalse((self.assets / "props" / "lamp_post.glb").exists())
         self.assertEqual((bpy.context.scene.bevy_glb_export.filepath, [scene.name for scene in bpy.data.scenes]), ("", ["Scene"]))
-        operator = _ExporterOperator(**vars(_dialog(self, addon.operator.BEVY_OT_export_glb, collection="lamp post", filepath=str(target))))
-        addon.operator.BEVY_OT_export_glb.draw(operator, bpy.context)
-        self.assertNotIn("export_on_save", operator.layout.props())
-        self.assertNotIn("selected_only", operator.layout.props())
+        exporter.export_properties.at_collection_center = True
+        with bpy.context.temp_override(collection=self.lamp):
+            self.assertEqual(bpy.ops.collection.exporter_export(index=0), {"FINISHED"})
+        nodes = {node["name"]: node for node in read_gltf(target)["nodes"]}
+        self.assertEqual((_rounded(nodes["pole"]["translation"]), _rounded(nodes["head"]["translation"])), ([0.0, -0.5, 0.0], [0.0, 0.5, 0.0]))
+        operator = _ExporterOperator(**vars(_dialog(self, addon.operator.BEVY_OT_export_gltf, collection="lamp post", filepath=str(target))))
+        addon.operator.BEVY_OT_export_gltf.draw(operator, _DialogContext("PROPERTIES"))
+        props = operator.layout.props()
+        self.assertIn("at_collection_center", props)
+        for name in ("export_on_save", "use_selection", "will_save_settings"):
+            self.assertNotIn(name, props)
+        self.assertIn("texture_compression", props)
         self.assertIn("No problems found", operator.layout.texts())
 
     def test_exporting_a_prefab_records_it(self):
         own = self.assets / "props" / "lamp_post.glb"
         with bpy.context.temp_override(scene=bpy.context.scene):
-            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(collection="lamp post", filepath=str(own), include_animations=True), {"FINISHED"})
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(collection="lamp post", filepath=str(own), export_animations=True), {"FINISHED"})
         gltf = read_gltf(own)
         self.assertEqual((gltf["scenes"][0]["name"], sorted(node["name"] for node in gltf["nodes"])), ("lamp post", ["head", "pole"]))
         self.assertEqual([_scene_components(node) for node in gltf["nodes"] if node["name"] == "pole"], [[STATIC_BODY]])
         self.assertEqual(self._exported_prefabs(), [])
         with self.assertRaisesRegex(RuntimeError, "No collection named missing"):
-            bpy.ops.export_scene.bevy_components_glb(collection="missing", filepath=str(own))
+            bpy.ops.export_scene.bevy_gltf(collection="missing", filepath=str(own))
+        level = bpy.context.scene.bevy_glb_export.filepath
+        with _remembered_gltf(export_yup=False):
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(collection="lamp post", filepath=str(own), again=True), {"FINISHED"})
+        nodes = {node["name"]: node for node in read_gltf(own)["nodes"]}
+        self.assertEqual(_rounded(nodes["pole"]["translation"]), [0.0, 0.0, 1.0])
+        self.assertEqual(bpy.context.scene.bevy_glb_export.filepath, level)
 
     def test_prefab_panel(self):
         panel_type = addon.panel.BEVY_PT_collection_prefab
@@ -4871,13 +4945,12 @@ class TestPrefabs(unittest.TestCase):
         panel = FakePanel(self)
         panel_type.draw_header(panel, context)
         self.assertEqual(panel.layout.props(), ["enabled"])
-        bpy.context.scene.bevy_glb_export.texture_compression = "UASTC"
         panel = FakePanel(self)
         panel_type.draw(panel, context)
         self.assertEqual(panel.layout.props(), ["filepath"])
         self.assertIn("2 instances in this file", " ".join(panel.layout.texts()))
         [(text, properties, enabled)] = panel.layout.buttons()
-        self.assertEqual((text, properties.collection, properties.filepath, properties.texture_compression, enabled), ("Export Prefab", "lamp post", str(self.assets / "props" / "lamp_post.glb"), "UASTC", True))
+        self.assertEqual((text, properties.collection, properties.filepath, properties.again, enabled), ("Export Prefab", "lamp post", str(self.assets / "props" / "lamp_post.glb"), True, True))
         self.lamp.bevy_prefab.filepath = ""
         panel = FakePanel(self)
         panel_type.draw(panel, context)
@@ -5194,7 +5267,7 @@ class TestBakeLighting(unittest.TestCase):
         self.assertEqual(check(), ["room: Baked before the lamps changed, so the cubemap is out of date. Bake again"])
         addon.system.world_background(self.scene.world).inputs["Strength"].default_value = 0.5
         self.assertEqual(check(), ["Bevy Sky: Baked before the World changed, so the cubemap is out of date. Bake again", "room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again"])
-        self.assertIn("room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again", [addon.validation.describe(issue) for issue in addon.export.scene_issues(_dialog(self, addon.operator.BEVY_OT_export_glb), bpy.data.objects, None)])
+        self.assertIn("room: Baked before the lamps and the World changed, so the cubemap is out of date. Bake again", [addon.validation.describe(issue) for issue in addon.export.scene_issues(_dialog(self, addon.operator.BEVY_OT_export_gltf), bpy.data.objects, None)])
         reflection.probe_file = str(CUBEMAP)
         sky.sky_file = str(CUBEMAP)
         self.assertEqual(check(), [])
@@ -5238,7 +5311,7 @@ class TestBakeLighting(unittest.TestCase):
         with _remembered_exports():
             operator = _bake_operator(layout=FakeLayout(self))
             addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
-            self.assertIn("Nothing to export again yet, export the scene once with File > Export > Bevy Scene (.glb)", " ".join(operator.layout.texts()))
+            self.assertIn("Nothing to export again yet, export the scene once with File > Export > Bevy glTF (.glb)", " ".join(operator.layout.texts()))
         with _remembered_exports(glb=str(path)):
             operator = _bake_operator(layout=FakeLayout(self))
             addon.operator.BEVY_OT_bake_lighting.draw(operator, bpy.context)
@@ -5252,7 +5325,7 @@ class TestBakeLighting(unittest.TestCase):
             operator = _bake_operator(_folder=self.settings.folder)
             operator._jobs = operator._find_jobs(bpy.context)
             self.assertEqual(operator._finish(bpy.context, operator._jobs), {"FINISHED"})
-        self.assertEqual(operator.reports, [("INFO", f"Baked 1 reflection probe into {self.settings.folder}"), ("WARNING", "Baked 1 reflection probe, but could not export again: Nothing to export again yet, export the scene once with File > Export > Bevy Scene (.glb)")])
+        self.assertEqual(operator.reports, [("INFO", f"Baked 1 reflection probe into {self.settings.folder}"), ("WARNING", "Baked 1 reflection probe, but could not export again: Nothing to export again yet, export the scene once with File > Export > Bevy glTF (.glb)")])
         self.assertFalse(path.exists())
 
     def test_bake_lighting_bakes_the_sky_first(self):
@@ -5709,21 +5782,21 @@ class TestTextureCompressionErrors(unittest.TestCase):
     def test_missing_encoder_cancels_before_export(self):
         self.preferences.ktx_path = str(Path(self.directory.name) / "missing" / "ktx")
         with self.assertRaisesRegex(RuntimeError, "KTX-Software was not found at .*Install KTX-Software 4.4 or newer"):
-            bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="AUTOMATIC")
+            bpy.ops.export_scene.bevy_gltf(filepath=str(self.path), texture_compression="AUTOMATIC")
         self.assertFalse(self.path.exists())
 
     def test_encoder_failures_keep_the_previous_file(self):
         self.path.write_bytes(b"previous scene")
         with mock.patch.object(addon.export, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.export, "encode", side_effect=addon.encoder.EncoderError("KTX-Software could not encode wood_color: broken input")):
             with self.assertRaisesRegex(RuntimeError, "Texture compression failed: KTX-Software could not encode wood_color: broken input"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="ETC1S")
+                bpy.ops.export_scene.bevy_gltf(filepath=str(self.path), texture_compression="ETC1S")
         self.assertEqual(self.path.read_bytes(), b"previous scene")
         self.assertEqual(sorted(path.name for path in Path(self.directory.name).iterdir()), ["scene.glb"])
 
     def test_invalid_encoder_output_is_rejected(self):
         with mock.patch.object(addon.export, "check_encoder", return_value=(Path("ktx"), (4, 4, 0))), mock.patch.object(addon.export, "encode", side_effect=lambda path, jobs, *args, **options: [b"not ktx2"] * len(jobs)):
             with self.assertRaisesRegex(RuntimeError, "the encoder wrote an invalid KTX2 file"):
-                bpy.ops.export_scene.bevy_components_glb(filepath=str(self.path), texture_compression="UASTC")
+                bpy.ops.export_scene.bevy_gltf(filepath=str(self.path), texture_compression="UASTC")
         self.assertFalse(self.path.exists())
 
 

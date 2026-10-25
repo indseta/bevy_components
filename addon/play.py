@@ -80,7 +80,7 @@ def game_command(command, folder, scene=None):
     if not parts:
         raise PlayError("The run command is empty")
     if needs_scene(command) and scene is None:
-        raise PlayError("The run command needs {scene}, export the scene once with File > Export > Bevy Scene (.glb)")
+        raise PlayError("The run command needs {scene}, export the scene once with File > Export > Bevy glTF (.glb)")
     program = find_program(parts[0], folder)
     if program is None:
         raise PlayError(f"Could not find {parts[0]}. Install Rust from rustup.rs, or put the full path to {parts[0]} in the run command")

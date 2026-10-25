@@ -656,7 +656,7 @@ def build_sample_scene(directory=FIXTURE.parent):
 
 def export_sample_scene(path, **options):
     Path(path).parent.mkdir(parents=True, exist_ok=True)
-    result = bpy.ops.export_scene.bevy_components_glb(filepath=str(path), **{"include_animations": True, **options})
+    result = bpy.ops.export_scene.bevy_gltf(filepath=str(path), **{"export_animations": True, **options})
     if "FINISHED" not in result:
         raise RuntimeError(f"Export failed: {result}")
     return read_gltf(path)

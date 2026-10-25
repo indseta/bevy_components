@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **File > Export** has one Bevy export, **Bevy glTF (.glb)**, which took over everything **Bevy Scene (.glb)** did: it runs the checks first, writes the prefabs it uses, compresses textures, embeds baked light probes and the sky, keeps the previous file when an export fails, and is the export that Export Again, Export on Save, Export All Scenes, Play and Bake Lighting repeat. Its dialog is Blender's glTF dialog with a **Bevy** panel for Export on Save, Texture Compression and the checks. See [Exporting](docs/exporting.md).
+- **Bevy glTF** starts out with Bevy Scene's defaults ticked: **Apply Modifiers**, **Punctual Lights**, **Custom Properties**, **Active Scene** and **Set All glTF Animation Starting at 0**.
+- **Remember Export Settings** decides which export Export Again repeats, so a one-off prop export with it unticked keeps Export Again writing the level.
+- **Bevy glTF** writes .glb files only, which hold the compressed textures and baked lighting; a .gltf file name becomes .glb.
+- Exports limited to the active collection leave out the World's **Bevy Ambient Light** and **Bevy Sky**, like exports limited to selected objects.
+- A collection's **Bevy glTF** exporter can export at the collection's center with **Export at Collection Center**, and prefab offsets follow **+Y Up**.
+
+### Removed
+
+- **Bevy Scene (.glb)** in **File > Export**, the dropdown next to **Add Component** and **3D Viewport > N > Bevy > Export**, its collection exporter and `bpy.ops.export_scene.bevy_components_glb`.
+
+### Upgrading from 0.5.1
+
+- Export Again keeps exporting a scene's last Bevy Scene file with its settings.
+- A collection exporter added as **Bevy Scene (.glb)** must be added again as **Bevy glTF**.
+- Scripts call `bpy.ops.export_scene.bevy_gltf(again=True)` instead of `bpy.ops.export_scene.bevy_components_glb(again=True)`.
+
 ## 0.5.1 (2026-10-25)
 
 ### Added

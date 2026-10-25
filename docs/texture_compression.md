@@ -3,7 +3,7 @@
 The exporter can compress textures to KTX2 and embed them in the GLB, so the scene stays one file but is smaller on disk and in GPU memory.
 
 1. Install [KTX-Software](https://github.com/KhronosGroup/KTX-Software/releases) 4.4 or newer. The addon looks for `ktx` on your `PATH` and in the default install folders (`C:\Program Files\KTX-Software\bin`, `/usr/local/bin`, `/opt/homebrew/bin`). If it lives elsewhere, set its path under **Edit > Preferences > Add-ons > Bevy Components**, which also shows the version it found. KTX-Software is only needed to export, not to run your game.
-2. In **File > Export > Bevy Scene (.glb)**, open **Texture Compression** and pick a mode:
+2. In **File > Export > Bevy glTF (.glb)**, open **Bevy > Texture Compression** and pick a mode:
    - **Disabled** (default): ordinary PNG and JPEG textures.
    - **ETC1S**: smallest files, lower quality.
    - **UASTC**: best quality, larger files. **Supercompression** shrinks them on disk.

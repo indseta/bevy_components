@@ -18,7 +18,7 @@ from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_or
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, asset_path, children_map, collider_meshes, component_kinds, component_of, components_for, export_settings, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
+from .system import MESH_TYPES, asset_path, children_map, collider_meshes, component_kinds, component_of, components_for, export_options, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 CheckOptions = namedtuple("CheckOptions", ("destination", "animations", "modifiers", "assets", "key"))
@@ -116,9 +116,9 @@ def count_problems(scenes):
     changed = False
     members = prefab_members()
     for scene in scenes:
-        settings = export_settings(scene)
+        settings = export_options(scene)
         objects = [obj for obj in scene.objects if exported(obj, settings) and obj not in members]
-        issues = check_objects(objects, modifiers=settings.apply_modifiers) + (check_scene(objects) if scene == bpy.context.scene else check_world(scene.world))
+        issues = check_objects(objects, modifiers=settings.export_apply) + (check_scene(objects) if scene == bpy.context.scene else check_world(scene.world))
         errors = sum(1 for issue in issues if issue.level == "ERROR")
         counted = (version, (errors, len(issues) - errors))
         changed = changed or _problem_counts.get(scene.as_pointer(), (None, None))[1] != counted[1]
@@ -664,7 +664,7 @@ def _animation_warnings(obj, item, children, animations):
     if not any(clip in object_actions(member) for member, _matrix in subtree(root, children, lambda child: False, instances=False)):
         warnings.append(f"{clip} animates nothing on or under {'this object' if root == obj else root.name}, so nothing plays")
     if not animations:
-        warnings.append("Include Animations is off in the export, so nothing plays")
+        warnings.append("Animation is off in the export, so nothing plays")
     return warnings
 
 

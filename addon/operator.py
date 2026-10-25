@@ -9,19 +9,20 @@ from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 from bpy_extras.io_utils import ExportHelper
 
 from .bake import BackgroundBake, bake_command, bake_hidden, bake_jobs, bake_summary, baked_sky, lighting_jobs, sky_job, unwrap_lightmap
-from .export import PROGRESS_INTERVAL, ExportCancelled, ExportError, SceneExport, again, cancel_exports, export_path, finish_export, remembered, running_export, scene_issues, start_export
+from .export import EXPORT_LABEL, PROGRESS_INTERVAL, ExportCancelled, ExportError, SceneExport, again, blend_relative, cancel_exports, export_path, exports_world, finish_export, glb_file, recall, remember, remembered, running_export, scene_issues, start_export
 from .files import snake_case
 from .fingerprint import bake_record
 from .geometry import fit_shape
+from .gltf import LIMITS, ExportGLTF2_Base, changed
 from .metadata import PRIMITIVE_SHAPES, infer_fields
 from .play import VIEWER_COMMAND, VIEW_VARIABLE, GameProcess, PlayError, game_command
 from .prefab import find_collection
 from .preferences import draw_encoder_status
 from .probe import FILE_KINDS
 from .project import game_assets, game_folder, play_target
-from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, EXPORT_OPTIONS, LAYER_COUNT, ExportOptions
+from .property import AUDIO_FORMATS, COMPONENT_FILTERS, COMPONENT_LABELS, COMPONENT_TYPES, EVENTS_KEY, LAYER_COUNT, ExportOptions
 from .schema import short_name
-from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, copy_component, copy_to_object, custom_components, default_clip, export_settings, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, unlink_component, viewport_view, write_component_text, write_field
+from .system import TEXT_COMPONENT, TEXT_OBJECT, accepts, apply_definitions, apply_game_types, asset_path, children_map, clipboard_text, component_of, component_text, copy_component, copy_to_object, custom_components, default_clip, export_options, exported_objects, field_slot, file_path, find_definition, game_schema, game_types, linked_component, mesh_points, new_identifier, paste_components, preset_file, read_components, redraw_properties, redraw_status_bars, redraw_viewports, reset_fields, scene_definition, sky_lights_scene, touch_object, unlink_component, viewport_view, write_component_text, write_field
 from .validation import body_kind, check_objects, check_scene, count, describe, draw_issues, draw_message, issue_row, issue_summary
 
 ACCEPTED_OBJECTS = {
@@ -512,7 +513,7 @@ class BEVY_OT_pick_file(bpy.types.Operator):
         item = self._item(context)
         if item is None or not self.filepath:
             return {"CANCELLED"}
-        setattr(item, self.target, _blend_relative(Path(bpy.path.abspath(self.filepath))) if self.relative_path else bpy.path.abspath(self.filepath))
+        setattr(item, self.target, blend_relative(Path(bpy.path.abspath(self.filepath))) if self.relative_path else bpy.path.abspath(self.filepath))
         return {"FINISHED"}
 
 
@@ -995,9 +996,9 @@ class BEVY_OT_validate(bpy.types.Operator):
     bl_description = "Check every object for problems that block export or that make the scene behave differently in Bevy"
 
     def execute(self, context):
-        settings = export_settings(context.scene)
-        objects = list(exported_objects(context, settings, selected=False))
-        issues = check_objects(objects, modifiers=settings.apply_modifiers) + check_scene(objects)
+        settings = export_options(context.scene)
+        objects = list(exported_objects(context, settings, limited=False))
+        issues = check_objects(objects, modifiers=settings.export_apply) + check_scene(objects)
         for issue in issues:
             print("Bevy Components:", describe(issue))
         if not issues:
@@ -1029,24 +1030,8 @@ class BEVY_OT_cancel_export(bpy.types.Operator):
         return {"FINISHED"}
 
 
-def _draw_include(operator, layout, limits=True):
-    header, body = layout.panel("BEVY_export_include")
-    header.label(text="Include")
-    if body:
-        if limits:
-            column = body.column(heading="Limit to")
-            column.prop(operator, "selected_only", text="Selected Objects")
-            column.prop(operator, "visible_only", text="Visible Objects")
-            column.prop(operator, "renderable_only", text="Renderable Objects")
-        column = body.column(heading="Data")
-        column.prop(operator, "include_lights", text="Lights")
-        column.prop(operator, "include_cameras", text="Cameras")
-        column.prop(operator, "include_animations", text="Animations")
-        body.column(heading="Meshes").prop(operator, "apply_modifiers")
-
-
 def _export_key(operator):
-    return (operator.filepath, operator.collection, operator.selected_only, operator.visible_only, operator.renderable_only, operator.include_animations, operator.apply_modifiers)
+    return (operator.filepath, operator.collection, operator.export_animations, operator.export_apply, *(getattr(operator, name) for name in LIMITS))
 
 
 def _draw_compression(operator, layout, context):
@@ -1086,6 +1071,17 @@ def _draw_checks(operator, layout, context, key, find):
             body.label(text="No problems found", icon="CHECKMARK")
 
 
+def _draw_bevy(operator, layout, context):
+    collection = _drawn_collection(operator, context)
+    header, body = layout.panel("BEVY_export_bevy")
+    header.label(text="Bevy")
+    if body:
+        if collection is None:
+            body.prop(operator, "export_on_save")
+        _draw_compression(operator, body, context)
+        _draw_checks(operator, body, context, (*_export_key(operator), collection), lambda: scene_issues(operator, _exported_objects(operator, context, collection), export_path(operator.filepath), world=exports_world(operator, collection)))
+
+
 def _drawn_collection(operator, context):
     if operator.collection:
         return find_collection(operator.collection)
@@ -1115,30 +1111,26 @@ def _game_default(context, extension):
     return levels / f"{name}{extension}"
 
 
-def _blend_relative(path):
-    if not bpy.data.filepath:
-        return str(path)
-    try:
-        return bpy.path.relpath(str(path))
-    except ValueError:
-        return str(path)
-
-
 def _report_all(operator, messages):
     for kinds, message in messages:
         operator.report(kinds, message)
 
 
-class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper, ExportOptions):
-    bl_idname = "export_scene.bevy_components_glb"
-    bl_label = "Bevy Scene (.glb)"
-    bl_description = "Export the scene and its Bevy components as one GLB file"
-    bl_options = {"REGISTER"}
+class BEVY_OT_export_gltf(bpy.types.Operator, ExportGLTF2_Base, ExportHelper, ExportOptions):
+    bl_idname = "export_scene.bevy_gltf"
+    bl_label = "Export Bevy glTF"
+    bl_description = "Export the scene as a GLB with the options of Blender's glTF export, plus the objects' Bevy components, the prefabs it uses and compressed textures"
 
     filename_ext = ".glb"
     filter_glob: StringProperty(default="*.glb", options={"HIDDEN"})
+    export_format: EnumProperty(name="Format", description="Bevy exports write GLB files", items=(("GLB", "glTF Binary (.glb)", "One file with the meshes, textures and Bevy components packed in"),), default="GLB")
+    export_extras: changed("export_extras", default=True)
+    export_apply: changed("export_apply", default=True)
+    export_lights: changed("export_lights", default=True)
+    export_anim_slide_to_zero: changed("export_anim_slide_to_zero", default=True)
+    use_active_scene: changed("use_active_scene", default=True)
+    will_save_settings: changed("will_save_settings", description="Remember the file and these settings, so this dialog opens with them and Export Again, Export on Save and Play write the same file. Leave it off for a one-off export", default=True, options={"SKIP_SAVE"})
     again: BoolProperty(name="Export Again", description="Export to the file the last export wrote, with the settings it used, without the file dialog", default=False, options={"HIDDEN", "SKIP_SAVE"})
-    collection: StringProperty(name="Collection", description="Collection to export instead of the scene, as Collection Properties > Exporters does", options={"HIDDEN", "SKIP_SAVE"})
 
     _interactive = False
     _job = None
@@ -1146,45 +1138,38 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper, ExportOptions):
 
     @classmethod
     def poll(cls, context):
+        if "io_scene_gltf2" not in context.preferences.addons:
+            cls.poll_message_set("Enable Blender's glTF 2.0 add-on to export")
+            return False
         if running_export() is not None:
             cls.poll_message_set("A Bevy scene export is still compressing textures")
             return False
-        return True
+        return context.scene is not None
 
     @classmethod
     def description(cls, context, properties):
         if properties.collection:
-            return f"Export {properties.collection} to {Path(properties.filepath).name or 'its file'}, with the prefabs inside it, using the scene's export settings"
+            return f"Export {properties.collection} to {Path(properties.filepath).name or 'its file'}, with the prefabs inside it, using {'the scene' if properties.again else 'these'} export settings"
         if not properties.again:
             return cls.bl_description
-        path = cls.remembered(context.scene)
+        path = remembered(context.scene)
         if not path:
-            return f"Export the scene once with File > Export > {cls.bl_label}, then export it again here with one click"
+            return f"Export the scene once with File > Export > {EXPORT_LABEL}, then export it again here with one click"
         return f"Export the scene again to {path} with the settings the last export used, without the file dialog"
 
-    @classmethod
-    def remembered(cls, scene):
-        return remembered(scene)
-
     def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.use_property_decorate = False
-        collection = _drawn_collection(self, context)
-        if collection is None:
-            layout.prop(self, "export_on_save")
-        _draw_include(self, layout, collection is None)
-        _draw_compression(self, layout, context)
-        _draw_checks(self, layout, context, (*_export_key(self), collection), lambda: scene_issues(self, _exported_objects(self, context, collection), export_path(self.filepath)))
+        ExportGLTF2_Base.draw(self, context)
+        _draw_bevy(self, self.layout, context)
 
     def invoke(self, context, event):
         self._interactive = True
         if self.again or self.collection:
             return self.execute(context)
-        if self.remembered(context.scene) and not self.properties.is_property_set("filepath"):
-            self._recall(context.scene.bevy_glb_export)
-        elif not self.properties.is_property_set("filepath") and (default := _game_default(context, self.filename_ext)) is not None:
-            self.filepath = str(default)
+        if not self.properties.is_property_set("filepath"):
+            if remembered(context.scene):
+                recall(self, context.scene)
+            elif (default := _game_default(context, self.filename_ext)) is not None:
+                self.filepath = str(default)
         return ExportHelper.invoke(self, context, event)
 
     def execute(self, context):
@@ -1192,17 +1177,17 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper, ExportOptions):
         if self.collection and collection is None:
             self.report({"ERROR"}, f"No collection named {self.collection}")
             return {"CANCELLED"}
-        if self.again and collection is None:
-            if not self.remembered(context.scene):
-                self.report({"ERROR"}, f"Nothing to export again yet, export the scene once with File > Export > {self.bl_label}")
+        if self.again:
+            if collection is None and not remembered(context.scene):
+                self.report({"ERROR"}, f"Nothing to export again yet, export the scene once with File > Export > {EXPORT_LABEL}")
                 return {"CANCELLED"}
-            self._recall(context.scene.bevy_glb_export)
+            recall(self, context.scene, filepath=collection is None)
         if not self.filepath.strip():
             self.report({"ERROR"}, "Pick a file to export the scene to")
             return {"CANCELLED"}
-        self.filepath = str(export_path(self.filepath))
-        if collection is None:
-            self._remember(context.scene.bevy_glb_export)
+        self.filepath = str(glb_file(export_path(self.filepath)))
+        if collection is None and self.will_save_settings:
+            remember(self, context.scene)
         self._job = SceneExport(context.scene, self, self.filepath, collection)
         try:
             messages = start_export(self._job, context, self._interactive)
@@ -1241,16 +1226,6 @@ class BEVY_OT_export_glb(bpy.types.Operator, ExportHelper, ExportOptions):
         except ExportError:
             pass
         self._job.release()
-
-    def _recall(self, settings):
-        self.filepath = str(export_path(settings.filepath))
-        for name in EXPORT_OPTIONS:
-            setattr(self, name, getattr(settings, name))
-
-    def _remember(self, settings):
-        settings.filepath = _blend_relative(export_path(self.filepath))
-        for name in EXPORT_OPTIONS:
-            setattr(settings, name, getattr(self, name))
 
     def _failed(self, error):
         self._job.release()
@@ -1304,7 +1279,7 @@ class BEVY_OT_export_all_scenes(bpy.types.Operator):
             window.scene = active
         for name, error in failed:
             print(f"Bevy Components: Could not export {name}: {error}")
-        note = f". Skipped {', '.join(skipped)}, export {'it' if len(skipped) == 1 else 'each'} once with File > Export > Bevy Scene (.glb)" if skipped else ""
+        note = f". Skipped {', '.join(skipped)}, export {'it' if len(skipped) == 1 else 'each'} once with File > Export > {EXPORT_LABEL}" if skipped else ""
         if failed:
             self.report({"ERROR"}, f"Could not export {count(len(failed), 'scene')}, {failed[0][0]}: {failed[0][1]}{note}")
             return {"CANCELLED"} if not exported else {"FINISHED"}
@@ -1315,10 +1290,10 @@ class BEVY_OT_export_all_scenes(bpy.types.Operator):
         return {"FINISHED"}
 
 
-class BEVY_FH_glb(bpy.types.FileHandler):
-    bl_idname = "BEVY_FH_glb"
-    bl_label = "Bevy Scene (.glb)"
-    bl_export_operator = BEVY_OT_export_glb.bl_idname
+class BEVY_FH_gltf(bpy.types.FileHandler):
+    bl_idname = "BEVY_FH_gltf"
+    bl_label = "Bevy glTF"
+    bl_export_operator = BEVY_OT_export_gltf.bl_idname
     bl_file_extensions = ".glb"
 
     @classmethod
@@ -1334,7 +1309,7 @@ def export_on_save(path):
     if not scene.bevy_glb_export.export_on_save or not remembered(scene):
         return
     try:
-        bpy.ops.export_scene.bevy_components_glb("INVOKE_DEFAULT", again=True)
+        bpy.ops.export_scene.bevy_gltf("INVOKE_DEFAULT", again=True)
     except RuntimeError as error:
         message = str(error).removeprefix("Error: ").strip()
         print("Bevy Components: Export on Save failed:", message)
@@ -1388,9 +1363,6 @@ class BEVY_OT_cancel_bake(bpy.types.Operator):
         return {"FINISHED"}
 
 
-BAKE_EXPORTS = {"GLB": BEVY_OT_export_glb}
-
-
 class BEVY_OT_bake_lighting(bpy.types.Operator):
     bl_idname = "bevy_components.bake_lighting"
     bl_label = "Bake Lighting"
@@ -1436,9 +1408,8 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
         layout.prop(settings, "lamp_direct")
         layout.prop(settings, "export_again")
         width = context.region.width if context.region else 300
-        export = BAKE_EXPORTS.get(settings.export_again)
-        if export is not None and not export.remembered(context.scene):
-            draw_message(layout, f"Nothing to export again yet, export the scene once with File > Export > {export.bl_label}", width=width)
+        if settings.export_again != "NONE" and not remembered(context.scene):
+            draw_message(layout, f"Nothing to export again yet, export the scene once with File > Export > {EXPORT_LABEL}", width=width)
         jobs = self._find_jobs(context)
         if not jobs:
             draw_message(layout, "No Bevy Sky or enabled Lightmaps, Reflection Probes or Irradiance Volumes in this scene", icon="ERROR", width=width)
@@ -1593,10 +1564,9 @@ class BEVY_OT_bake_lighting(bpy.types.Operator):
 
     def _finish(self, context, stored):
         self.report({"INFO"}, f"Baked {bake_summary(stored)} into {self._folder}")
-        export = BAKE_EXPORTS.get(context.scene.bevy_bake_settings.export_again)
-        if export is not None:
+        if context.scene.bevy_bake_settings.export_again != "NONE":
             try:
-                getattr(bpy.ops.export_scene, export.bl_idname.split(".")[1])("INVOKE_DEFAULT" if self._interactive else "EXEC_DEFAULT", again=True)
+                bpy.ops.export_scene.bevy_gltf("INVOKE_DEFAULT" if self._interactive else "EXEC_DEFAULT", again=True)
             except RuntimeError as error:
                 self.report({"WARNING"}, f"Baked {bake_summary(stored)}, but could not export again: {str(error).removeprefix('Error: ').strip()}")
         return {"FINISHED"}
@@ -1675,7 +1645,7 @@ class BEVY_OT_play(bpy.types.Operator):
             self.report({"ERROR"}, str(error))
             return {"CANCELLED"}
         if not remembered(context.scene):
-            self.report({"ERROR"}, "Export the scene once with File > Export > Bevy Scene (.glb), then Play exports it again each time")
+            self.report({"ERROR"}, f"Export the scene once with File > Export > {EXPORT_LABEL}, then Play exports it again each time")
             return {"CANCELLED"}
         for task in _games:
             task.stop()

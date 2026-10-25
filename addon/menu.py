@@ -1,8 +1,7 @@
 import bpy
 
-from .export import running_export
-from .gltf import CLASSES as GLTF_CLASSES
-from .operator import BEVY_OT_add_component, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_glb, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_game
+from .export import EXPORT_LABEL, remembered, running_export
+from .operator import BEVY_OT_add_component, BEVY_OT_apply_preset, BEVY_OT_apply_text, BEVY_OT_bake_lighting, BEVY_OT_cancel_bake, BEVY_OT_cancel_export, BEVY_OT_copy_component, BEVY_OT_copy_component_to_selected, BEVY_OT_copy_components, BEVY_OT_copy_to_selected, BEVY_OT_define_fields, BEVY_OT_duplicate_component, BEVY_OT_edit_as_text, BEVY_OT_export_all_scenes, BEVY_OT_export_gltf, BEVY_OT_move_component, BEVY_OT_paste_components, BEVY_OT_remove_component, BEVY_OT_remove_preset, BEVY_OT_reset_component, BEVY_OT_save_preset, BEVY_OT_select_by_component, BEVY_OT_stop_game, BEVY_OT_validate, running_bake, running_game
 from .property import COMPONENT_LABELS, COMPONENT_TYPES
 from .schema import short_name
 from .system import TEXT_COMPONENT, accepts, component_index, game_types, preset_folder, presets, scene_definition
@@ -186,7 +185,7 @@ class BEVY_MT_object_context_menu(bpy.types.Menu):
         layout.separator()
         layout.operator(BEVY_OT_validate.bl_idname, text="Validate All Objects", icon="CHECKMARK")
         layout.operator(BEVY_OT_bake_lighting.bl_idname, text="Bake Lighting...", icon="RENDER_STILL")
-        layout.operator(BEVY_OT_export_glb.bl_idname, text="Export Bevy Scene (.glb)...", icon="EXPORT")
+        layout.operator(BEVY_OT_export_gltf.bl_idname, text=f"Export {EXPORT_LABEL}...", icon="EXPORT")
         draw_export_again(layout, context.scene)
         draw_export_all(layout)
 
@@ -240,16 +239,13 @@ class BEVY_MT_select_by_component(bpy.types.Menu):
 
 
 def draw_export_again(layout, scene, placeholder=False):
-    shown = False
-    for operator in (BEVY_OT_export_glb,):
-        path = operator.remembered(scene)
-        if path:
-            layout.operator(operator.bl_idname, text=f"Export Again ({bpy.path.basename(path)})", icon="FILE_REFRESH").again = True
-            shown = True
-    if placeholder and not shown:
+    path = remembered(scene)
+    if path:
+        layout.operator(BEVY_OT_export_gltf.bl_idname, text=f"Export Again ({bpy.path.basename(path)})", icon="FILE_REFRESH").again = True
+    elif placeholder:
         column = layout.column()
         column.enabled = False
-        column.operator(BEVY_OT_export_glb.bl_idname, text="Export Again", icon="FILE_REFRESH").again = True
+        column.operator(BEVY_OT_export_gltf.bl_idname, text="Export Again", icon="FILE_REFRESH").again = True
 
 
 def object_menu(self, context):
@@ -274,9 +270,7 @@ def draw_export_all(layout):
 
 
 def export_menu(self, context):
-    if GLTF_CLASSES:
-        self.layout.operator(GLTF_CLASSES[0].bl_idname, text="Bevy glTF (.glb/.gltf)")
-    self.layout.operator(BEVY_OT_export_glb.bl_idname, text="Bevy Scene (.glb)")
+    self.layout.operator(BEVY_OT_export_gltf.bl_idname, text=EXPORT_LABEL)
     draw_export_again(self.layout, context.scene)
 
 

@@ -14,6 +14,7 @@ from bpy.app.handlers import persistent
 from mathutils import Matrix
 
 from .changes import relatives, revision, touch
+from .gltf import GLTF_OPTIONS
 from .metadata import EXTRAS_KEY, FIELD_VALUES, SCHEMA_VERSION, SHADOW_DEFAULTS, WATTS_TO_LUMENS, addon_version, ambient_light_component, component_errors, convert_value, field_data, json_fields, light_intensity, light_of, relative_path, serialize_component, serialize_scene, sky_component, tuple_fields, variant_names
 from .prefab import export_directory, filter_tree, instance_node, prefab_members, prefab_scene
 from .project import game_folder
@@ -34,8 +35,12 @@ PROBLEM_CHANGES = [0, 0.0]
 SCHEMA_CHECK_INTERVAL = 1.0
 
 SUMMARY_LIMIT = 8192
+SETTINGS_KEPT_APART = {"rna_type", "name", "filepath", "gltf"}
+LEGACY_OPTIONS = {"selected_only": "use_selection", "visible_only": "use_visible", "renderable_only": "use_renderable", "apply_modifiers": "export_apply", "include_lights": "export_lights", "include_cameras": "export_cameras", "include_animations": "export_animations"}
+LEGACY_DEFAULTS = {"use_selection": False, "use_visible": False, "use_renderable": False, "export_apply": True, "export_lights": True, "export_cameras": False, "export_animations": False, "export_extras": True, "export_anim_slide_to_zero": True, "use_active_scene": True}
 _resolved = [None]
 _export = [None]
+_gltf_defaults = {}
 _summaries = {}
 _game_schema = {"checked": None, "key": None, "path": None, "types": {}, "error": ""}
 _variant_items = {}
@@ -253,18 +258,59 @@ def collision_only_meshes(objects):
     return hidden
 
 
-def export_settings(scene):
-    return scene.bevy_glb_export
+def gltf_defaults():
+    if not _gltf_defaults:
+        properties = bpy.ops.export_scene.bevy_gltf.get_rna_type().properties
+        _gltf_defaults.update((name, properties[name].default) for name in GLTF_OPTIONS if name in properties)
+    return _gltf_defaults
+
+
+@functools.lru_cache(maxsize=8)
+def _stored_gltf(text):
+    try:
+        stored = json.loads(text)
+    except ValueError:
+        return {}
+    return stored if isinstance(stored, dict) else {}
+
+
+def remembered_gltf(settings):
+    if settings.gltf:
+        return _stored_gltf(settings.gltf)
+    if not settings.filepath.strip():
+        return {}
+    return {**LEGACY_DEFAULTS, **{name: bool(settings[old]) for old, name in LEGACY_OPTIONS.items() if old in settings}}
+
+
+def export_options(scene):
+    settings = scene.bevy_glb_export
+    defaults = gltf_defaults()
+    values = {**defaults, **{name: value for name, value in remembered_gltf(settings).items() if name in defaults}}
+    values.update((prop.identifier, getattr(settings, prop.identifier)) for prop in settings.bl_rna.properties if prop.identifier not in SETTINGS_KEPT_APART)
+    return SimpleNamespace(**values)
+
+
+def export_option(scene, name):
+    stored = remembered_gltf(scene.bevy_glb_export)
+    return stored[name] if name in stored else gltf_defaults()[name]
+
+
+def prop_export(options):
+    return options.use_selection or options.use_active_collection
 
 
 def exported(obj, options):
-    if options.visible_only and (not obj.visible_get() or obj.hide_viewport or all(collection.hide_viewport for collection in obj.users_collection)):
+    if options.use_visible and (not obj.visible_get() or obj.hide_viewport or all(collection.hide_viewport for collection in obj.users_collection)):
         return False
-    return not options.renderable_only or not (obj.hide_render or all(collection.hide_render for collection in obj.users_collection))
+    return not options.use_renderable or not (obj.hide_render or all(collection.hide_render for collection in obj.users_collection))
 
 
-def exported_objects(context, options, selected=None):
-    objects = context.selected_objects if (options.selected_only if selected is None else selected) else context.scene.objects
+def exported_objects(context, options, limited=True):
+    objects = context.selected_objects if limited and options.use_selection else context.scene.objects
+    if limited and options.use_active_collection:
+        active = context.view_layer.active_layer_collection.collection
+        inside = set(active.all_objects if options.use_active_collection_with_nested else active.objects)
+        objects = [obj for obj in objects if obj in inside]
     members = prefab_members()
     return [obj for obj in objects if exported(obj, options) and obj not in members]
 
@@ -342,7 +388,7 @@ def touch_objects(objects):
 @contextmanager
 def bevy_export():
     previous = _export[0]
-    _export[0] = export = SimpleNamespace(skipped=[], objects={})
+    _export[0] = export = SimpleNamespace(skipped=[])
     try:
         yield export
     finally:
@@ -970,10 +1016,8 @@ class glTF2ExportUserExtension:
     def gather_node_hook(self, gltf2_node, blender_object, export_settings):
         _remove_extra(gltf2_node, "bevy_component_data")
         _remove_extra(gltf2_node, "bevy_prefab")
-        reference = instance_node(gltf2_node, blender_object)
+        reference = instance_node(gltf2_node, blender_object, export_settings.get("gltf_yup", True))
         _component_extras(gltf2_node, blender_object, export_settings, [reference] if reference is not None else [])
-        if _export[0] is not None and blender_object is not None:
-            _export[0].objects[blender_object] = None
 
     def gather_scene_hook(self, gltf2_scene, blender_scene, export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
@@ -985,9 +1029,9 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_gltf_export_settings")
         _remove_extra(gltf2_scene, "bevy_component_overview")
         _remove_extra(gltf2_scene, "bevy_game")
-        prefab_scene(gltf2_scene, blender_scene)
+        prefab_scene(gltf2_scene, blender_scene, export_settings.get("gltf_yup", True))
         world = getattr(blender_scene, "world", None)
-        prop = _export[0] is not None or export_settings.get("gltf_selected")
+        prop = export_settings.get("gltf_selected") or export_settings.get("gltf_active_collection")
         components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") and not prop else []
         gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}
 

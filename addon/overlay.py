@@ -16,7 +16,7 @@ from .metadata import PRIMITIVE_SHAPES, initial_velocities, light_amount, light_
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .schema import short_name
-from .system import changes_mesh, children_map, collider_meshes, component_kinds as object_kinds, component_of, components_for, custom_types, export_settings, file_path, mesh_sources, panel_expanded, redraw_viewports, resolving
+from .system import changes_mesh, children_map, collider_meshes, component_kinds as object_kinds, component_of, components_for, custom_types, export_option, file_path, mesh_sources, panel_expanded, redraw_viewports, resolving
 from .validation import texture_check
 
 DRAW_3D = None
@@ -244,7 +244,7 @@ def exceeds_edge_limit(obj, limit):
 
 
 def _applies_modifiers():
-    return export_settings(bpy.context.scene).apply_modifiers
+    return export_option(bpy.context.scene, "export_apply")
 
 
 def _exported_mesh(obj):
