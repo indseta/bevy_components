@@ -33,6 +33,8 @@ pub enum ColliderShape {
     Cuboid,
     Sphere,
     Capsule,
+    Cylinder,
+    Cone,
 }
 
 impl ColliderShape {
@@ -43,6 +45,8 @@ impl ColliderShape {
             "cuboid" => Some(Self::Cuboid),
             "sphere" => Some(Self::Sphere),
             "capsule" => Some(Self::Capsule),
+            "cylinder" => Some(Self::Cylinder),
+            "cone" => Some(Self::Cone),
             _ => None,
         };
     }

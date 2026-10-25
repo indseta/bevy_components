@@ -5,6 +5,7 @@
 ### Added
 
 - **Bevy glTF export**: **File > Export > Bevy glTF (.glb/.gltf)** is Blender's glTF export with the same dialog and options, made for Bevy. It always writes the Bevy components without ticking Custom Properties, so single objects and props export with their colliders. It also works as a collection exporter. See [Exporting](docs/exporting.md).
+- **Cylinder** and **Cone** collider shapes along Bevy's Y axis, like the capsule, with **Fit to Mesh** and viewport handles for their radius and height.
 
 ### Changed
 

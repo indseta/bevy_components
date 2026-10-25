@@ -802,6 +802,21 @@ fn collision_only_hides_meshes_but_keeps_colliders() {
 }
 
 #[test]
+fn cylinders_and_cones_stand_on_the_y_axis() {
+    let mut app = SceneApp::default().build();
+    let world = app.world_mut();
+    let cylinder = spawn_components(world, "cylinder", Vec3::ZERO, json!([{"type": "collider", "shape": "cylinder", "size": [1.0, 1.0, 1.0], "radius": 0.5, "height": 2.0, "sensor": false}]));
+    let cone = spawn_components(world, "cone", Vec3::new(5.0, 0.0, 0.0), json!([{"type": "collider", "shape": "cone", "size": [1.0, 1.0, 1.0], "radius": 1.0, "height": 3.0, "offset": [0.0, 1.5, 0.0], "sensor": false}]));
+    app.update();
+    let world = app.world();
+    let shape = world.get::<Collider>(cylinder).expect("a cylinder collider").shape().as_cylinder().expect("a cylinder");
+    assert_eq!((shape.radius, shape.half_height), (0.5, 1.0));
+    let bounds = world.get::<Collider>(cone).expect("a cone collider").aabb(Vec3::ZERO, Quat::IDENTITY, 0.0);
+    assert!(bounds.min.abs_diff_eq(Vec3::new(-1.0, 0.0, -1.0), 1e-5) && bounds.max.abs_diff_eq(Vec3::new(1.0, 3.0, 1.0), 1e-5), "the cone spans {bounds:?}");
+    assert_eq!(world.get::<RigidBody>(cylinder), Some(&RigidBody::Static));
+}
+
+#[test]
 fn masses_set_the_total_body_mass() {
     let mut app = load_scene(SCENE);
     let world = app.world_mut();

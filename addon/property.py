@@ -112,10 +112,12 @@ class BEVY_PG_component(bpy.types.PropertyGroup):
         ("CUBOID", "Cuboid", "Box with explicit dimensions on Bevy's local axes", "MESH_CUBE", 2),
         ("SPHERE", "Sphere", "Sphere with a radius", "MESH_UVSPHERE", 3),
         ("CAPSULE", "Capsule", "Capsule along Bevy's local Y axis", "MESH_CAPSULE", 4),
+        ("CYLINDER", "Cylinder", "Cylinder along Bevy's local Y axis", "MESH_CYLINDER", 5),
+        ("CONE", "Cone", "Cone along Bevy's local Y axis, pointing up", "MESH_CONE", 6),
     ], default="TRIMESH", update=touch_changed)
     collider_size: FloatVectorProperty(name="Size", description="Box dimensions along Bevy's local X, Y (up) and Z axes", size=3, subtype="XYZ", default=(1.0, 1.0, 1.0), min=0.001, unit="LENGTH", update=touch_changed)
-    collider_radius: FloatProperty(name="Radius", description="Radius of the sphere or capsule", default=0.5, min=0.001, unit="LENGTH", update=touch_changed)
-    collider_height: FloatProperty(name="Height", description="Length of the capsule's cylinder, without the caps", default=1.0, min=0.0, unit="LENGTH", update=touch_changed)
+    collider_radius: FloatProperty(name="Radius", description="Radius of the sphere, capsule, cylinder or cone base", default=0.5, min=0.001, unit="LENGTH", update=touch_changed)
+    collider_height: FloatProperty(name="Height", description="Length of the capsule's cylinder without the caps, or the full height of a cylinder or cone", default=1.0, min=0.0, unit="LENGTH", update=touch_changed)
     collider_offset: FloatVectorProperty(name="Offset", description="Moves the shape away from the object's origin, along Bevy's local X, Y (up) and Z axes", size=3, subtype="XYZ", unit="LENGTH", update=touch_changed)
     collider_sensor: BoolProperty(name="Sensor", description="Detect overlaps without producing collision forces", default=False, update=touch_changed)
     collider_events: BoolProperty(name="Collision Events", description="Send Avian's CollisionStart and CollisionEnd events when this collider starts or stops touching another. On by default for sensors", get=_get_collision_events, set=_set_collision_events, update=touch_changed)

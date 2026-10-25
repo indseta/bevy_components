@@ -492,6 +492,8 @@ fn primitive_collider(spec: &ColliderSpec) -> Option<Collider> {
         ColliderShape::Cuboid => Collider::cuboid(spec.size[0], spec.size[1], spec.size[2]),
         ColliderShape::Sphere => Collider::sphere(spec.radius),
         ColliderShape::Capsule => Collider::capsule(spec.radius, spec.height),
+        ColliderShape::Cylinder => Collider::cylinder(spec.radius, spec.height),
+        ColliderShape::Cone => Collider::cone(spec.radius, spec.height),
         ColliderShape::Trimesh | ColliderShape::Convex => return None,
     };
     if spec.offset == Vec3::ZERO {

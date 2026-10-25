@@ -18,7 +18,7 @@ Handles on the selected object resize colliders, visibility ranges, light ranges
 
 ## Physics
 
-**Collider** adds an Avian cuboid, sphere, capsule, convex hull or triangle mesh collider, or a sensor. Sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider.
+**Collider** adds an Avian cuboid, sphere, capsule, cylinder, cone, convex hull or triangle mesh collider, or a sensor. Sizes and offsets are in Bevy coordinates (Y up), and **Fit to Mesh** sets them from the meshes on and under the object. Colliders also set friction, restitution and collision layers 0 to 31, the same numbers as Avian's layer bits. Name the layers in **Properties > Scene > Bevy Collision Layers** to see the names in every Collider.
 
 - **Collision Events** adds Avian's `CollisionEventsEnabled`, so the collider sends `CollisionStart` and `CollisionEnd`. It is on by default for sensors.
 - **Collision Only** hides the meshes on and under the object in the game with `Visibility::Hidden` and keeps their colliders, for invisible walls.

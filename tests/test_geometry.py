@@ -115,6 +115,21 @@ class TestGeometry(unittest.TestCase):
         self.assertEqual(capsule["offset"], (0, 1, 0))
         self.assertEqual(geometry.fit_shape("CAPSULE", [(-1, -1, 0), (1, 1, 0.5)])["height"], 0.0)
         self.assertEqual(geometry.fit_shape("CUBOID", [(-0.5, -0.5 + 1e-9, -0.5), (0.5, 0.5, 0.5 + 1e-9)])["offset"], (0.0, 0.0, 0.0))
+        for shape in ("CYLINDER", "CONE"):
+            fit = geometry.fit_shape(shape, ring)
+            self.assertAlmostEqual(fit["radius"], 0.4)
+            self.assertAlmostEqual(fit["height"], 2.0)
+            self.assertEqual(fit["offset"], (0, 1, 0))
+
+    def test_cylinders_and_cones_stand_on_z(self):
+        points = [point for segment in geometry.cylinder_lines(0.5, 2.0) for point in segment]
+        self.assertEqual((min(point[2] for point in points), max(point[2] for point in points)), (-1.0, 1.0))
+        self.assertAlmostEqual(max(math.hypot(point[0], point[1]) for point in points), 0.5)
+        segments = geometry.cone_shape_lines(1.0, 2.0)
+        tips = [point for segment in segments for point in segment if point[2] == 1.0]
+        self.assertEqual(set(tips), {(0, 0, 1.0)})
+        self.assertAlmostEqual(max(math.hypot(point[0], point[1]) for segment in segments for point in segment if point[2] == -1.0), 1.0)
+        self.assertEqual(len(geometry.capsule_lines(0.5, 2.0)) - len(geometry.cylinder_lines(0.5, 2.0)), 4 * 8)
 
 
 if __name__ == "__main__":

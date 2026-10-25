@@ -60,7 +60,7 @@ Turn on **Export on Save** and enable Bevy's `file_watcher` feature, and the run
 
 | Component | In Bevy |
 | --- | --- |
-| Collider | Avian cuboid, sphere, capsule, convex hull or triangle mesh collider, with friction, restitution, collision layers and events |
+| Collider | Avian cuboid, sphere, capsule, cylinder, cone, convex hull or triangle mesh collider, with friction, restitution, collision layers and events |
 | Rigid Body | Avian static, dynamic or kinematic body with mass, damping, locked axes and a starting velocity |
 | Joint | Avian fixed, hinge, slider or ball joint between two bodies |
 | Visibility Range | `VisibilityRange` for levels of detail |

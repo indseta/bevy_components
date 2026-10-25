@@ -11,7 +11,7 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Matrix, Vector
 
 from .changes import change_count, revision
-from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cuboid_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
+from .geometry import arrow_lines, box_lines, capsule_lines, cone_lines, cone_shape_lines, cuboid_lines, cylinder_lines, joint_lines, perpendicular, sphere_lines, spin_lines, voxel_lines
 from .metadata import PRIMITIVE_SHAPES, initial_velocities, light_amount, light_intensity, light_of, light_range, light_unit
 from .property import JOINT_LABELS
 from .reference import read_scenes
@@ -174,6 +174,10 @@ def collider_lines(obj, item, limit, children):
         return [(collider_matrix(obj, item), sphere_lines(item.collider_radius))]
     if kind == "CAPSULE":
         return [(collider_matrix(obj, item), capsule_lines(item.collider_radius, item.collider_height))]
+    if kind == "CYLINDER":
+        return [(collider_matrix(obj, item), cylinder_lines(item.collider_radius, item.collider_height))]
+    if kind == "CONE":
+        return [(collider_matrix(obj, item), cone_shape_lines(item.collider_radius, item.collider_height))]
     return [(matrix, mesh_lines(source, kind, limit)) for source, matrix in mesh_sources(obj, children, "COLLIDER")]
 
 
@@ -541,6 +545,8 @@ def _label_lines(obj, settings, children):
             details = f"r={collider.collider_radius:g}m"
         elif collider.collider_shape == "CAPSULE":
             details = f"r={collider.collider_radius:g}, cylinder={collider.collider_height:g}m"
+        elif collider.collider_shape in {"CYLINDER", "CONE"}:
+            details = f"r={collider.collider_radius:g}, height={collider.collider_height:g}m"
         else:
             sources = [source for source, _matrix in mesh_sources(obj, children, "COLLIDER")]
             if not sources:

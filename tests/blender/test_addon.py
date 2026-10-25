@@ -4153,6 +4153,39 @@ class TestBevyGltf(unittest.TestCase):
         self.assertTrue(reference.enabled and broken.enabled)
         self.assertNotIn("bevy_components", crate)
 
+    def test_single_prefab_exports_its_collider_and_lods(self):
+        lamp = add_empty("lamp", (0, 0, 0))
+        collider = add_component(lamp, "COLLIDER", collider_shape="CYLINDER", collider_radius=0.3, collider_height=2.0, collider_offset=(0, 1, 0))
+        near = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "lamp_lod0", vertices=32, radius=0.3, depth=2, location=(0, 0, 1))
+        far = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "lamp_lod1", vertices=8, radius=0.3, depth=2, location=(0, 0, 1))
+        for mesh, preset in ((near, "NEAR"), (far, "MID")):
+            mesh.parent = lamp
+            add_component(mesh, "VISIBILITY_RANGE")
+            apply_lod_preset(mesh, preset)
+        add_mesh(bpy.ops.mesh.primitive_plane_add, "street", size=10)
+        self.assertEqual(_extents(_collider_lines(lamp, collider, 1000)), (0.3, 0.3, 1.0))
+        collider.collider_shape = "CONE"
+        self.assertEqual(addon.metadata.component_errors(collider), [])
+        self.assertEqual(_extents(_collider_lines(lamp, collider, 1000)), (0.3, 0.3, 1.0))
+        collider.collider_height = 0
+        self.assertEqual(addon.metadata.component_errors(collider), ["collider height must be positive"])
+        collider.collider_shape = "CYLINDER"
+        collider.collider_height = 2.0
+        select(lamp, near, far)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "lamp.glb"
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True), {"FINISHED"})
+            gltf = read_gltf(path)
+        nodes = {node["name"]: node for node in gltf["nodes"]}
+        self.assertEqual(set(nodes), {"lamp", "lamp_lod0", "lamp_lod1"})
+        exported = _rounded(json.loads(nodes["lamp"]["extras"]["bevy_components"])["components"])
+        self.assertEqual([(component["type"], component["shape"], component["radius"], component["height"], component["offset"]) for component in exported], [("collider", "cylinder", 0.3, 2.0, [0.0, 1.0, 0.0])])
+        ranges = {name: _rounded(json.loads(nodes[name]["extras"]["bevy_components"])["components"]) for name in ("lamp_lod0", "lamp_lod1")}
+        self.assertEqual(ranges, {
+            "lamp_lod0": [{"type": "visibility_range", "start": [0.0, 0.0], "end": [20.0, 25.0], "use_aabb": False}],
+            "lamp_lod1": [{"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False}],
+        })
+
 
 class TestExportOptions(unittest.TestCase):
     def setUp(self):

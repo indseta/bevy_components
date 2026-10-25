@@ -31,7 +31,7 @@ FIELD_ZEROS = {
     "ENUM": "",
 }
 COLOR_CHANNELS = ("red", "green", "blue", "alpha")
-PRIMITIVE_SHAPES = {"CUBOID", "SPHERE", "CAPSULE"}
+PRIMITIVE_SHAPES = {"CUBOID", "SPHERE", "CAPSULE", "CYLINDER", "CONE"}
 INT_LIMIT = 2 ** 31
 INT_RANGES = {
     "i8": (-2 ** 7, 2 ** 7 - 1),
@@ -471,8 +471,10 @@ def component_errors(item):
     elif item.component_type == "COLLIDER":
         if item.collider_shape == "CUBOID" and any(value <= 0 for value in item.collider_size):
             errors.append("collider cuboid dimensions must be positive")
-        if item.collider_shape in {"SPHERE", "CAPSULE"} and item.collider_radius <= 0:
+        if item.collider_shape in {"SPHERE", "CAPSULE", "CYLINDER", "CONE"} and item.collider_radius <= 0:
             errors.append("collider radius must be positive")
+        if item.collider_shape in {"CYLINDER", "CONE"} and item.collider_height <= 0:
+            errors.append("collider height must be positive")
     elif item.component_type == "JOINT" and joint_limits_inverted(item):
         errors.append("Joint limit Min is above Max")
     elif item.component_type == "SCENE_REFERENCE":
