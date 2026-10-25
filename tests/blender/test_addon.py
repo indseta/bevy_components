@@ -15,6 +15,7 @@ from types import MethodType, SimpleNamespace
 from unittest import mock
 
 import bpy
+import blf
 import gpu
 import numpy
 from mathutils import Matrix, Quaternion, Vector
@@ -3375,6 +3376,20 @@ class TestValidation(unittest.TestCase):
         build_sample_scene()
         self.assertEqual(self._messages(), [])
 
+    def test_messages_wrap_to_the_panel_width(self):
+        text = "Export the scene once, then Play exports it again each time"
+        for width in (180, 252, 291, 600):
+            layout = FakeLayout(self)
+            addon.validation.draw_message(layout, text, "INFO", width)
+            lines = [line for line in layout.texts() if line]
+            self.assertEqual(" ".join(lines), text)
+            space = width - addon.validation.MESSAGE_MARGIN
+            self.assertTrue(all(blf.dimensions(0, line)[0] <= space for line in lines if " " in line))
+        self.assertEqual(len(lines), 1)
+        layout = FakeLayout(self)
+        addon.validation.draw_message(layout, text, "INFO", 252)
+        self.assertGreater(len([line for line in layout.texts() if line]), 1)
+
     def test_checks_run_again_only_for_objects_that_changed(self):
         crate = add_mesh(bpy.ops.mesh.primitive_cube_add, "crate")
         add_component(crate, "RIGID_BODY", rigid_body_kind="DYNAMIC")
@@ -4589,6 +4604,13 @@ class TestPlay(unittest.TestCase):
         reference.scene_file = str(self.project / "assets" / "tree.glb")
         self.assertEqual(addon.validation.check_game_paths(bpy.data.objects, self.glb, assets), [])
 
+    def test_nested_assets_folders_follow_the_game_project(self):
+        sound = Path(self.directory.name) / "studio" / "assets" / "sfx" / "assets" / "hit.ogg"
+        self.assertEqual(addon.system.asset_path(str(sound)), ("hit.ogg", sound.parent))
+        (Path(self.directory.name) / "studio").mkdir(parents=True, exist_ok=True)
+        (Path(self.directory.name) / "studio" / "Cargo.toml").write_text("[package]\n")
+        self.assertEqual(addon.system.asset_path(str(sound)), ("sfx/assets/hit.ogg", sound.parents[2]))
+
     def test_the_game_schema_is_read_from_the_game_project(self):
         (self.project / SCHEMA.name).write_bytes(SCHEMA.read_bytes())
         self.preferences.game_folder = str(self.project)
@@ -5037,6 +5059,19 @@ class TestBakeLighting(unittest.TestCase):
             face, row, column = _cube_texel(_bevy_lookup(holder, item, direction), 64)
             self.assertTrue(numpy.allclose(pixels[face, row, column, :3], color, atol=0.1), f"{direction} looks up {pixels[face, row, column]}")
         self.assertTrue(numpy.all(pixels[..., 3] == 1.0))
+
+    def test_bakes_leave_out_collision_only_meshes(self):
+        room, reflection = self._probe("room", "REFLECTION_PROBE", bake_resolution="64", volume_size=(4.0, 4.0, 4.0))
+        wall = add_mesh(bpy.ops.mesh.primitive_cube_add, "wall", size=6)
+        _emissive(wall, (1.0, 0.0, 0.0))
+        add_component(wall, "COLLIDER", collider_collision_only=True)
+        self.assertEqual(addon.bake.bake_hidden(self.scene), ["wall"])
+        self.assertEqual(bpy.ops.bevy_components.bake_lighting(object_name="room", index=0), {"FINISHED"})
+        self.assertFalse(wall.hide_render)
+        pixels = _ktx2_pixels(reflection.probe_file)
+        self.assertLess(float(pixels[..., 0].mean() - pixels[..., 1].mean()), 0.05)
+        wall.location.x = 0.5
+        self.assertEqual(addon.validation.stale_bakes(bpy.data.objects), [])
 
     def test_the_sky_holds_the_world_alone(self):
         world = self.scene.world

@@ -14,6 +14,11 @@
 - The checks behind the problem count, each component's warnings, Validate All Objects and the export run again only for objects that changed, so with 2000 objects they take about 15 ms instead of 180 ms when little changed. Adding, duplicating or deleting an object no longer makes every check or preview start over.
 - Play runs the same export as Export Again instead of calling its operator, so when texture compression fails, Play says why.
 
+### Fixed
+
+- **Bake Lighting** leaves out meshes hidden by a **Collision Only** collider, as the game does, and moving them no longer marks a bake out of date.
+- Hints and warnings in panels wrap to the panel's real width, so they are no longer cut off in the Bevy sidebar.
+
 ### Removed
 
 - The **BSN export** (**File > Export > Bevy Scene (BSN)**) is gone, so the addon writes GLB files only and the importer is the one way into Bevy. Its settings, the **Enum Type** of enum fields in **Bevy Custom Components** and the `enums` entry in custom component extras, which only that export read, went with it. Files that used it still open and export their GLB.

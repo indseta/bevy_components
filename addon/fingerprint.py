@@ -6,7 +6,7 @@ import numpy
 from mathutils import Vector
 
 from .bake import box_matrix
-from .system import component_of, lightmap_uv_map
+from .system import collision_only_meshes, component_of, lightmap_uv_map
 
 GEOMETRY_TYPES = {"MESH", "CURVE", "SURFACE", "META", "FONT", "CURVES", "POINTCLOUD", "VOLUME"}
 DIGITS = 5
@@ -36,7 +36,10 @@ def bake_record(scene, view_layer, depsgraph, job, cache):
 def bake_parts(scene, view_layer, depsgraph, cache, obj=None, item=None, world=None):
     if obj is None:
         return {"world": _id_digest(world, cache)}
-    geometry = [other for other in scene.objects if other.type in GEOMETRY_TYPES and _rendered(other, view_layer)]
+    if ("collision_only",) not in cache:
+        cache[("collision_only",)] = collision_only_meshes(scene.objects)
+    hidden = cache[("collision_only",)]
+    geometry = [other for other in scene.objects if other.type in GEOMETRY_TYPES and _rendered(other, view_layer) and other not in hidden]
     if item.component_type == "LIGHTMAP":
         bounds, digest = _geometry(obj, depsgraph, cache)
         uv_map = lightmap_uv_map(obj)

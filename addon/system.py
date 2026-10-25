@@ -233,6 +233,16 @@ def mesh_sources(obj, children, kind, instances=True):
     return [(source, matrix) for source, matrix in subtree(obj, children, lambda child: component_of(child, kind) is not None, instances) if has_faces(source)]
 
 
+def collision_only_meshes(objects):
+    children = children_map(objects)
+    hidden = set()
+    for obj in objects:
+        collider = component_of(obj, "COLLIDER")
+        if collider is not None and collider.collider_collision_only:
+            hidden.update(source for source, _matrix in mesh_sources(obj, children, "COLLIDER", instances=False))
+    return hidden
+
+
 def export_settings(scene):
     return scene.bevy_glb_export
 
