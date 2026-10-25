@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.1 (2026-10-25)
 
 ### Added
 
@@ -27,6 +27,11 @@
 ### Removed
 
 - The **BSN export** (**File > Export > Bevy Scene (BSN)**) is gone, so the addon writes GLB files only and the importer is the one way into Bevy. Its settings, the **Enum Type** of enum fields in **Bevy Custom Components** and the `enums` entry in custom component extras, which only that export read, went with it. Files that used it still open and export their GLB.
+
+### Upgrading from 0.5.0
+
+- A game that loaded the BSN export's Rust file now loads the scene's GLB with the importer instead.
+- Update the importer together with the addon. The 0.5.0 importer warns "Unsupported collider shape" for Cylinder and Cone colliders, and builds a mesh collider for every level of detail.
 
 ## 0.5.0 (2026-10-24)
 
