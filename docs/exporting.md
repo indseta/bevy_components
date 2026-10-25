@@ -2,10 +2,26 @@
 
 **File > Export** has two Bevy exports, and both write each object's components in its glTF extras:
 
-- **Bevy glTF (.glb/.gltf)** is Blender's own glTF export, with the same dialog and options such as **Limit to Selected Objects**, made for Bevy. It always writes the Bevy components, such as a prop's Collider and Visibility Range, without ticking **Custom Properties**. Use it to export a single object, a prop or anything else you would export as glTF. It can also be a collection's exporter under **Properties > Collection > Exporters**. When a component cannot export, such as a Custom Component with broken JSON, it leaves that one out and says so.
+- **Bevy glTF (.glb/.gltf)** is Blender's own glTF export, with the same dialog and options such as **Limit to Selected Objects**, made for Bevy. It always writes the Bevy components, such as a prop's Collider and Visibility Range, without ticking **Custom Properties**. Use it to export a single object, a prop or anything else you would export as glTF. It can also be a collection's exporter under **Properties > Collection > Exporters**. When a component cannot export, such as a Custom Component with broken JSON, it leaves that one out and says so. After the export it lists the warnings of the [checks](#checks) for the objects it wrote, and says when it left out a light with a Light component because **Include > Punctual Lights** is off.
 - **Bevy Scene (.glb)** writes a whole level. It runs the checks first, can compress textures, writes prefabs and has Export Again, Export on Save and Play. The same export sits in the dropdown next to **Add Component**, and the rest of this page is about it. To make the GLB smaller, see [texture compression](texture_compression.md).
 
 Blender's plain **glTF 2.0** export writes the components only when **Include > Custom Properties** is ticked.
+
+Bevy glTF exports, and Bevy Scene exports limited to selected objects, leave out the World's **Bevy Ambient Light** and **Bevy Sky**, so spawning a prop doesn't change the game's lighting.
+
+## Export a prop
+
+A prop such as a lamp is an empty with its parts under it, exported to its own GLB:
+
+1. Model the levels of detail as meshes under the empty, such as `lamp_lod0`, `lamp_lod1` and `lamp_lod2`. Give each a **Visibility Range** and pick its LOD0, LOD1 or LOD2 preset. A Decimate modifier can make the lower levels.
+2. Add the **Collider** to the empty. A cylinder, capsule or other shape sits on the empty itself, and a Convex Hull or Triangle Mesh is built from the first level only. For a simpler collision shape, add another mesh under the empty with its own Collider and tick **Collision Only**.
+3. Put a light that belongs to the prop, such as the lamp's bulb, under the empty too, and give it a **Light** component for its shadows and other Bevy settings.
+4. Select the empty and its children and export with **Bevy glTF (.glb/.gltf)**, with **Include > Limit to > Selected Objects**, **Include > Punctual Lights** and **Data > Mesh > Apply Modifiers** ticked. When the .blend file holds just this prop, **Bevy Scene (.glb)** works too: it applies modifiers and exports lights by default, and has Export Again and Export on Save. Delete Blender's default light first, since lights export, and leave the World's Bevy Ambient Light and Bevy Sky off.
+5. Spawn the GLB in the game like a scene, with a `Transform`, place it in a level with a Scene Reference, or make it a [prefab](#prefabs):
+
+```rust
+commands.spawn((WorldAssetRoot(asset_server.load("props/lamp.glb#Scene0")), Transform::from_xyz(4.0, 0.0, 2.0)));
+```
 
 ## Options
 
@@ -61,4 +77,4 @@ Warnings point out setups that behave differently in Bevy than they look in Blen
 - an area light without a Light component, which glTF leaves out, a disk or ellipse area light or a square spot light, which Bevy cannot draw, and a Volumetric light without shadows
 - a light probe file in a block-compressed format, which only loads on GPUs that support it
 - a material that glTF flattens: one that mixes shaders, has no Principled BSDF, or drives Principled BSDF inputs with procedural nodes instead of images
-- shape keys on a mesh with modifiers while **Apply Modifiers** is on
+- shape keys on a mesh with modifiers while **Apply Modifiers** is on, and a level of detail with modifiers while it is off

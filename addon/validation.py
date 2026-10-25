@@ -381,6 +381,10 @@ def _object_issues(obj, children, exported, destination=None, animations=True, m
     shape_keys = obj.data.shape_keys if obj.type == "MESH" else None
     if modifiers and len(obj.modifiers) and shape_keys is not None and len(shape_keys.key_blocks) > 1:
         issues.append(Issue("WARNING", obj, None, "glTF leaves out the shape keys of meshes with modifiers. Apply the modifiers, or turn off Apply Modifiers"))
+    if not modifiers and has_faces(obj) and inherited(obj, "VISIBILITY_RANGE")[1] is not None:
+        names = [modifier.name for modifier in obj.modifiers if modifier.type != "ARMATURE" and modifier.show_viewport]
+        if names:
+            issues.append(Issue("WARNING", obj, None, f"Apply Modifiers is off, so this level of detail exports without its {', '.join(names)} modifier{'s' if len(names) != 1 else ''}"))
     return issues
 
 
@@ -449,15 +453,15 @@ def check_world(world):
 
 
 @resolved
-def check_scene(objects):
-    return check_world(bpy.context.scene.world) + stale_bakes(objects)
+def check_scene(objects, world=True):
+    return (check_world(bpy.context.scene.world) if world else []) + stale_bakes(objects, sky=world)
 
 
-def stale_bakes(objects):
+def stale_bakes(objects, sky=True):
     scene = bpy.context.scene
     world = scene.world
     baked = []
-    if world is not None and hasattr(world, "bevy_sky") and world.bevy_sky.enabled:
+    if sky and world is not None and hasattr(world, "bevy_sky") and world.bevy_sky.enabled:
         record = read_record(world.bevy_sky.bake_fingerprint, world.bevy_sky.sky_file)
         if record is not None:
             baked.append((None, None, "SKY", record))

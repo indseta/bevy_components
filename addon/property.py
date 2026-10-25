@@ -327,5 +327,5 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     navigation: BoolProperty(name="Navigation", description="Draw the faces of walkable ground that slope less than 45°, and the bounds of obstacles", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
     xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
-    edit_handles: BoolProperty(name="Resize Handles", description="Drag gizmos on the selected active object to resize and move box, sphere and capsule colliders, and to resize visibility ranges, light ranges, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)
+    edit_handles: BoolProperty(name="Resize Handles", description="Drag gizmos on the selected active object to resize and move box, sphere, capsule, cylinder and cone colliders, and to resize visibility ranges, light ranges, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)
     max_mesh_edges: IntProperty(name="Max Mesh Edges", description="Draw triangle mesh colliders with more edges than this as bounding boxes", default=2000, min=64, max=20000, update=redraw_viewports)

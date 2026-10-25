@@ -64,7 +64,7 @@ def again(scene):
 
 def scene_issues(options, objects, destination):
     objects = list(objects)
-    return check_objects(objects, destination=destination, animations=options.include_animations, modifiers=options.apply_modifiers) + check_scene(objects) + check_game_paths(objects, destination, game_assets(bpy.context))
+    return check_objects(objects, destination=destination, animations=options.include_animations, modifiers=options.apply_modifiers) + check_scene(objects, world=not options.selected_only) + check_game_paths(objects, destination, game_assets(bpy.context))
 
 
 def start_export(job, context, background=False):

@@ -81,7 +81,7 @@ The World properties add **Bevy Sky** and **Bevy Ambient Light**, and **Bevy Pre
 - [Components](docs/components.md): physics, rendering, audio, animation, scene references, navigation and the viewport previews
 - [Custom components](docs/custom_components.md): your game's own components, from its code or defined by hand
 - [Lighting](docs/lighting.md): lights, ambient light, the sky, fog, light probes and baked lighting
-- [Exporting](docs/exporting.md): export options, Export Again, hot reload, prefabs and the checks
+- [Exporting](docs/exporting.md): props with levels of detail, export options, Export Again, hot reload, prefabs and the checks
 - [Texture compression](docs/texture_compression.md): KTX2 textures embedded in the GLB
 - [Play and the viewer](docs/play.md): run your game from Blender, or open any scene in the importer's viewer
 - [Development](docs/development.md): tests, CI and releases

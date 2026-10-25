@@ -4179,9 +4179,9 @@ class TestBevyGltf(unittest.TestCase):
             plain = read_gltf(path)
         self.assertEqual(addon.gltf._skipped_message(["crate: invalid JSON in Custom Component"]), "Left out 1 Bevy component that cannot export: crate: invalid JSON in Custom Component. See Validate All Objects")
         self.assertEqual(addon.gltf._skipped_message([f"crate: problem {index}" for index in range(5)]), "Left out 5 Bevy components that cannot export: crate: problem 0; crate: problem 1; crate: problem 2 and 2 more. See Validate All Objects")
-        with addon.system.bevy_export() as skipped:
-            addon.system.object_components(crate, None, addon.system._skipped[0])
-        self.assertEqual([message.split(":")[:2] for message in skipped], [["crate", " Custom JSON for game"]])
+        with addon.system.bevy_export() as export:
+            addon.system.object_components(crate, None, export.skipped)
+        self.assertEqual([message.split(":")[:2] for message in export.skipped], [["crate", " Custom JSON for game"]])
         self.assertEqual([node["name"] for node in gltf["nodes"]], ["crate"])
         extras = gltf["nodes"][0]["extras"]
         self.assertEqual(list(extras), ["bevy_components"])
@@ -4224,6 +4224,46 @@ class TestBevyGltf(unittest.TestCase):
             "lamp_lod0": [{"type": "visibility_range", "start": [0.0, 0.0], "end": [20.0, 25.0], "use_aabb": False}],
             "lamp_lod1": [{"type": "visibility_range", "start": [20.0, 25.0], "end": [80.0, 85.0], "use_aabb": False}],
         })
+
+
+    def test_bevy_gltf_says_what_a_prop_export_leaves_out(self):
+        lamp = add_empty("lamp", (0, 0, 0))
+        near = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "lamp_lod0", vertices=32, radius=0.3, depth=2, location=(0, 0, 1))
+        far = add_mesh(bpy.ops.mesh.primitive_cylinder_add, "lamp_lod1", vertices=32, radius=0.3, depth=2, location=(0, 0, 1))
+        far.modifiers.new("Decimate", "DECIMATE").ratio = 0.25
+        for mesh, preset in ((near, "NEAR"), (far, "MID")):
+            mesh.parent = lamp
+            add_component(mesh, "VISIBILITY_RANGE")
+            apply_lod_preset(mesh, preset)
+        bulb = add_light("bulb", "POINT", (0, 0, 2.2))
+        bulb.parent = lamp
+        add_component(bulb, "LIGHT")
+        add_light("sun", "SUN", (0, 0, 10))
+        bpy.context.scene.world.bevy_ambient_light.enabled = True
+        select(lamp, near, far, bulb)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "lamp.glb"
+            operator = SimpleNamespace(filepath=str(path), collection="", use_active_collection=False, use_active_collection_with_nested=True, use_selection=True, use_visible=False, use_renderable=False, export_lights=False, export_animations=False, export_apply=False)
+            with addon.system.bevy_export() as export:
+                bpy.ops.export_scene.gltf(filepath=str(path), export_format="GLB", use_selection=True)
+            self.assertEqual(list(export.objects), [near, far, lamp])
+            self.assertEqual(addon.gltf.export_messages(operator, bpy.context, export), [
+                ({"WARNING"}, "Left out bulb, which has a Light component, because Punctual Lights is off. Tick Include > Punctual Lights to export it"),
+                ({"WARNING"}, "Exported with 1 warning: lamp_lod1: Apply Modifiers is off, so this level of detail exports without its Decimate modifier"),
+            ])
+            operator.export_lights = operator.export_apply = True
+            self.assertEqual(addon.gltf.export_messages(operator, bpy.context, export), [])
+            operator.use_selection = operator.export_lights = False
+            self.assertEqual(addon.gltf.export_messages(operator, bpy.context, export)[0][1].split(",")[0], "Left out bulb")
+            self.assertEqual(bpy.ops.export_scene.bevy_gltf(filepath=str(path), use_selection=True, export_lights=True), {"FINISHED"})
+            gltf = read_gltf(path)
+            self.assertEqual(sorted(node["name"] for node in gltf["nodes"]), ["bulb", "lamp", "lamp_lod0", "lamp_lod1"])
+            self.assertEqual(json.loads(gltf["scenes"][0]["extras"]["bevy_components"])["components"], [])
+            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(path), selected_only=True), {"FINISHED"})
+            self.assertEqual(json.loads(read_gltf(path)["scenes"][0]["extras"]["bevy_components"])["components"], [])
+            self.assertEqual(bpy.ops.export_scene.bevy_components_glb(filepath=str(path), selected_only=False), {"FINISHED"})
+            self.assertEqual([component["type"] for component in json.loads(read_gltf(path)["scenes"][0]["extras"]["bevy_components"])["components"]], ["ambient_light"])
+            bpy.context.scene.property_unset("bevy_glb_export")
 
 
 class TestExportOptions(unittest.TestCase):

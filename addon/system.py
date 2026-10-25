@@ -7,6 +7,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 
 import bpy
 from bpy.app.handlers import persistent
@@ -34,7 +35,7 @@ SCHEMA_CHECK_INTERVAL = 1.0
 
 SUMMARY_LIMIT = 8192
 _resolved = [None]
-_skipped = [None]
+_export = [None]
 _summaries = {}
 _game_schema = {"checked": None, "key": None, "path": None, "types": {}, "error": ""}
 _variant_items = {}
@@ -340,12 +341,12 @@ def touch_objects(objects):
 
 @contextmanager
 def bevy_export():
-    previous = _skipped[0]
-    _skipped[0] = skipped = []
+    previous = _export[0]
+    _export[0] = export = SimpleNamespace(skipped=[], objects={})
     try:
-        yield skipped
+        yield export
     finally:
-        _skipped[0] = previous
+        _export[0] = previous
 
 
 def object_components(obj, directory=None, skipped=None):
@@ -971,8 +972,10 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_node, "bevy_prefab")
         reference = instance_node(gltf2_node, blender_object)
         _component_extras(gltf2_node, blender_object, export_settings, [reference] if reference is not None else [])
+        if _export[0] is not None and blender_object is not None:
+            _export[0].objects[blender_object] = None
 
-    def gather_scene_hook(self, gltf2_scene, blender_scene, _export_settings):
+    def gather_scene_hook(self, gltf2_scene, blender_scene, export_settings):
         _remove_extra(gltf2_scene, "bevy_component_previews")
         _remove_extra(gltf2_scene, "bevy_component_definitions")
         _remove_extra(gltf2_scene, "bevy_collision_layers")
@@ -984,15 +987,16 @@ class glTF2ExportUserExtension:
         _remove_extra(gltf2_scene, "bevy_game")
         prefab_scene(gltf2_scene, blender_scene)
         world = getattr(blender_scene, "world", None)
-        components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") else []
+        prop = _export[0] is not None or export_settings.get("gltf_selected")
+        components = scene_components(world) if world is not None and hasattr(world, "bevy_sky") and not prop else []
         gltf2_scene.extras = {**(gltf2_scene.extras or {}), EXTRAS_KEY: serialize_scene(components, addon_version())}
 
 
 def _component_extras(gltf2_node, obj, export_settings, extra):
-    if obj is None or not hasattr(obj, "bevy_component_data") or _skipped[0] is None and not export_settings.get("gltf_extras"):
+    if obj is None or not hasattr(obj, "bevy_component_data") or _export[0] is None and not export_settings.get("gltf_extras"):
         return
     with resolving():
-        components = object_components(obj, export_directory() or os.path.dirname(export_settings.get("gltf_filepath", "")) or None, _skipped[0]) + extra
+        components = object_components(obj, export_directory() or os.path.dirname(export_settings.get("gltf_filepath", "")) or None, _export[0].skipped if _export[0] is not None else None) + extra
     if components:
         extras = gltf2_node.extras if isinstance(gltf2_node.extras, dict) else {}
         gltf2_node.extras = {**extras, EXTRAS_KEY: json.dumps({"version": SCHEMA_VERSION, "components": components}, separators=(",", ":"), ensure_ascii=False)}

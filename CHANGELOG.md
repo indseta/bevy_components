@@ -6,6 +6,9 @@
 
 - **Bevy glTF export**: **File > Export > Bevy glTF (.glb/.gltf)** is Blender's glTF export with the same dialog and options, made for Bevy. It always writes the Bevy components without ticking Custom Properties, so single objects and props export with their colliders. It also works as a collection exporter. See [Exporting](docs/exporting.md).
 - **Cylinder** and **Cone** collider shapes along Bevy's Y axis, like the capsule, with **Fit to Mesh** and viewport handles for their radius and height.
+- **Bevy glTF** lists the warnings of the checks for the objects it wrote, and warns when it leaves out a light with a Light component because **Punctual Lights** is off.
+- A check for levels of detail with modifiers while **Apply Modifiers** is off, which then export at full detail.
+- [Export a prop](docs/exporting.md#export-a-prop): levels of detail, colliders and lights in a prop's own GLB.
 
 ### Changed
 
@@ -13,6 +16,7 @@
 - The viewport previews and labels redraw much faster in big scenes: with 2000 objects, a redraw where nothing changed takes about 8 ms instead of 430 ms, and only objects that changed are rebuilt.
 - The checks behind the problem count, each component's warnings, Validate All Objects and the export run again only for objects that changed, so with 2000 objects they take about 15 ms instead of 180 ms when little changed. Adding, duplicating or deleting an object no longer makes every check or preview start over.
 - Play runs the same export as Export Again instead of calling its operator, so when texture compression fails, Play says why.
+- Bevy glTF exports, and Bevy Scene exports limited to selected objects, leave out the World's **Bevy Ambient Light** and **Bevy Sky**, so spawning a prop no longer changes the game's lighting.
 
 ### Fixed
 
