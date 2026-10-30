@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.3 (2026-10-30)
+
+### Changed
+
+- The importer uses Bevy 0.20.1, and its other dependencies are at their latest compatible versions. Avian stays at 0.8, its newest release.
+- [Navigation](docs/components.md#navigation) names the navmesh crates that work with Bevy 0.20 now: vleue_navigator 0.17, bevy_rerecast 0.6 and bevy_landmass 0.13.
+
+### Upgrading from 0.5.2
+
+- The importer needs Bevy 0.20.1, so Cargo moves a game on Bevy 0.20.0 to 0.20.1 the next time it builds. Builds with `--locked` need a `cargo update -p bevy` first.
+
 ## 0.5.2 (2026-10-25)
 
 ### Changed
