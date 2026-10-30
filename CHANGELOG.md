@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.4 (2026-10-30)
+
+### Added
+
+- Selecting a **Rigid Body** draws the colliders of its body in the viewport, the ones on it and on the objects under it, with thinner lines, and its label counts them. Selecting one of those colliders draws the rest of its body and names the body in its label, and selecting a **Joint** draws the colliders of the bodies it connects. See [Viewport previews](docs/components.md#viewport-previews).
+
+### Changed
+
+- Previews draw through objects in Wireframe and with X-Ray on, like Blender's own overlays, without ticking **In Front**.
+- The previews' checkbox under **Overlays** in the 3D Viewport reads **Components**.
+
 ## 0.5.3 (2026-10-30)
 
 ### Changed
