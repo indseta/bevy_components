@@ -50,7 +50,7 @@ Handles on the selected object resize colliders, visibility ranges, light ranges
 - **Obstacle** for walls, crates and trees that agents go around, imported as `NavigationObstacle`.
 - **Ignored** to leave an object out, such as a small prop on walkable ground under a tagged parent.
 
-The viewport draws the faces of walkable ground that slope less than 45° and the bounds of obstacles. The importer only tags entities and builds no navmesh. No navmesh crate supports Bevy 0.20 yet (checked in October 2026: vleue_navigator 0.16, bevy_rerecast 0.5 and bevy_landmass 0.12 are on Bevy 0.19, oxidized_navigation on 0.15). Once one does, hand it the tagged entities:
+The viewport draws the faces of walkable ground that slope less than 45° and the bounds of obstacles. The importer only tags entities and builds no navmesh, so hand the tagged entities to a navmesh crate. vleue_navigator 0.17, bevy_rerecast 0.6 and bevy_landmass 0.13 work with Bevy 0.20, while oxidized_navigation is still on Bevy 0.15 (checked in October 2026):
 
 - **bevy_rerecast** builds the navmesh from the tagged meshes alone with `NavmeshSettings { filter: Some(tagged.iter().collect()), ..default() }`, where `tagged` is a `Query<Entity, Or<(With<NavigationWalkable>, With<NavigationObstacle>)>>`.
 - **vleue_navigator** cuts tagged obstacles out of the navmesh with `NavmeshUpdaterPlugin::<Collider, NavigationObstacle>`, and takes the walkable ground from `NavMesh::from_bevy_mesh` of a walkable mesh.

@@ -2,7 +2,7 @@
 
 Blender addon for adding Bevy components to objects and exporting them as GLB files, plus a Rust importer that turns the GLB's components back into components in Bevy.
 
-Requires Blender 4.2+, Bevy 0.20 and Avian 0.8.
+Requires Blender 4.2+, Bevy 0.20.1 and Avian 0.8.
 
 ## Install the addon
 
