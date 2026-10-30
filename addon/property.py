@@ -310,7 +310,7 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
         ("SELECTED", "Selected", "Draw previews for selected objects only"),
         ("ALL", "All", "Draw previews for every visible object with Bevy components"),
     ], default="SELECTED", update=redraw_viewports)
-    colliders: BoolProperty(name="Colliders", description="Draw collider shapes", default=True, update=redraw_viewports)
+    colliders: BoolProperty(name="Colliders", description="Draw collider shapes. In Selected, a selected Rigid Body, Collider or Joint also draws the other colliders of its body, or of the bodies it connects, with thinner lines", default=True, update=redraw_viewports)
     joints: BoolProperty(name="Joints", description="Draw joint axes and limits, and lines to the bodies they connect. Joints of selected bodies are drawn too", default=True, update=redraw_viewports)
     velocities: BoolProperty(name="Velocities", description="Draw the velocity and spin rigid bodies start with as arrows", default=True, update=redraw_viewports)
     visibility_ranges: BoolProperty(name="Visibility Ranges", description="Draw fade distances as spheres", default=True, update=redraw_viewports)
@@ -320,6 +320,6 @@ class BEVY_PG_viewport_settings(bpy.types.PropertyGroup):
     lights: BoolProperty(name="Light Ranges", description="Draw how far each light reaches in Bevy, where it stops lighting anything", default=True, update=redraw_viewports)
     navigation: BoolProperty(name="Navigation", description="Draw the faces of walkable ground that slope less than 45°, and the bounds of obstacles", default=True, update=redraw_viewports)
     labels: BoolProperty(name="Labels", description="Write component details next to each object", default=True, update=redraw_viewports)
-    xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry", default=False, update=redraw_viewports)
+    xray: BoolProperty(name="In Front", description="Draw previews on top of other geometry. They always do in Wireframe and X-Ray, like Blender's own overlays", default=False, update=redraw_viewports)
     edit_handles: BoolProperty(name="Resize Handles", description="Drag gizmos on the selected active object to resize and move box, sphere, capsule, cylinder and cone colliders, and to resize visibility ranges, light ranges, spatial audio ranges, fog volumes and light probes", default=True, update=redraw_viewports)
     max_mesh_edges: IntProperty(name="Max Mesh Edges", description="Draw triangle mesh colliders with more edges than this as bounding boxes", default=2000, min=64, max=20000, update=redraw_viewports)

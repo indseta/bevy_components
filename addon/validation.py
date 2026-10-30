@@ -18,7 +18,7 @@ from .prefab import instances, prefab_file, prefab_members, prefab_of, prefab_or
 from .probe import FILE_KINDS, FILE_LABELS, HEADER_LENGTH, check_texture, voxel_counts
 from .project import game_assets
 from .reference import SCENE_EXTENSIONS, read_scenes
-from .system import MESH_TYPES, asset_path, children_map, collider_meshes, component_kinds, component_of, components_for, export_options, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
+from .system import MESH_TYPES, asset_path, body_members, children_map, collider_meshes, component_kinds, component_of, components_for, export_options, exported, file_path, game_schema, game_types, has_faces, inherited, lightmap_uv_map, mesh_sources, object_actions, problem_changes, redraw_properties, redraw_viewports, resolved, scene_path, subtree
 
 Issue = namedtuple("Issue", ("level", "obj", "item", "message"))
 CheckOptions = namedtuple("CheckOptions", ("destination", "animations", "modifiers", "assets", "key"))
@@ -548,7 +548,7 @@ def _collider_warnings(obj, item, children):
 
 def _rigid_body_warnings(obj, item, children):
     warnings = []
-    if item.rigid_body_kind == "DYNAMIC" and not any(_has_collider(member) for member, _matrix in subtree(obj, children, lambda child: component_of(child, "RIGID_BODY") is not None)):
+    if item.rigid_body_kind == "DYNAMIC" and not any(_has_collider(member) for member in body_members(obj, children)):
         warnings.append("Dynamic body has no collider on it or under it, so it has no mass and collides with nothing")
     parent, body = inherited(obj.parent, "RIGID_BODY")
     if body is not None and body.rigid_body_kind != "STATIC":

@@ -233,6 +233,10 @@ def subtree(obj, children, stop, instances=True):
     return found
 
 
+def body_members(obj, children, instances=True):
+    return [member for member, _matrix in subtree(obj, children, lambda child: component_of(child, "RIGID_BODY") is not None, instances)]
+
+
 def has_faces(obj):
     return obj.type in MESH_TYPES and (obj.type != "MESH" or len(obj.data.polygons) > 0)
 

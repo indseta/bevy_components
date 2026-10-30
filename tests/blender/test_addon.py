@@ -2746,23 +2746,117 @@ class TestViewport(unittest.TestCase):
         batches = [batch for batch in addon.overlay.preview_batches(bpy.context, self.settings) if batch[2] == addon.overlay.VELOCITY_COLOR]
         self.assertEqual(len(batches), 1)
         self.assertEqual(batches[0][1][0], ((0.0, 0.0, 0.0), (1.0, 0.0, 0.0)))
-        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 4 m/s"])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Rigid Body · Dynamic · no colliders", "Velocity · 4 m/s"])
         body.rigid_body_linear_velocity = (0, 0, 4)
         self.assertEqual(tuple(round(value, 5) for value in addon.overlay.velocity_batches(self.obj, body)[0][1][0][1]), (0.0, -1.0, 0.0))
         body.rigid_body_angular_velocity = (0, math.pi, 0)
         lines = addon.overlay.velocity_batches(self.obj, body)[0][1]
         self.assertTrue(all(abs(point[2]) < 1e-5 for line in lines[5:-4] for point in line))
-        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 4 m/s · 180 °/s"])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {})[1:], ["Velocity · 4 m/s · 180 °/s"])
         body.rigid_body_lock_translation = (False, False, True)
-        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 180 °/s"])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {})[1:], ["Velocity · 180 °/s"])
         body.rigid_body_kind = "KINEMATIC"
-        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Velocity · 4 m/s · 180 °/s"])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Rigid Body · Kinematic · no colliders", "Velocity · 4 m/s · 180 °/s"])
         self.settings.velocities = False
         self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
-        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), [])
+        self.assertEqual(addon.overlay._label_lines(self.obj, self.settings, {}), ["Rigid Body · Kinematic · no colliders"])
         self.settings.velocities = True
         body.rigid_body_kind = "STATIC"
         self.assertEqual(addon.overlay.preview_batches(bpy.context, self.settings), [])
+
+    def test_selected_bodies_draw_their_colliders(self):
+        lamp = add_empty("lamp", (0, 0, 0))
+        add_component(lamp, "RIGID_BODY", rigid_body_kind="STATIC")
+        level = add_mesh(bpy.ops.mesh.primitive_cube_add, "lamp_lod0", location=(0, 0, 1))
+        add_component(level, "VISIBILITY_RANGE")
+        shapes = []
+        for index, location in enumerate(((0, 0, 0.5), (0, 0, 2), (1, 0, -2))):
+            shape = add_empty(f"lamp_collider{index}", location)
+            add_component(shape, "COLLIDER", collider_shape="SPHERE" if index else "CUBOID", collider_sensor=index == 2)
+            shapes.append(shape)
+        cart = add_empty("cart", (3, 0, 0))
+        add_component(cart, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        add_component(cart, "COLLIDER", collider_shape="CUBOID")
+        wheel = add_empty("cart_wheel", (0, 0, -0.5))
+        add_component(wheel, "COLLIDER", collider_shape="SPHERE")
+        for obj, parent in ((level, lamp), (shapes[0], lamp), (shapes[1], lamp), (shapes[2], shapes[1]), (cart, lamp), (wheel, cart)):
+            obj.parent = parent
+        bpy.context.view_layer.update()
+
+        def drawn():
+            return sorted((tuple(round(value, 4) for value in matrix.translation), color, width) for matrix, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings))
+
+        def related(*objects):
+            return sorted(obj.name for obj in addon.overlay.related_colliders(bpy.context, self.settings, list(objects), lambda: addon.system.children_map(bpy.data.objects)))
+
+        select(lamp)
+        children = addon.system.children_map(bpy.data.objects)
+        self.assertEqual(related(lamp), ["lamp_collider0", "lamp_collider1", "lamp_collider2"])
+        self.assertEqual(drawn(), [((0.0, 0.0, 0.5), addon.overlay.COLLIDER_COLOR, 1.0), ((0.0, 0.0, 2.0), addon.overlay.COLLIDER_COLOR, 1.0), ((1.0, 0.0, 0.0), addon.overlay.SENSOR_COLOR, 1.0)])
+        self.assertEqual(addon.overlay._label_lines(lamp, self.settings, children), ["Rigid Body · Static · 3 colliders"])
+        rows = sorted(addon.overlay.label_rows(bpy.context, self.settings), key=lambda row: row[0].name)
+        self.assertEqual([(obj.name, lines, details) for obj, lines, details in rows], [("lamp", ["lamp", "Rigid Body · Static · 3 colliders"], True), ("lamp_collider0", ["lamp_collider0"], False), ("lamp_collider1", ["lamp_collider1"], False), ("lamp_collider2", ["lamp_collider2"], False)])
+        select(shapes[2])
+        self.assertEqual(drawn(), [((0.0, 0.0, 0.5), addon.overlay.COLLIDER_COLOR, 1.0), ((0.0, 0.0, 2.0), addon.overlay.COLLIDER_COLOR, 1.0), ((1.0, 0.0, 0.0), addon.overlay.SENSOR_COLOR, 2.0)])
+        self.assertEqual(addon.overlay._label_lines(shapes[2], self.settings, children), ["Collider · Sphere · r=0.5m · events · part of lamp"])
+        select(cart)
+        self.assertEqual(drawn(), [((3.0, 0.0, -0.5), addon.overlay.COLLIDER_COLOR, 1.0), ((3.0, 0.0, 0.0), addon.overlay.COLLIDER_COLOR, 2.0)])
+        self.assertEqual(addon.overlay._label_lines(cart, self.settings, children), ["Collider · Cuboid · 1 × 1 × 1", "Rigid Body · Dynamic · 2 colliders"])
+        self.assertEqual(related(lamp, shapes[0]), ["lamp_collider1", "lamp_collider2"])
+        select(level)
+        self.assertEqual(drawn(), [((0.0, 0.0, 1.0), addon.overlay.LOD_OUT_COLOR, 1.1), ((0.0, 0.0, 1.0), addon.overlay.LOD_OUT_COLOR, 1.9)])
+        shapes[1].hide_set(True)
+        self.assertEqual(related(lamp), ["lamp_collider0", "lamp_collider2"])
+        shapes[1].hide_set(False)
+        self.settings.colliders = False
+        try:
+            self.assertEqual(related(lamp), [])
+            self.assertEqual(addon.overlay._label_lines(lamp, self.settings, children), [])
+        finally:
+            self.settings.colliders = True
+        self.settings.scope = "ALL"
+        self.assertEqual(related(lamp), [])
+        self.assertEqual({width for matrix, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings) if color != addon.overlay.LOD_OUT_COLOR}, {2.0})
+
+    def test_selected_joints_draw_the_colliders_they_connect(self):
+        frame = add_mesh(bpy.ops.mesh.primitive_cube_add, "frame", size=0.2)
+        add_component(frame, "COLLIDER")
+        door = add_empty("door", (1, 0, 0))
+        add_component(door, "RIGID_BODY", rigid_body_kind="DYNAMIC")
+        panel = add_empty("door_panel", (1, 0, 0))
+        add_component(panel, "COLLIDER", collider_shape="CUBOID")
+        panel.parent = door
+        hinge = add_empty("hinge", (0.5, 0, 0))
+        joint = add_component(hinge, "JOINT")
+        joint.joint_body1 = frame
+        joint.joint_body2 = door
+        bpy.context.view_layer.update()
+        select(hinge)
+        self.assertEqual(addon.overlay.related_colliders(bpy.context, self.settings, [hinge], lambda: addon.system.children_map(bpy.data.objects)), [frame, panel])
+        self.assertEqual([width for matrix, lines, color, width in addon.overlay.preview_batches(bpy.context, self.settings) if color == addon.overlay.COLLIDER_COLOR], [1.0, 1.0])
+        self.settings.joints = False
+        try:
+            self.assertEqual(addon.overlay.related_colliders(bpy.context, self.settings, [hinge], dict), [])
+        finally:
+            self.settings.joints = True
+
+    def test_previews_draw_through_objects_in_wireframe_and_x_ray(self):
+        shading = SimpleNamespace(type="SOLID", show_xray=False, xray_alpha=0.5, show_xray_wireframe=True, xray_alpha_wireframe=0.5)
+        space = SimpleNamespace(shading=shading)
+        self.assertFalse(addon.overlay.see_through(space))
+        shading.show_xray = True
+        self.assertTrue(addon.overlay.see_through(space))
+        shading.xray_alpha = 1.0
+        self.assertFalse(addon.overlay.see_through(space))
+        shading.type = "WIREFRAME"
+        self.assertTrue(addon.overlay.see_through(space))
+        shading.show_xray_wireframe = False
+        self.assertFalse(addon.overlay.see_through(space))
+        shading.type = "MATERIAL"
+        shading.show_xray = True
+        shading.xray_alpha = 0.5
+        self.assertFalse(addon.overlay.see_through(space))
+        self.assertFalse(addon.overlay.see_through(None))
 
     def test_visibility_preview_is_world_sized(self):
         self.obj.scale = (2, 2, 2)

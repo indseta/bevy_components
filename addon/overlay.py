@@ -16,7 +16,7 @@ from .metadata import PRIMITIVE_SHAPES, initial_velocities, light_amount, light_
 from .property import JOINT_LABELS
 from .reference import read_scenes
 from .schema import short_name
-from .system import changes_mesh, children_map, collider_meshes, component_kinds as object_kinds, component_of, components_for, custom_types, export_option, file_path, mesh_sources, panel_expanded, redraw_viewports, resolving
+from .system import body_members, changes_mesh, children_map, collider_meshes, component_kinds as object_kinds, component_of, components_for, custom_types, export_option, file_path, inherited, mesh_sources, panel_expanded, redraw_viewports, resolving
 from .validation import texture_check
 
 DRAW_3D = None
@@ -33,6 +33,8 @@ IDENTITY = Matrix.Identity(4)
 COLLIDER_COLOR = (0.22, 0.96, 0.55, 0.90)
 SENSOR_COLOR = (0.96, 0.60, 0.20, 0.90)
 COLLISION_ONLY_COLOR = (0.30, 0.86, 0.94, 0.90)
+COLLIDER_WIDTH = 2.0
+RELATED_WIDTH = 1.0
 LOD_IN_COLOR = (0.20, 0.72, 1.0, 0.55)
 LOD_OUT_COLOR = (1.0, 0.62, 0.25, 0.55)
 AUDIO_COLOR = (0.95, 0.80, 0.25, 0.70)
@@ -115,6 +117,30 @@ def joint_objects(context, settings, objects):
         if joint is not None and (joint.joint_body1 in selected or joint.joint_body2 in selected):
             found.append(obj)
     return found
+
+
+def body_colliders(body, children):
+    return [member for member in body_members(body, children, instances=False) if "COLLIDER" in object_kinds(member)]
+
+
+def related_colliders(context, settings, objects, children):
+    if settings.scope == "ALL" or not settings.colliders:
+        return []
+    bodies = {}
+    for obj in objects:
+        kinds = object_kinds(obj)
+        sources = [obj] if kinds & {"RIGID_BODY", "COLLIDER"} else []
+        joint = component_of(obj, "JOINT") if settings.joints and "JOINT" in kinds else None
+        if joint is not None:
+            sources.extend(body for body in (joint.joint_body1, joint.joint_body2) if body is not None)
+        for source in sources:
+            owner, _body = inherited(source, "RIGID_BODY")
+            bodies[source if owner is None else owner] = owner is not None
+    found = {}
+    for body, compound in bodies.items():
+        found.update(dict.fromkeys(body_colliders(body, children()) if compound else [body] if "COLLIDER" in object_kinds(body) else []))
+    listed = set(objects)
+    return [obj for obj in found if obj not in listed and obj.visible_get(view_layer=context.view_layer)]
 
 
 def bevy_to_blender(vector):
@@ -359,21 +385,38 @@ def scene_bounds(item):
     return (minimum[0], -maximum[2], minimum[1]), (maximum[0], -minimum[2], maximum[1])
 
 
+def see_through(space):
+    shading = getattr(space, "shading", None)
+    if shading is None or shading.type not in {"WIREFRAME", "SOLID"}:
+        return False
+    if shading.type == "WIREFRAME":
+        return shading.show_xray_wireframe and shading.xray_alpha_wireframe < 1
+    return shading.show_xray and shading.xray_alpha < 1
+
+
 def _previews_shown(context):
     space = context.space_data
     return panel_expanded() and context.region_data is not None and (space is None or space.overlay.show_overlays)
 
 
-def _hierarchy(context, objects):
-    meshes = any("NAVIGATION" in kinds or "COLLIDER" in kinds and getattr(component_of(obj, "COLLIDER"), "collider_shape", None) in MESH_SHAPES for obj, kinds in ((obj, object_kinds(obj)) for obj in objects))
-    return children_map(context.scene.objects) if meshes else {}
+def _scene_children(context):
+    return _lazy(lambda: children_map(context.scene.objects))
+
+
+def _hierarchy(objects, scene_children):
+    needed = any("NAVIGATION" in kinds or "RIGID_BODY" in kinds or "COLLIDER" in kinds and getattr(component_of(obj, "COLLIDER"), "collider_shape", None) in MESH_SHAPES for obj, kinds in ((obj, object_kinds(obj)) for obj in objects))
+    return scene_children() if needed else {}
+
+
+def collider_batches(obj, settings, children, width):
+    collider = component_of(obj, "COLLIDER")
+    if not collider or not settings.colliders:
+        return []
+    return [(matrix, lines, collider_color(collider), width) for matrix, lines in collider_lines(obj, collider, settings.max_mesh_edges, children)]
 
 
 def object_batches(obj, settings, children):
-    batches = []
-    collider = component_of(obj, "COLLIDER")
-    if collider and settings.colliders:
-        batches.extend((matrix, lines, collider_color(collider), 2.0) for matrix, lines in collider_lines(obj, collider, settings.max_mesh_edges, children))
+    batches = collider_batches(obj, settings, children, COLLIDER_WIDTH)
     visibility = component_of(obj, "VISIBILITY_RANGE")
     if visibility and settings.visibility_ranges:
         inverse = obj.matrix_world.to_3x3().inverted_safe()
@@ -480,10 +523,13 @@ def _lazy(function):
 
 def preview_entries(context, settings):
     objects = preview_objects(context, settings)
-    children = _lazy(lambda: _hierarchy(context, objects))
+    scene_children = _scene_children(context)
+    related = related_colliders(context, settings, objects, scene_children)
+    children = _lazy(lambda: _hierarchy([*objects, *related], scene_children))
     shown = _settings_key(settings)
     changes = change_count()
     entries = [_cached_entry(("OBJECT", obj.session_uid), (changes, shown, _file_key(obj, settings)), lambda obj=obj: _object_key(obj, settings, children), lambda obj=obj: object_batches(obj, settings, children())) for obj in objects]
+    entries.extend(_cached_entry(("RELATED", obj.session_uid), (changes, shown), lambda obj=obj: _object_key(obj, settings, children), lambda obj=obj: collider_batches(obj, settings, children(), RELATED_WIDTH)) for obj in related)
     if settings.joints:
         entries.extend(_cached_entry(("JOINT", obj.session_uid), (changes, shown), lambda obj=obj: _joint_key(obj), lambda obj=obj: joint_batches(obj, component_of(obj, "JOINT"))) for obj in joint_objects(context, settings, objects))
     return entries
@@ -524,7 +570,7 @@ def _draw_geometry():
     if not settings.enabled or not _previews_shown(context):
         return
     gpu.state.blend_set("ALPHA")
-    gpu.state.depth_test_set("NONE" if settings.xray else "LESS_EQUAL")
+    gpu.state.depth_test_set("NONE" if settings.xray or see_through(context.space_data) else "LESS_EQUAL")
     try:
         with resolving():
             entries = preview_entries(context, settings)
@@ -565,8 +611,15 @@ def _label_lines(obj, settings, children):
             parts.append("events")
         if collider.collider_collision_only:
             parts.append("collision only")
+        owner, _body = inherited(obj, "RIGID_BODY")
+        if owner is not None and owner != obj:
+            parts.append(f"part of {owner.name}")
         descriptions.append(" · ".join(parts))
     body = component_of(obj, "RIGID_BODY")
+    if body and settings.colliders:
+        count = len(body_colliders(obj, children))
+        colliders = "no colliders" if count == 0 else "1 collider" if count == 1 else f"{count} colliders"
+        descriptions.append(f"Rigid Body · {body.rigid_body_kind.title()} · {colliders}")
     if body and settings.velocities and body.rigid_body_kind != "STATIC":
         linear, angular = (Vector(vector).length for vector in initial_velocities(body))
         speeds = [f"{speed:.3g} {unit}" for speed, unit in ((linear, "m/s"), (degrees(angular), "°/s")) if speed > 1e-6]
@@ -655,22 +708,30 @@ def _cached_label(obj, settings, state, children):
     return list(found[1])
 
 
+def _name_line(obj):
+    return " · ".join([obj.name, *_custom_names(obj)])
+
+
 def label_rows(context, settings):
     objects = preview_objects(context, settings)
-    children = _lazy(lambda: _hierarchy(context, objects))
+    scene_children = _scene_children(context)
+    children = _lazy(lambda: _hierarchy(objects, scene_children))
     state = (change_count(), _settings_key(settings))
     selected = set(context.selected_objects)
     listed = set(objects)
     rows = []
     for obj in objects:
         if obj not in selected:
-            rows.append((obj, [" · ".join([obj.name, *_custom_names(obj)])], False))
+            rows.append((obj, [_name_line(obj)], False))
             continue
         details = _cached_label(obj, settings, (*state, _file_key(obj, settings)), children)
         if details:
             rows.append((obj, [obj.name, *details], True))
     if settings.joints:
-        rows.extend((obj, [obj.name, *_joint_label(obj, settings)], True) for obj in joint_objects(context, settings, objects) if obj not in listed)
+        joints = [obj for obj in joint_objects(context, settings, objects) if obj not in listed]
+        rows.extend((obj, [obj.name, *_joint_label(obj, settings)], True) for obj in joints)
+        listed.update(joints)
+    rows.extend((obj, [_name_line(obj)], False) for obj in related_colliders(context, settings, objects, scene_children) if obj not in listed)
     return sorted(rows, key=lambda row: not row[2])
 
 

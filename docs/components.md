@@ -12,7 +12,9 @@ Each component works like a modifier: collapse it, untick it to leave it out of 
 
 ## Viewport previews
 
-Previews are editor-only and are not exported. Set them up under **Overlays > Bevy Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded.
+Previews are editor-only and are not exported. Set them up under **Overlays > Components** in the 3D Viewport header. They show while the **Components** panel in Properties is expanded. Like Blender's own overlays, they draw through objects in Wireframe and X-Ray, and **In Front** draws them through objects all the time.
+
+Selecting a **Rigid Body** also draws the colliders that join its body, on it and on the objects under it, with thinner lines, and its label counts them. Selecting one of those colliders draws the rest of its body and names the body in its label, and selecting a **Joint** draws the colliders of the bodies it connects.
 
 Handles on the selected object resize colliders, visibility ranges, light ranges, audio ranges, fog volumes and probes, and the dot in a collider moves its offset. Ctrl+Z undoes a drag. Joints show their axis and limits, and also show when one of their bodies is selected. Arrows show the velocity bodies start with. Triangle Mesh and Convex Hull colliders are built from every mesh on or under the object, except levels of detail that only show from farther away, and Convex Hull previews draw the hull the game gets, one per material.
 

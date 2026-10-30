@@ -874,7 +874,7 @@ class BEVY_PT_world_ambient_light(bpy.types.Panel):
 
 
 class BEVY_PT_overlay(bpy.types.Panel):
-    bl_label = "Bevy Components"
+    bl_label = "Components"
     bl_idname = "BEVY_PT_overlay"
     bl_space_type = "VIEW_3D"
     bl_region_type = "HEADER"
