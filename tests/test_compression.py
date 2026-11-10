@@ -208,6 +208,25 @@ class TestPlan(unittest.TestCase):
         self.assertEqual(converted, ["image/webp"])
         self.assertEqual((jobs[0].mime_type, jobs[0].width), ("image/png", 12))
 
+    def test_alpha_clipped_base_colors_keep_their_coverage(self):
+        samplers = [{"magFilter": 9729, "minFilter": 9987}, {"magFilter": 9729, "minFilter": 9729}]
+        textures = [{"sampler": 0, "source": 0}, {"sampler": 0, "source": 0}, {"sampler": 0, "source": 0}, {"sampler": 0, "source": 0}, {"sampler": 0, "source": 1}, {"sampler": 1, "source": 0}, {"sampler": 0, "source": 0}, {"sampler": 0, "source": 0}]
+        materials = [
+            {"alphaMode": "MASK", "alphaCutoff": 0.3, "pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}, "emissiveTexture": {"index": 7}},
+            {"alphaMode": "MASK", "pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}},
+            {"pbrMetallicRoughness": {"baseColorTexture": {"index": 1}}},
+            {"alphaMode": "MASK", "alphaCutoff": 0.3, "pbrMetallicRoughness": {"baseColorTexture": {"index": 2}}},
+            {"alphaMode": "BLEND", "pbrMetallicRoughness": {"baseColorTexture": {"index": 2}}},
+            {"alphaMode": "MASK", "alphaCutoff": 0.3, "pbrMetallicRoughness": {"baseColorTexture": {"index": 3}}},
+            {"alphaMode": "MASK", "alphaCutoff": 0.4, "pbrMetallicRoughness": {"baseColorTexture": {"index": 3}}},
+            {"alphaMode": "MASK", "alphaCutoff": 0.3, "pbrMetallicRoughness": {"baseColorTexture": {"index": 4}}},
+            {"alphaMode": "MASK", "alphaCutoff": 0.3, "pbrMetallicRoughness": {"baseColorTexture": {"index": 5}}},
+            {"pbrMetallicRoughness": {"baseColorTexture": {"index": 6}}},
+        ]
+        gltf, binary = _scene([(_png(16, 16, color_type=6), "image/png"), (_png(16, 16), "image/png")], materials, samplers=samplers, textures=textures)
+        jobs = compression.plan_textures(gltf, binary, "ETC1S")
+        self.assertEqual([(job.textures, job.cutoff, job.coverage) for job in jobs], [([0], 0.3, True), ([1], 0.5, True), ([2, 3, 6, 7], None, False), ([4], None, False), ([5], None, False)])
+
     def test_external_images_are_rejected(self):
         gltf, binary = _scene([], [{"pbrMetallicRoughness": {"baseColorTexture": {"index": 0}}}], textures=[{"source": 0}])
         gltf["images"].append({"uri": "wood.png"})

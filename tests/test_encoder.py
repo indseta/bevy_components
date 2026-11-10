@@ -1,13 +1,17 @@
 import importlib.util
 import os
 import pathlib
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
 import unittest
+import zlib
 from unittest import mock
+
+import numpy
 
 ROOT = pathlib.Path(__file__).resolve().parents[1] / "addon"
 spec = importlib.util.spec_from_file_location("bevy_compression", ROOT / "compression.py")
@@ -113,6 +117,123 @@ class TestCommands(unittest.TestCase):
     def test_uastc_data_without_supercompression_or_mipmaps(self):
         command = encoder.encode_command("ktx", _job(usage="data", codec="uastc", mipmaps=False), {**SETTINGS, "uastc_zstd": 0}, "in.png", "out.ktx2")
         self.assertEqual(command, ["ktx", "create", "--format", "R8G8B8_UNORM", "--assign-tf", "linear", "--assign-primaries", "none", "--encode", "uastc", "--uastc-quality", "2", "in.png", "out.ktx2"])
+
+
+    def test_coverage_levels_replace_generated_mipmaps(self):
+        job = _job(alpha=True, cutoff=0.3, width=64, height=32, source_width=60, source_height=30)
+        command = encoder.encode_command("ktx", job, SETTINGS, ["0.png", "1.png"], "out.ktx2")
+        self.assertEqual(command, ["ktx", "create", "--format", "R8G8B8A8_SRGB", "--assign-tf", "srgb", "--assign-primaries", "bt709", "--levels", "7", "--encode", "basis-lz", "--qlevel", "128", "--clevel", "2", "0.png", "1.png", "out.ktx2"])
+        command = encoder.decode_command("ktx", job, "in.png", "raw.ktx2")
+        self.assertEqual(command, ["ktx", "create", "--format", "R8G8B8A8_SRGB", "--assign-tf", "srgb", "--assign-primaries", "bt709", "--width", "64", "--height", "32", "--mipmap-wrap", "wrap", "in.png", "raw.ktx2"])
+        self.assertEqual(encoder.decode_command("ktx", _job(alpha=True, cutoff=0.3), "in.png", "raw.ktx2")[-4:], ["--assign-primaries", "bt709", "in.png", "raw.ktx2"])
+
+
+LEAF = (40, 160, 50)
+
+
+def _leaves(width, height, seed=1):
+    random = numpy.random.default_rng(seed)
+    y, x = numpy.mgrid[0:height, 0:width]
+    alpha = numpy.zeros((height, width))
+    for centre_x, centre_y, radius in random.uniform((0, 0, 1.5), (width, height, 4.0), (width * height // 64, 3)):
+        alpha = numpy.maximum(alpha, numpy.clip(2.0 - numpy.hypot(x - centre_x, y - centre_y) / radius, 0.0, 1.0))
+    pixels = numpy.zeros((height, width, 4), dtype=numpy.uint8)
+    pixels[...] = (255, 0, 0, 0)
+    pixels[alpha > 0, :3] = LEAF
+    pixels[..., 3] = numpy.rint(alpha * 255)
+    return pixels
+
+
+def _covered(pixels, cutoff=0.3):
+    return numpy.count_nonzero(pixels[..., 3] / 255 >= cutoff) / pixels[..., 3].size
+
+
+def _read_png(data):
+    width, height = struct.unpack_from(">II", data, 16)
+    offset = 8
+    payload = b""
+    while offset < len(data):
+        length, kind = struct.unpack_from(">I4s", data, offset)
+        if kind == b"IDAT":
+            payload += data[offset + 8:offset + 8 + length]
+        offset += 12 + length
+    rows = numpy.frombuffer(zlib.decompress(payload), dtype=numpy.uint8).reshape(height, width * 4 + 1)
+    return rows[:, 1:].reshape(height, width, 4)
+
+
+def _raw_ktx2(pixels):
+    height, width = pixels.shape[:2]
+    header = b"\xabKTX 20\xbb\r\n\x1a\n" + struct.pack("<9I", 43, 1, width, height, 0, 0, 1, 1, 0) + struct.pack("<IIIIQQ", 0, 0, 0, 0, 0, 0)
+    return header + struct.pack("<QQQ", len(header) + 24, pixels.size, pixels.size) + pixels.tobytes()
+
+
+class TestCoverage(unittest.TestCase):
+    def test_levels_keep_the_share_of_texels_above_the_cutoff(self):
+        pixels = _leaves(256, 256)
+        levels = encoder.coverage_levels(pixels, 0.3)
+        self.assertTrue(numpy.array_equal(levels[0], pixels))
+        self.assertEqual(len(levels), 9)
+        for level in levels:
+            if level.shape[0] >= 16:
+                self.assertAlmostEqual(_covered(level) / _covered(pixels), 1.0, delta=0.01)
+        alpha = pixels[..., 3] / 255
+        drift = []
+        for _level in range(4):
+            alpha = encoder._halve(alpha)
+            drift.append(numpy.count_nonzero(alpha >= 0.3) / alpha.size / _covered(pixels))
+        self.assertGreater(max(abs(share - 1.0) for share in drift), 0.1)
+
+    def test_levels_match_the_ktx2_mipmap_sizes(self):
+        levels = encoder.coverage_levels(_leaves(100, 60), 0.5)
+        self.assertEqual([level.shape for level in levels], [(60, 100, 4), (30, 50, 4), (15, 25, 4), (7, 12, 4), (3, 6, 4), (1, 3, 4), (1, 1, 4)])
+
+    def test_transparent_colour_does_not_bleed_into_leaves(self):
+        for level in encoder.coverage_levels(_leaves(64, 64), 0.3)[1:]:
+            visible = level[..., 3] > 0
+            self.assertTrue(numpy.all(numpy.abs(level[visible, :3].astype(int) - LEAF) <= 1))
+
+    def test_alpha_scale(self):
+        alpha = numpy.array([0.0, 0.1, 0.2, 0.6])
+        self.assertAlmostEqual(encoder.alpha_scale(alpha, 0.5, 0.3), (0.3 + 0.5 / 255) / 0.2)
+        self.assertAlmostEqual(encoder.alpha_scale(alpha, 0.25, 0.3), (0.3 + 0.5 / 255) / 0.6)
+        self.assertEqual(encoder.alpha_scale(alpha, 0.0, 0.3), 1.0)
+        self.assertEqual(encoder.alpha_scale(alpha, 1.0, 0.3), encoder.MAXIMUM_ALPHA_SCALE)
+
+    def test_png_and_raw_ktx2_round_trip(self):
+        pixels = _leaves(12, 8)
+        self.assertTrue(numpy.array_equal(_read_png(encoder.write_png(pixels)), pixels))
+        self.assertTrue(numpy.array_equal(encoder.read_pixels(_raw_ktx2(pixels)), pixels))
+        with self.assertRaises(ValueError):
+            encoder.read_pixels(_raw_ktx2(pixels)[:-4] + b"")
+
+    def test_coverage_jobs_encode_their_own_levels(self):
+        pixels = _leaves(16, 8)
+        commands = []
+
+        def run(command, **_options):
+            commands.append(command)
+            if "--levels" in command:
+                commands[-1] = [_read_png(pathlib.Path(part).read_bytes()) for part in command if part.endswith(".png")]
+                pathlib.Path(command[-1]).write_bytes(b"encoded")
+            else:
+                pathlib.Path(command[-1]).write_bytes(_raw_ktx2(pixels))
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        job = _job(alpha=True, cutoff=0.3, width=16, height=8, source_width=16, source_height=8)
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=run):
+            self.assertEqual(encoder.encode("ktx", [job], SETTINGS, directory), [b"encoded"])
+            self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
+        self.assertEqual(commands[0][-2:], [str(pathlib.Path(directory) / "texture_0.png"), str(pathlib.Path(directory) / "texture_0.ktx2")])
+        self.assertEqual([level.shape[:2] for level in commands[1]], [(8, 16), (4, 8), (2, 4), (1, 2), (1, 1)])
+        self.assertTrue(numpy.array_equal(commands[1][0], pixels))
+
+    def test_undecodable_textures_are_reported(self):
+        def run(command, **_options):
+            pathlib.Path(command[-1]).write_bytes(b"not a ktx2 file")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+        with tempfile.TemporaryDirectory() as directory, mock.patch.object(encoder, "_run", side_effect=run):
+            with self.assertRaisesRegex(encoder.EncoderError, "could not decode wood"):
+                encoder.encode("ktx", [_job(alpha=True, cutoff=0.3)], SETTINGS, directory)
+            self.assertEqual(list(pathlib.Path(directory).iterdir()), [])
 
 
 def _fake_run(command, **_options):
@@ -273,6 +394,10 @@ class TestCache(unittest.TestCase):
         self.assertEqual(len(keys), 4)
         self.assertEqual(encoder.cache_key("ktx", job, SETTINGS), encoder.cache_key("ktx", _job(data=b"first", name="other", image=3), SETTINGS))
 
+    def test_coverage_and_cutoff_change_the_key(self):
+        keys = {encoder.cache_key("ktx", _job(data=b"first", alpha=True, cutoff=cutoff, width=width, source_width=width), SETTINGS) for cutoff in (None, 0.3, 0.5) for width in (60, 64)}
+        self.assertEqual(len(keys), 5)
+
     def test_rejected_results_are_not_kept(self):
         job = _job(data=b"first")
         self.assertEqual(self._encode([job], check=lambda job, data: "broken")[1], 1)
@@ -289,6 +414,29 @@ class TestCache(unittest.TestCase):
         encoder.prune_cache(self.cache, limit=25)
         self.assertEqual(sorted(entry.name for entry in self.cache.iterdir()), ["middle.ktx2", "new.ktx2"])
         encoder.prune_cache(self.cache / "missing")
+
+
+@unittest.skipUnless(os.environ.get("BEVY_COMPONENTS_REQUIRE_KTX") or encoder.find_encoder(), "KTX-Software is not installed")
+class TestCoverageEncoding(unittest.TestCase):
+    def test_encoded_levels_keep_their_coverage(self):
+        path, _version = encoder.check_encoder()
+        pixels = _leaves(256, 256)
+        for codec in ("etc1s", "uastc"):
+            job = _job(name="leaves", codec=codec, data=encoder.write_png(pixels), alpha=True, cutoff=0.3, width=256, height=256, source_width=256, source_height=256)
+            with tempfile.TemporaryDirectory() as directory:
+                data = encoder.encode(path, [job], SETTINGS, directory)[0]
+                self.assertIsNone(compression.check_encoded(job, data))
+                source = pathlib.Path(directory) / "leaves.ktx2"
+                output = pathlib.Path(directory) / "rgba.ktx2"
+                source.write_bytes(data)
+                result = encoder._run([path, "transcode", "--target", "rgba8", source, output])
+                self.assertEqual(result.returncode, 0, result.stderr)
+                decoded = output.read_bytes()
+            for level in range(5):
+                offset, length = struct.unpack_from("<QQ", decoded, 80 + 24 * level)
+                size = 256 >> level
+                image = numpy.frombuffer(decoded, dtype=numpy.uint8, count=length, offset=offset).reshape(size, size, 4)
+                self.assertAlmostEqual(_covered(image) / _covered(pixels), 1.0, delta=0.05, msg=f"{codec} level {level}")
 
 
 if __name__ == "__main__":

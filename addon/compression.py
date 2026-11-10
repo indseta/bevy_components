@@ -44,6 +44,11 @@ class TextureJob:
     mipmaps: bool
     wrap: str
     textures: list
+    cutoff: float | None = None
+
+    @property
+    def coverage(self):
+        return self.cutoff is not None
 
     @property
     def srgb(self):
@@ -209,8 +214,21 @@ def _sampling(gltf, texture):
     return sampler.get("minFilter", 9987) in MIPMAP_FILTERS, WRAP_MODES.get(sampler.get("wrapS", 10497), "wrap"), sampler.get("magFilter") == NEAREST_FILTER
 
 
+def alpha_cutoffs(gltf):
+    cutoffs = {}
+    for material in gltf.get("materials", []):
+        info = material.get("pbrMetallicRoughness", {}).get("baseColorTexture")
+        mode = material.get("alphaMode", "OPAQUE")
+        if not isinstance(info, dict) or not isinstance(info.get("index"), int) or mode == "OPAQUE":
+            continue
+        cutoff = float(material.get("alphaCutoff", 0.5)) if mode == "MASK" else None
+        cutoffs[info["index"]] = cutoff if cutoffs.get(info["index"], cutoff) == cutoff else None
+    return cutoffs
+
+
 def plan_textures(gltf, binary, mode, convert=None):
     usages = split_textures(gltf)
+    cutoffs = alpha_cutoffs(gltf)
     jobs = {}
     payloads = {}
     for index, texture in enumerate(gltf.get("textures", [])):
@@ -228,10 +246,11 @@ def plan_textures(gltf, binary, mode, convert=None):
         usage = usages[index]
         mipmaps, wrap, nearest = _sampling(gltf, texture)
         codec = _codec(mode, usage, nearest)
-        key = (image, usage, mipmaps, wrap, codec)
+        cutoff = cutoffs.get(index) if alpha and mipmaps and usage == "color" else None
+        key = (image, usage, mipmaps, wrap, codec, cutoff)
         if key not in jobs:
             name = gltf["images"][image].get("name", f"image_{image}")
-            jobs[key] = TextureJob(name=name, image=image, usage=usage, codec=codec, data=data, mime_type=mime_type, width=_round_up(width), height=_round_up(height), source_width=width, source_height=height, alpha=alpha and usage != "normal", mipmaps=mipmaps, wrap=wrap, textures=[])
+            jobs[key] = TextureJob(name=name, image=image, usage=usage, codec=codec, data=data, mime_type=mime_type, width=_round_up(width), height=_round_up(height), source_width=width, source_height=height, alpha=alpha and usage != "normal", mipmaps=mipmaps, wrap=wrap, textures=[], cutoff=cutoff)
         jobs[key].textures.append(index)
     return list(jobs.values())
 

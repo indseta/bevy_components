@@ -13,6 +13,8 @@ A 4K texture takes 10 to 25 seconds to encode. Blender stays usable meanwhile: t
 
 Base color, normal, metallic-roughness, occlusion and emissive textures are converted with mipmaps and stored with the `KHR_texture_basisu` glTF extension. Samplers, UV maps, texture transforms, alpha modes and color spaces are kept, and a texture shared by several materials is stored once. Textures whose size is not a multiple of 4 pixels are scaled up to one, and the export warns when it does. Your Blender images are not changed.
 
+Base color textures of alpha clipped materials, the ones exported with alpha mode Mask such as leaves, grass or fences, get mipmaps of their own. Each smaller level keeps the share of pixels at or above the material's alpha threshold that the full-size texture has, so the cut-outs keep their shape with distance instead of growing or shrinking by up to half, as they do with ordinary mipmaps. The color of transparent pixels does not bleed into the edges. A texture that a Blended material also uses, or that Mask materials with different thresholds share, keeps ordinary mipmaps.
+
 Loading needs no extra code. `BlenderBevyComponentsPlugin` registers a GLB loader that converts the textures to a format the GPU supports (ASTC, BC7 or ETC2, otherwise uncompressed RGBA) and passes the file on to Bevy's glTF loader, so `asset_server.load("scene.glb#Scene0")` works the same for compressed and ordinary scenes. It relies on Bevy's default `ktx2` feature; `basis-universal` is not needed.
 
 ## Limitations

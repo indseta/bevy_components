@@ -3,6 +3,7 @@
 `addon/` holds the Blender extension and `importer/` the Rust crate.
 
 ```sh
+pip install numpy
 python -m unittest discover -s tests
 python scripts/build_addon.py
 cargo test --manifest-path importer/Cargo.toml
