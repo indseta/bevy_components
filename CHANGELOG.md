@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.5 (2026-11-10)
+
+### Changed
+
+- Compressed base color textures of alpha clipped materials, the ones exported with alpha mode Mask such as leaves, grass or fences, get mipmaps of their own that keep the share of pixels at or above the material's alpha threshold at every level. Cut-outs keep their density with distance instead of growing or shrinking by up to half, and transparent colors no longer bleed into their edges. See [Texture compression](docs/texture_compression.md).
+
+### Upgrading from 0.5.4
+
+- Re-export scenes with alpha clipped textures to get the new mipmaps. Their first export after the update encodes those textures again.
+
 ## 0.5.4 (2026-10-30)
 
 ### Added
