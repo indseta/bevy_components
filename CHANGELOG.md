@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.7 (2026-11-15)
+
+### Fixed
+
+- Loading a compressed scene no longer blocks an `IO Task Pool` thread while its textures convert. The GLB loader waited for its texture tasks with a blocking scope, and the waiting thread ran other queued loads inside it, one level deeper each time. With many loads queued at once, such as a test suite that loads the same scene in many apps, this ran out of stack with `thread 'IO Task Pool (0)' has overflowed its stack`. The loader now converts each texture in a task on Bevy's `AsyncComputeTaskPool` and awaits them. Bevy's own glTF loader still waits for its images the same way, so a very large number of loads queued on one IO thread can still overflow, as it does without this plugin.
+
 ## 0.5.6 (2026-11-15)
 
 ### Fixed
