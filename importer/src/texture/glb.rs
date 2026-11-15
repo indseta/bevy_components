@@ -1,4 +1,4 @@
-use bevy::{image::CompressedImageFormats, prelude::*, tasks::IoTaskPool};
+use bevy::{image::CompressedImageFormats, prelude::*, tasks::AsyncComputeTaskPool};
 use serde_json::{Value, json, value::{RawValue, to_raw_value}};
 use std::collections::BTreeMap;
 use super::transcode::transcode;
@@ -15,7 +15,7 @@ struct Glb<'a> {
     binary: &'a [u8],
 }
 
-pub fn transcode_glb(bytes: &[u8], formats: CompressedImageFormats) -> Result<Option<Vec<u8>>, BevyError> {
+pub async fn transcode_glb(bytes: &[u8], formats: CompressedImageFormats) -> Result<Option<Vec<u8>>, BevyError> {
     let Some(glb) = split_glb(bytes) else { return Ok(None); };
     if !glb.json.windows(EXTENSION.len()).any(|window| window == EXTENSION.as_bytes()) {
         return Ok(None);
@@ -48,7 +48,7 @@ pub fn transcode_glb(bytes: &[u8], formats: CompressedImageFormats) -> Result<Op
         }
     }
 
-    let transcoded = transcode_all(&payloads, formats);
+    let transcoded = transcode_all(&payloads, formats).await;
     let mut binary_length = glb.binary.len().next_multiple_of(ALIGNMENT);
     let mut appended = Vec::with_capacity(transcoded.len());
     for ((view, _), result) in payloads.iter().zip(transcoded) {
@@ -125,19 +125,21 @@ fn view_data<'a>(views: &[Value], binary: &'a [u8], view: u64) -> Option<&'a [u8
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn transcode_all(payloads: &[(u64, &[u8])], formats: CompressedImageFormats) -> Vec<Result<Vec<u8>, BevyError>> {
-    if payloads.len() == 1 {
-        return vec![transcode(payloads[0].1, formats)];
+async fn transcode_all(payloads: &[(u64, &[u8])], formats: CompressedImageFormats) -> Vec<Result<Vec<u8>, BevyError>> {
+    let pool = AsyncComputeTaskPool::get();
+    let tasks: Vec<_> = payloads.iter().map(|&(_, data)| {
+        let data = data.to_vec();
+        return pool.spawn(async move { return transcode(&data, formats); });
+    }).collect();
+    let mut results = Vec::with_capacity(tasks.len());
+    for task in tasks {
+        results.push(task.await);
     }
-    return IoTaskPool::get().scope(|scope| {
-        for &(_, data) in payloads {
-            scope.spawn(async move { transcode(data, formats) });
-        }
-    });
+    return results;
 }
 
 #[cfg(target_arch = "wasm32")]
-fn transcode_all(payloads: &[(u64, &[u8])], formats: CompressedImageFormats) -> Vec<Result<Vec<u8>, BevyError>> {
+async fn transcode_all(payloads: &[(u64, &[u8])], formats: CompressedImageFormats) -> Vec<Result<Vec<u8>, BevyError>> {
     return payloads.iter().map(|&(_, data)| transcode(data, formats)).collect();
 }
 

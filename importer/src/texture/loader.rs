@@ -14,7 +14,7 @@ impl AssetLoader for CompressedGltfLoader {
     async fn load(&self, reader: &mut dyn Reader, settings: &GltfLoaderSettings, load_context: &mut LoadContext<'_>) -> Result<Gltf, BevyError> {
         let mut bytes = Vec::new();
         reader.read_to_end(&mut bytes).await?;
-        if let Some(transcoded) = transcode_glb(&bytes, self.gltf.supported_compressed_formats)? {
+        if let Some(transcoded) = transcode_glb(&bytes, self.gltf.supported_compressed_formats).await? {
             bytes = transcoded;
         }
         return Ok(GltfLoader::load_gltf(&self.gltf, &bytes, load_context, settings).await?);

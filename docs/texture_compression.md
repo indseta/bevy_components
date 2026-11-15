@@ -15,7 +15,7 @@ Base color, normal, metallic-roughness, occlusion and emissive textures are conv
 
 Base color textures of alpha clipped materials, the ones exported with alpha mode Mask such as leaves, grass or fences, get mipmaps of their own. Each smaller level keeps the share of pixels at or above the material's alpha threshold that the full-size texture has, so the cut-outs keep their shape with distance instead of growing or shrinking by up to half, as they do with ordinary mipmaps. The color of transparent pixels does not bleed into the edges. A texture that a Blended material also uses, or that Mask materials with different thresholds share, keeps ordinary mipmaps.
 
-Loading needs no extra code. `BlenderBevyComponentsPlugin` registers a GLB loader that converts the textures to a format the GPU supports (ASTC, BC7 or ETC2, otherwise uncompressed RGBA) and passes the file on to Bevy's glTF loader, so `asset_server.load("scene.glb#Scene0")` works the same for compressed and ordinary scenes. It relies on Bevy's default `ktx2` feature; `basis-universal` is not needed.
+Loading needs no extra code. `BlenderBevyComponentsPlugin` registers a GLB loader that converts the textures to a format the GPU supports (ASTC, BC7 or ETC2, otherwise uncompressed RGBA) and passes the file on to Bevy's glTF loader, so `asset_server.load("scene.glb#Scene0")` works the same for compressed and ordinary scenes. Each texture is converted in its own task on Bevy's `AsyncComputeTaskPool`. It relies on Bevy's default `ktx2` feature; `basis-universal` is not needed.
 
 ## Limitations
 
