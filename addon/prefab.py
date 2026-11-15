@@ -162,8 +162,12 @@ def _flat(value):
 
 
 def _id_properties(owner, skipped=()):
+    try:
+        keys = owner.keys()
+    except TypeError:
+        return ()
     values = []
-    for key in sorted(owner.keys()):
+    for key in sorted(keys):
         if key in skipped:
             continue
         value = owner[key]
@@ -184,11 +188,16 @@ def _object_digest(obj, digest, seen):
     parent = obj.parent.name_full if obj.parent else None
     _update(digest, (obj.name_full, obj.type, parent, obj.parent_type, obj.parent_bone, _flat(obj.matrix_world), obj.hide_render, obj.hide_viewport, obj.instance_type, obj.instance_collection.name_full if obj.instance_collection else None, str(prefab_file(nested)) if nested else None, _components(obj), _id_properties(obj, {EXTRAS_KEY, "bevy_component_data"})))
     _update(digest, (_identity(obj.data, seen), tuple((slot.link, _identity(slot.material, seen)) for slot in obj.material_slots)))
-    _update(digest, tuple((modifier.type, _rna(modifier, seen, 1), _id_properties(modifier)) for modifier in obj.modifiers))
+    _update(digest, tuple((modifier.type, _rna(modifier, seen, 1), _id_properties(modifier), _node_inputs(modifier, seen)) for modifier in obj.modifiers))
     _update(digest, tuple((constraint.type, _rna(constraint, seen, 1)) for constraint in obj.constraints))
     animations = [owner.animation_data for owner in (obj, getattr(obj.data, "shape_keys", None)) if getattr(owner, "animation_data", None) is not None]
     _update(digest, tuple(_rna(animation, seen, 2) for animation in animations))
     return bool(animations)
+
+
+def _node_inputs(modifier, seen):
+    interface = getattr(modifier, "properties", None)
+    return tuple(_rna(getattr(interface, side), seen, 1) for side in ("inputs", "outputs") if hasattr(interface, side))
 
 
 def _rna(struct, seen, depth):

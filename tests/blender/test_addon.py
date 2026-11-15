@@ -4883,6 +4883,24 @@ class TestPlay(unittest.TestCase):
         self.assertLess((Quaternion((values[6], *values[3:6])) @ Vector((0, 0, -1)) - Vector((0, 0, -1))).length, 1e-5)
 
 
+def _node_group_with_input(name):
+    group = bpy.data.node_groups.new("passthrough", "GeometryNodeTree")
+    group.interface.new_socket("Geometry", in_out="INPUT", socket_type="NodeSocketGeometry")
+    group.interface.new_socket("Geometry", in_out="OUTPUT", socket_type="NodeSocketGeometry")
+    group.interface.new_socket(name, in_out="INPUT", socket_type="NodeSocketFloat")
+    group.links.new(group.nodes.new("NodeGroupInput").outputs[0], group.nodes.new("NodeGroupOutput").inputs[0])
+    return group
+
+
+def _set_node_input(modifier, name, value):
+    identifier = next(item.identifier for item in modifier.node_group.interface.items_tree if item.item_type == "SOCKET" and item.in_out == "INPUT" and item.name == name)
+    inputs = getattr(getattr(modifier, "properties", None), "inputs", None)
+    if inputs is None:
+        modifier[identifier] = value
+    else:
+        getattr(inputs, identifier).value = value
+
+
 def _scene_components(node):
     return json.loads(node["extras"]["bevy_components"])["components"]
 
@@ -4966,6 +4984,16 @@ class TestPrefabs(unittest.TestCase):
         self.assertEqual(self._exported_prefabs(), ["lantern"])
         self.lamp.instance_offset = (0, 9, 0)
         self.assertEqual(self._exported_prefabs(), ["lamp post"])
+        self.bulb.modifiers.new("Array", "ARRAY").count = 2
+        self.assertEqual(self._exported_prefabs(), ["lantern"])
+        self.bulb.modifiers["Array"].count = 3
+        self.assertEqual(self._exported_prefabs(), ["lantern"])
+        glow = self.bulb.modifiers.new("Glow", "NODES")
+        glow.node_group = _node_group_with_input("Strength")
+        self.assertEqual(self._exported_prefabs(), ["lantern"])
+        _set_node_input(glow, "Strength", 2.0)
+        self.assertEqual(self._exported_prefabs(), ["lantern"])
+        self.assertEqual(self._exported_prefabs(), [])
         self.assertEqual(self._exported_prefabs(export_apply=False), ["lantern", "lamp post"])
         self.assertEqual(self._exported_prefabs(export_apply=False), [])
         with mock.patch.object(addon.prefab, "addon_version", lambda: "99.0.0"):
