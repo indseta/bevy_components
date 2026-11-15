@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.6 (2026-11-15)
+
+### Fixed
+
+- Exporting a prefab whose objects have modifiers, such as an Armature, Array or Decimate modifier, no longer stops with `TypeError: bpy_struct.keys(): this type doesn't support IDProperties` in Blender 5.2. This hit every export of a prefab to its own GLB file and every scene export with instances of such a prefab.
+- In Blender 5.2, changing an input of a Geometry Nodes modifier on an object in a prefab exports the prefab again. Before, the scene export kept the old prefab GLB.
+
 ## 0.5.5 (2026-11-10)
 
 ### Changed
